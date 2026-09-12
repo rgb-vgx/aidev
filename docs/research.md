@@ -494,6 +494,82 @@ Each item is forced by a finding above, not by preference.
 
 ---
 
+## 7b. Phase 2 probes: git and OpenCode mechanics
+
+Measured later than the rest, when the execution core was designed. Same rules:
+these are observations, not assumptions.
+
+### Collecting a diff without mutating the worktree **[OBSERVED]**
+
+`git diff` ignores untracked files (§4.4), so new files need `git add -N .` first.
+But a worktree belonging to a *failed* attempt is kept for a human to inspect, and
+leaving intent-to-add entries in its index would change what `git status` shows
+them. Pointing git at a throwaway copy of the index avoids that:
+
+```
+cp .git/worktrees/<name>/index /tmp/copy
+GIT_INDEX_FILE=/tmp/copy git -C <worktree> add -N .
+GIT_INDEX_FILE=/tmp/copy git -C <worktree> diff --numstat
+→ 1  0  main.go
+  3  0  newfile.go          ← the new file is visible
+git -C <worktree> status --porcelain
+→  M main.go
+   ?? newfile.go            ← the real index is untouched
+```
+
+aidev therefore collects diffs against a temporary index copy.
+
+### The cleanup policy, and why git already enforces half of it **[OBSERVED]**
+
+| Step | Result |
+|---|---|
+| `git worktree remove` with uncommitted work | **rc 128**, `contains modified or untracked files, use --force`; directory left intact |
+| `git -c user.name=aidev -c user.email=aidev@localhost commit` inside the worktree | **rc 0** — works with no host git identity configured |
+| `git worktree remove` after committing | **rc 0**, directory gone |
+| the task branch afterwards | still holds the commit and the new file |
+| `git worktree remove` with *gitignored* leftovers (build artifacts) | **rc 0** — ignored files do not block removal |
+
+This settles a question the design had to answer: on success the agent's work is
+*uncommitted* in the worktree, so deleting the worktree would destroy the
+deliverable. Committing to the task's own branch first makes the result durable and
+reviewable in git, removes nothing from anyone's history, and is not a merge. After
+that, plain `worktree remove` succeeds.
+
+So the policy is: **commit to the task branch and remove the worktree on success;
+retain the worktree untouched on failure or cancellation** — where git's own
+refusal is the backstop, not aidev's diligence. Passing `-c user.name/-c
+user.email` avoids depending on the host's git identity.
+
+### `opencode run` argument separator **[OBSERVED]**
+
+`opencode run --dir <d> --format json -m <model> -- "Reply OK only"` exits 0 and
+answers normally, so `--` is accepted before the message. aidev uses it, which
+removes any chance of a prompt beginning with `-` being parsed as a flag.
+
+### Validating an agent name **[OBSERVED]**
+
+Phase 0 found an unknown `--agent` exits 0 after silently falling back (§2.5), so
+aidev validates the name itself. `opencode agent list` prints each agent at column
+zero as `name (mode)`, followed by indented JSON permissions:
+
+```
+build (primary)
+  [ { "permission": "*", "action": "allow", "pattern": "*" }, ... ]
+compaction (primary)
+explore (subagent)
+general (subagent)
+plan (primary)
+summary (primary)
+title (primary)
+```
+
+Matching `^(\S+) \((primary|subagent)\)$` extracts the names.
+
+Incidental but confirming: the `build` agent's own permission list begins with
+`{"permission": "*", "action": "allow", "pattern": "*"}`. That is OpenCode stating
+in its configuration what §2.6 observed in behaviour — the default agent is allowed
+everything, so the worktree really is the only boundary.
+
 ## 8. Reproducing this research
 
 Probes ran in a gitignored `.probe/` directory inside the repository (scratch repo, worktrees,
