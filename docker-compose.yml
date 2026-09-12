@@ -1,0 +1,32 @@
+# Local development infrastructure for aidev: PostgreSQL only.
+#
+# The host port defaults to 5434, not 5432. Phase 0 found 5432 (a host
+# PostgreSQL service) and 5433 (another project's container) already bound on
+# the development machine, so a conventional default would make the very first
+# `docker compose up` fail. Override with AIDEV_DB_PORT if 5434 is taken too.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: aidev-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${AIDEV_DB_USER:-aidev}
+      POSTGRES_PASSWORD: ${AIDEV_DB_PASSWORD:-aidev}
+      POSTGRES_DB: ${AIDEV_DB_NAME:-aidev}
+      # Deterministic collation, so ORDER BY does not depend on the host locale.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      - "${AIDEV_DB_PORT:-5434}:5432"
+    volumes:
+      - aidev-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # Without a healthcheck, `docker compose up -d` returns before PostgreSQL
+      # accepts connections and the first migration run races it.
+      test: ["CMD-SHELL", "pg_isready -U ${AIDEV_DB_USER:-aidev} -d ${AIDEV_DB_NAME:-aidev}"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+
+volumes:
+  aidev-pgdata:
