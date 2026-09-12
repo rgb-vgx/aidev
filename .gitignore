@@ -1,0 +1,15 @@
+# build output
+/bin/
+/aidev
+/dist/
+
+# Phase 0 research scratch: disposable probe repo, worktrees, captured output
+/.probe/
+
+# local environment
+.env
+.env.local
+
+# editor / OS
+.DS_Store
+*.swp
