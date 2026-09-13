@@ -10,6 +10,7 @@ import (
 	"aidev/internal/git"
 	"aidev/internal/logging"
 	"aidev/internal/store"
+	"aidev/internal/tracing"
 	"aidev/internal/worker"
 )
 
@@ -25,6 +26,11 @@ type app struct {
 	orchestrator *worker.Orchestrator
 	close        func()
 }
+
+// tracingFlushTimeout bounds how long a command waits on exit for spans to reach the
+// collector. A command must not hang because a backend is slow, and losing a trace is
+// preferable to losing the command's own output.
+const tracingFlushTimeout = 5 * time.Second
 
 // openApp builds the application. The caller must call close.
 //
@@ -54,10 +60,42 @@ func openApp(ctx context.Context) (*app, error) {
 
 	backend := agent.NewOpenCode(cfg.OpenCodeCommand, cfg.OpenCodeModel)
 
+	// Tracing is wired here because this is the only place that knows a command is
+	// starting and ending. internal/worker creates spans against the global
+	// provider, so without this every one of them is a no-op — which is exactly
+	// what happened when the instrumentation was added and this was forgotten: the
+	// tests passed because they install their own provider, and a real run produced
+	// no trace at all.
+	stopTracing := func(context.Context) error { return nil }
+	tracingCfg, err := tracing.FromEnv(config.OSLookup)
+	if err != nil {
+		// A misconfigured exporter must not stop aidev from doing its job, but it
+		// must be visible rather than silently disabling observability.
+		logger.WarnContext(ctx, "tracing is disabled: its configuration is invalid", "error", err.Error())
+	} else if tracingCfg.Enabled {
+		if _, shutdown, err := tracing.Start(ctx, tracingCfg); err != nil {
+			logger.WarnContext(ctx, "tracing is disabled: the exporter could not be created",
+				"endpoint", tracingCfg.TracesEndpoint, "error", err.Error())
+		} else {
+			stopTracing = shutdown
+			logger.DebugContext(ctx, "tracing enabled", "endpoint", tracingCfg.TracesEndpoint)
+		}
+	}
+
 	return &app{
 		cfg:          cfg,
 		store:        db,
 		orchestrator: worker.New(db, gitManager, backend, cfg, logger),
-		close:        db.Close,
+		close: func() {
+			// Flush first: the spans describe work the database rows also
+			// describe, and a detached context is used so that a cancelled
+			// command still exports what it recorded.
+			flushCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tracingFlushTimeout)
+			defer cancel()
+			if err := stopTracing(flushCtx); err != nil {
+				logger.WarnContext(ctx, "could not flush traces", "error", err.Error())
+			}
+			db.Close()
+		},
 	}, nil
 }
