@@ -64,10 +64,12 @@ make build
 
 <p>Nếu <code>make build</code> hỏng, hãy đọc thông báo lỗi. Thiếu Go thì nó báo <code>go: command not found</code>. Lỗi mạng khi tải toolchain thì báo gì đó về fetching toolchain. Sửa đúng lỗi được nêu rồi chạy lại <code>make build</code>. Chạy lại thoải mái, không sao cả.</p>
 
-<p>Nếu muốn gõ <code>aidev</code> ở thư mục nào cũng được, tức là đưa chương trình lên PATH:</p>
+<p>Đưa <code>aidev</code> lên PATH để terminal nào cũng tìm thấy nó:</p>
 
 <pre><code>make install
 # runs: go install ./cmd/aidev</code></pre>
+
+<p>"Nằm trên PATH" nghĩa là thế này: khi bạn gõ tên một chương trình, shell sẽ dò trong một danh sách thư mục gọi là PATH cho tới khi thấy chương trình khớp. <code>make install</code> đặt <code>aidev</code> vào một thư mục trong danh sách đó. Sau đó, gõ <code>aidev ...</code> ở thư mục nào cũng chạy, trong terminal mới nào cũng chạy, thay vì chỉ gõ <code>./bin/aidev</code> khi đang đứng trong kho mã. Nếu bạn chưa từng gặp khái niệm này, cứ hiểu đơn giản là cài công cụ một lần để gọi tên nó ở mọi nơi.</p>
 
 <p>Từ đây hướng dẫn sẽ viết <code>aidev</code>. Nếu bạn không cài theo cách đó thì chỗ nào thấy <code>aidev</code> hãy gõ <code>./bin/aidev</code>.</p>
 </section>
@@ -88,14 +90,15 @@ make build
 
 <p>Nếu <code>make db-up</code> hỏng thì thường do hai nguyên nhân: Docker chưa chạy (bật Docker lên rồi thử lại), hoặc cổng đã có chương trình khác dùng (chọn cổng khác như trên). Thông báo lỗi sẽ nêu rõ nguyên nhân. Sửa rồi chạy lại lệnh, chạy lại thoải mái.</p>
 
-<p>Tiếp theo, cấu hình kết nối rồi áp cấu trúc bảng. <strong>Chuỗi kết nối</strong> là một dòng chữ duy nhất cho chương trình biết cách tới cơ sở dữ liệu: đăng nhập tên gì, ở đâu, kèm tùy chọn gì.</p>
+<p>Tiếp theo, cấu hình kết nối rồi áp cấu trúc bảng. <strong>Chuỗi kết nối</strong> là một dòng chữ duy nhất cho chương trình biết cách tới cơ sở dữ liệu: đăng nhập tên gì, ở đâu, kèm tùy chọn gì. Bạn chỉ viết nó một lần vào tập tin cấu hình, như <a href="#configuration">phần cấu hình</a> dưới đây mô tả, chứ không cần xuất nó trong mỗi terminal:</p>
 
-<pre><code>cp .env.example .env
-export DATABASE_URL='postgres://aidev:aidev@127.0.0.1:5434/aidev?sslmode=disable'
+<pre><code>mkdir -p ~/.config/aidev
+cp .env.example ~/.config/aidev/config.env
+# then edit ~/.config/aidev/config.env if you changed the port
 aidev migrate
 # want: "database is up to date (N migrations)" or a list of "applied ..." lines</code></pre>
 
-<p>Vì sao mỗi dòng quan trọng. Dòng đầu sao chép tập tin môi trường mẫu. Nếu đổi cổng thì sửa <code>.env</code> cho khớp. Dòng thứ hai đặt <code>DATABASE_URL</code> cho shell hiện tại. Dòng thứ ba áp các migration còn thiếu. <code>aidev migrate</code> có tính lũy đẳng, tức là chạy hai lần cũng không sao: lần thứ hai chẳng còn gì để làm và nó báo cơ sở dữ liệu đã cập nhật.</p>
+<p>Vì sao mỗi dòng quan trọng. Dòng đầu tạo thư mục cấu hình. Dòng thứ hai chép các thiết lập mẫu vào <code>~/.config/aidev/config.env</code>. Nếu đổi cổng thì sửa <code>config.env</code> cho khớp. Dòng cuối áp các migration còn thiếu. <code>aidev migrate</code> có tính lũy đẳng, tức là chạy hai lần cũng không sao: lần thứ hai chẳng còn gì để làm và nó báo cơ sở dữ liệu đã cập nhật.</p>
 
 <p>Nếu <code>aidev migrate</code> báo cấu hình không hợp lệ thì nó sẽ nêu tên biến. Nếu không kết nối được thì kiểm tra xem <code>make db-up</code> còn chạy không, và cổng trong <code>DATABASE_URL</code> có khớp với cổng cơ sở dữ liệu đang nghe không. Nếu bạn sửa một tập tin migration đã áp rồi thì bộ migrator sẽ từ chối khởi động và nói rõ: đừng bao giờ sửa migration đã áp, hãy thêm migration mới.</p>
 </section>
@@ -103,7 +106,25 @@ aidev migrate
 <section id="configuration">
 <h2>Cấu hình: các biến môi trường quan trọng</h2>
 
-<p>aidev đọc cấu hình từ <strong>biến môi trường</strong>. Biến môi trường là một giá trị có tên gắn với phiên shell của bạn, như <code>DATABASE_URL</code> ở trên. Chỉ một bộ phận của aidev đọc chúng, và nó kiểm tra mọi thứ ngay khi khởi động rồi báo hết mọi lỗi một lúc, thay vì chạy nửa chừng mới đổ vỡ.</p>
+<p>aidev đọc cấu hình từ <strong>biến môi trường</strong>. Biến môi trường là một giá trị có tên gắn với phiên shell của bạn, như <code>DATABASE_URL</code>. Chỉ một bộ phận của aidev đọc chúng, và nó kiểm tra mọi thứ ngay khi khởi động rồi báo hết mọi lỗi một lúc, thay vì chạy nửa chừng mới đổ vỡ. Bạn không cần xuất các biến này mỗi khi mở terminal. Bạn chỉ viết chúng một lần vào tập tin cấu hình, rồi terminal mới nào cũng tự nhận.</p>
+
+<p>Tạo tập tin một lần. Nó nằm ở <code>$XDG_CONFIG_HOME/aidev/config.env</code>, hoặc khi <code>XDG_CONFIG_HOME</code> không đặt thì ở <code>~/.config/aidev/config.env</code>. Đặt <code>AIDEV_CONFIG</code> để chỉ một tập tin khác thay thế.</p>
+
+<pre><code>mkdir -p ~/.config/aidev
+cat &gt; ~/.config/aidev/config.env &lt;&lt;EOF
+DATABASE_URL='postgres://aidev:aidev@127.0.0.1:5434/aidev?sslmode=disable'
+EOF
+aidev config
+# in thiết lập đã nhận và cho biết đã dùng tập tin nào</code></pre>
+
+<p>Thiếu tập tin cũng không sao: aidev chỉ dùng giá trị mặc định cộng với những gì shell đã xuất. Còn tập tin đã tồn tại mà không phân tích được thì đó là lỗi nêu rõ tên tập tin và số dòng, để thiết lập hỏng không bao giờ bị lặng lẽ bỏ qua.</p>
+
+<p>Tập tin được phân tích chứ không bao giờ được thực thi, nên giá trị là chữ nguyên văn. <code>$VARIABLES</code> không được mở rộng, và một cặp dấu nháy bao quanh sẽ bị lột bỏ, nên dấu nháy ở trên chỉ bảo vệ ký tự đặc biệt chứ không thành một phần của giá trị.</p>
+
+<p>Mọi thứ xuất trong shell đều thắng tập tin, nên một lệnh vẫn chạy khác đi mà khỏi sửa gì:</p>
+
+<pre><code>DATABASE_URL='postgres://aidev:aidev@127.0.0.1:5434/aidev?sslmode=disable' aidev migrate
+# giá trị đã xuất thắng trong đúng lệnh này; tập tin không đổi</code></pre>
 
 <table>
 <tr><th>Biến</th><th>Mặc định</th><th>Dùng để làm gì</th><th>Sai thì chuyện gì xảy ra</th></tr>
@@ -119,7 +140,7 @@ aidev migrate
 <pre><code>aidev config
 aidev config --json</code></pre>
 
-<p>Dấu hiệu thành công: một bảng thiết lập với giá trị của bạn. Mật khẩu cơ sở dữ liệu hiện dạng đã che. Nếu <code>aidev config</code> báo lỗi thì nó liệt kê mọi vấn đề. Sửa hết rồi chạy lại. Cấu hình sai lộ mặt ở đây, ngay khi khởi động, chứ không đợi tới giữa task mới bung ra, đó chính là ý nghĩa của lệnh này.</p>
+<p>Dấu hiệu thành công: một bảng thiết lập với giá trị của bạn. Mật khẩu cơ sở dữ liệu hiện dạng đã che. <code>aidev config</code> cho biết đã dùng tập tin nào, hoặc báo không tìm thấy tập tin nào. Nếu <code>aidev config</code> báo lỗi thì nó liệt kê mọi vấn đề. Sửa hết rồi chạy lại. Cấu hình sai lộ mặt ở đây, ngay khi khởi động, chứ không đợi tới giữa task mới bung ra, đó chính là ý nghĩa của lệnh này.</p>
 </section>
 
 <section id="first-task">
@@ -240,6 +261,8 @@ go clean -testcache &amp;&amp; go test ./...
 rm -rf /tmp/aidev-demo
 aidev task list
 # your demo task is still in PostgreSQL: the record outlives the directory</code></pre>
+
+<p>Quay lại vào ngày mai: nếu bạn đã đóng terminal thì không cần cài đặt lại gì cả. Hãy chắc PostgreSQL đang chạy bằng <code>make db-up</code>, rồi cứ gõ <code>aidev</code>. Cấu hình của bạn đã nằm sẵn trong <code>~/.config/aidev/config.env</code>, terminal mới nào cũng tự nhận, và nhờ <code>make install</code> nên lệnh <code>aidev</code> vẫn tìm thấy. Muốn chắc thì chạy <code>aidev config</code> để xem trước khi chạy task.</p>
 </section>
 </main>
 </body>

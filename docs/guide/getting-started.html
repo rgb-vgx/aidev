@@ -64,10 +64,12 @@ make build
 
 <p>If <code>make build</code> fails, read the error. A missing Go installation says <code>go: command not found</code>. A network problem during the toolchain download says something about fetching the toolchain. Fix the named problem and run <code>make build</code> again. It is safe to repeat.</p>
 
-<p>If you prefer the program on your PATH so you can type <code>aidev</code> from any directory:</p>
+<p>Put <code>aidev</code> on your PATH so every terminal finds it:</p>
 
 <pre><code>make install
 # runs: go install ./cmd/aidev</code></pre>
+
+<p>Being "on the PATH" means this: when you type a program name, your shell searches a list of directories called the PATH until it finds a matching program. <code>make install</code> puts <code>aidev</code> into one of those directories. After that, typing <code>aidev ...</code> works from any directory, in any terminal you open, instead of only as <code>./bin/aidev</code> from inside this repository. If you have never met the idea before, think of it as installing a tool once so its name works everywhere.</p>
 
 <p>This guide uses <code>aidev</code> from here on. If you did not install it, type <code>./bin/aidev</code> wherever you see <code>aidev</code>.</p>
 </section>
@@ -88,14 +90,15 @@ make build
 
 <p>If <code>make db-up</code> fails, the usual causes are: Docker is not running (start it and try again), or the port is already in use (pick another port as shown above). The error names the cause. Fix it and repeat the command. It is safe to repeat.</p>
 
-<p>Next, configure the connection and apply the schema. A <strong>connection string</strong> is a single line of text that tells a program how to reach a database: who to log in as, where, and with what options.</p>
+<p>Next, configure the connection and apply the schema. A <strong>connection string</strong> is a single line of text that tells a program how to reach a database: who to log in as, where, and with what options. You write it once into a configuration file, as described in the <a href="#configuration">configuration section</a> below, rather than exporting it in every terminal:</p>
 
-<pre><code>cp .env.example .env
-export DATABASE_URL='postgres://aidev:aidev@127.0.0.1:5434/aidev?sslmode=disable'
+<pre><code>mkdir -p ~/.config/aidev
+cp .env.example ~/.config/aidev/config.env
+# then edit ~/.config/aidev/config.env if you changed the port
 aidev migrate
 # want: "database is up to date (N migrations)" or a list of "applied ..." lines</code></pre>
 
-<p>Why each line matters. The first copies the example environment file. Edit <code>.env</code> if you changed the port. The second sets <code>DATABASE_URL</code> in your current shell. The third applies pending migrations. <code>aidev migrate</code> is idempotent, which means running it twice is harmless: the second run finds nothing to do and says the database is up to date.</p>
+<p>Why each line matters. The first creates the configuration directory. The second copies the example settings into <code>~/.config/aidev/config.env</code>. Edit <code>config.env</code> if you changed the port. The last applies pending migrations. <code>aidev migrate</code> is idempotent, which means running it twice is harmless: the second run finds nothing to do and says the database is up to date.</p>
 
 <p>If <code>aidev migrate</code> says the configuration is invalid, it names the variable. If it cannot connect, check that <code>make db-up</code> is still running and that the port in <code>DATABASE_URL</code> matches the port the database actually listens on. If you edited a migration file that was already applied, the migrator refuses to start and tells you: never edit an applied migration; add a new one instead.</p>
 </section>
@@ -103,7 +106,25 @@ aidev migrate
 <section id="configuration">
 <h2>Configuration: the environment variables that matter</h2>
 
-<p>aidev reads its configuration from <strong>environment variables</strong>. An environment variable is a named value attached to your shell session, like <code>DATABASE_URL</code> above. Only one part of aidev reads them, and it validates everything at startup and reports every problem at once, instead of failing halfway through a task.</p>
+<p>aidev reads its configuration from <strong>environment variables</strong>. An environment variable is a named value attached to your shell session, like <code>DATABASE_URL</code>. Only one part of aidev reads them, and it validates everything at startup and reports every problem at once, instead of failing halfway through a task. You do not export these variables every time you open a terminal. You write them once into a configuration file, and every new terminal picks them up automatically.</p>
+
+<p>Create the file once. It lives at <code>$XDG_CONFIG_HOME/aidev/config.env</code>, or, when <code>XDG_CONFIG_HOME</code> is unset, at <code>~/.config/aidev/config.env</code>. Setting <code>AIDEV_CONFIG</code> names a different file instead.</p>
+
+<pre><code>mkdir -p ~/.config/aidev
+cat &gt; ~/.config/aidev/config.env &lt;&lt;EOF
+DATABASE_URL='postgres://aidev:aidev@127.0.0.1:5434/aidev?sslmode=disable'
+EOF
+aidev config
+# prints the resolved settings and which file it used</code></pre>
+
+<p>A missing file is fine: aidev simply starts with defaults plus whatever is exported in the shell. A file that exists and cannot be parsed is an error that names the file and the line, so a broken setting is never silently ignored.</p>
+
+<p>The file is parsed and never executed, so a value is literal. <code>$VARIABLES</code> are not expanded, and one pair of surrounding quotes is stripped, so the quotes above protect special characters without becoming part of the value.</p>
+
+<p>Anything exported in the shell overrides the file, so one command can be run differently without editing anything:</p>
+
+<pre><code>DATABASE_URL='postgres://aidev:aidev@127.0.0.1:5434/aidev?sslmode=disable' aidev migrate
+# the exported value wins for this one command; the file is unchanged</code></pre>
 
 <table>
 <tr><th>Variable</th><th>Default</th><th>What it does</th><th>What happens if it is wrong</th></tr>
@@ -119,7 +140,7 @@ aidev migrate
 <pre><code>aidev config
 aidev config --json</code></pre>
 
-<p>What success looks like: a table of settings with your values. The database password shows as redacted. If <code>aidev config</code> reports an error, it lists every problem. Fix them all, then run it again. A misconfiguration fails here, at startup, rather than surfacing halfway through a task, which is the point of the command.</p>
+<p>What success looks like: a table of settings with your values. The database password shows as redacted. <code>aidev config</code> prints which file it used, or says none was found. If <code>aidev config</code> reports an error, it lists every problem. Fix them all, then run it again. A misconfiguration fails here, at startup, rather than surfacing halfway through a task, which is the point of the command.</p>
 </section>
 
 <section id="first-task">
@@ -240,6 +261,8 @@ go clean -testcache &amp;&amp; go test ./...
 rm -rf /tmp/aidev-demo
 aidev task list
 # your demo task is still in PostgreSQL: the record outlives the directory</code></pre>
+
+<p>Coming back tomorrow: if you closed your terminal, there is nothing to set up again. Make sure PostgreSQL is running with <code>make db-up</code>, then just run <code>aidev</code>. Your configuration is already in <code>~/.config/aidev/config.env</code>, every new terminal picks it up, and <code>make install</code> means the <code>aidev</code> command is still found. Check with <code>aidev config</code> if you want proof before running a task.</p>
 </section>
 </main>
 </body>
