@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>aidev reference: commands, statuses, events, variables, tools</title>
+<link rel="stylesheet" href="guide.css">
+</head>
+<body>
+<nav class="breadcrumb"><a href="index.html">Guide</a> · <a href="getting-started.html">Getting started</a> · <a href="debugging.html">Debugging</a> · <a href="reference.html">Reference</a></nav>
+<main>
+<h1>Reference: the complete lists</h1>
+
+<p>This page lists everything exactly. If the getting-started and debugging pages are the story, this is the dictionary. Every command with every flag, every status, every failure kind, every event type, every environment variable with its default, and every MCP tool with its inputs. Values here are taken from the code, not from memory.</p>
+
+<div class="notice"><strong>The one rule, once more:</strong> aidev runs the agent in an isolated git worktree, then runs the task's own verification commands itself, and only those commands can move a task to SUCCEEDED. The agent saying the work is done changes nothing. The status and failure-kind tables below are shaped by that rule.</div>
+
+<section id="cli">
+<h2>CLI commands</h2>
+
+<p>Every command takes its flags with two dashes, like <code>--json</code>. Every command that prints something accepts <code>--json</code> for machine-readable output; human-readable text is the default. A task identifier, written <code>&lt;task&gt;</code> below, is either the reference (<code>TASK-000001</code>, case-insensitive) or the UUID. Logs always go to stderr, so piping <code>--json</code> output to <code>jq</code> always works.</p>
+
+<h3>Top-level commands</h3>
+
+<table>
+<tr><th>Command</th><th>Flags</th><th>What it does</th></tr>
+<tr><td><code>aidev version</code></td><td>none</td><td>Prints the aidev version.</td></tr>
+<tr><td><code>aidev config</code></td><td><code>--json</code>: print as JSON</td><td>Prints the resolved configuration, with the database password redacted. Use it to check what aidev actually read.</td></tr>
+<tr><td><code>aidev migrate</code></td><td><code>--json</code>: print the result as JSON</td><td>Applies pending database migrations. Idempotent: safe to repeat.</td></tr>
+<tr><td><code>aidev mcp</code></td><td>none</td><td>Runs the MCP server on stdio, for Claude Code. All logging goes to stderr because stdout carries the protocol.</td></tr>
+</table>
+
+<pre><code>aidev version
+aidev config
+aidev config --json
+aidev migrate
+aidev migrate --json</code></pre>
+
+<h3><code>aidev task create</code></h3>
+
+<p>Creates a task. Does not run it. At least one <code>--verify</code> is required.</p>
+
+<table>
+<tr><th>Flag</th><th>What it does</th></tr>
+<tr><td><code>--title T</code> (required)</td><td>One short line stating what to do. Must be non-blank and at most 200 characters.</td></tr>
+<tr><td><code>--verify CMD</code> (required, repeatable)</td><td>One command aidev will run itself to verify the task. Repeat for more than one. Commands run without a shell: pipes, redirects, and operators like <code>|</code>, <code>&gt;</code>, and <code>&amp;&amp;</code> are rejected at parse time with an explanation.</td></tr>
+<tr><td><code>--repo PATH</code></td><td>Path to the git repository. Default: the current directory. An unknown repository is registered as a project automatically.</td></tr>
+<tr><td><code>--description D</code></td><td>The full instruction for the agent.</td></tr>
+<tr><td><code>--acceptance A</code></td><td>What done looks like, in prose.</td></tr>
+<tr><td><code>--agent NAME</code></td><td>Agent to use. Default: the <code>OPENCODE_AGENT</code> setting, which is <code>build</code>. aidev validates the name itself because OpenCode silently falls back to its default on an unknown name and still exits zero.</td></tr>
+<tr><td><code>--priority N</code></td><td>Higher runs first. Default 0. Range -1000 to 1000.</td></tr>
+<tr><td><code>--max-retries N</code></td><td>Recorded for a future retry feature. The current version never retries.</td></tr>
+<tr><td><code>--requires-approval</code></td><td>Gate the task behind a human decision. It will wait in WAITING_APPROVAL until approved.</td></tr>
+<tr><td><code>--base-ref REF</code></td><td>Git ref to branch from. Default: the project's default branch. Checked now rather than at worktree creation.</td></tr>
+<tr><td><code>--timeout DURATION</code></td><td>Bound this task's agent run, for example <code>60m</code>. Default: DEFAULT_TASK_TIMEOUT.</td></tr>
+<tr><td><code>--json</code></td><td>Print the created task as JSON.</td></tr>
+</table>
+
+<h3><code>aidev task list</code>, <code>get</code>, <code>run</code></h3>
+
+<table>
+<tr><th>Command</th><th>Flags</th><th>What it does</th></tr>
+<tr><td><code>aidev task list</code></td><td><code>--status S,S</code>: comma-separated statuses to include; <code>--repo PATH</code>: only tasks for this repository; <code>--limit N</code>: maximum tasks to return; <code>--json</code></td><td>Lists tasks, newest first. An unknown status is rejected and named. A repository with no tasks is an empty result, not an error.</td></tr>
+<tr><td><code>aidev task get &lt;task&gt;</code></td><td><code>--json</code></td><td>Shows one task. Accepts a reference or a UUID.</td></tr>
+<tr><td><code>aidev task run &lt;task&gt;</code></td><td><code>--json</code></td><td>Runs a task to completion: creates an isolated git worktree, runs the agent in it, then runs the verification commands and records the outcome. Exits non-zero when the task does not succeed. An approval gate is not a failure: it reports that a human must decide and exits zero.</td></tr>
+</table>
+
+<h3><code>aidev task result</code>, <code>events</code>, <code>cancel</code>, <code>approve</code></h3>
+
+<table>
+<tr><th>Command</th><th>Flags</th><th>What it does</th></tr>
+<tr><td><code>aidev task result &lt;task&gt;</code></td><td><code>--logs</code>: include the agent transcript, the diff, and full verification output; <code>--json</code></td><td>Shows the outcome of a task's latest attempt. A task that has never run is not an error: its attempt section is simply absent.</td></tr>
+<tr><td><code>aidev task events &lt;task&gt;</code></td><td><code>--payload</code>: include each event's payload; <code>--after SEQ</code>: only events after this sequence number; <code>--limit N</code>: maximum events to return; <code>--json</code></td><td>Shows a task's event history in order. Page with <code>seq &gt; last_seen</code>.</td></tr>
+<tr><td><code>aidev task cancel &lt;task&gt;</code></td><td><code>--reason R</code>: why it is being cancelled (default notes the command line); <code>--json</code></td><td>Cancels a task that has not finished. Moves it to CANCELLED, closes any open attempt, marks any active worktree RETAINED, and appends <code>task.cancelled</code>. Work in progress is never discarded. Cancelling a finished task is an error.</td></tr>
+<tr><td><code>aidev task approve &lt;task&gt;</code></td><td><code>--deny</code>: deny instead of approving, which fails the task; <code>--by WHO</code>: who is deciding (default: <code>$USER</code>); <code>--reason R</code>: why; <code>--json</code></td><td>Approves or denies a task waiting in WAITING_APPROVAL. Granted moves it to READY; denied moves it to FAILED. This is a human decision: a planner must not call it on its own initiative.</td></tr>
+</table>
+
+<h3><code>aidev worktree</code></h3>
+
+<table>
+<tr><th>Command</th><th>Flags</th><th>What it does</th></tr>
+<tr><td><code>aidev worktree list</code></td><td><code>--all</code>: include worktrees aidev has already removed; <code>--json</code></td><td>Lists worktrees with their task, status, size, and branch. Flags a record whose directory has disappeared from disk.</td></tr>
+<tr><td><code>aidev worktree remove &lt;task&gt;</code></td><td><code>--force</code>: discard uncommitted work in the worktree</td><td>Removes the worktree of a task's latest attempt. Without <code>--force</code>, git refuses to delete a worktree holding uncommitted or untracked work. With <code>--force</code>, that work is discarded permanently and the forced removal is recorded in the task's history. The task's branch is left alone either way. Refused while the task is RUNNING or VERIFYING.</td></tr>
+</table>
+
+<pre><code>aidev task list --status RUNNING,VERIFYING
+aidev task result TASK-000001 --logs
+aidev task events TASK-000001 --payload --after 5
+aidev worktree list
+aidev worktree remove TASK-000001 --force</code></pre>
+</section>
+
+<section id="task-statuses">
+<h2>Task statuses</h2>
+
+<p>The authoritative list lives in <code>internal/task/status.go</code>. The SQL CHECK constraint mirrors it, and a test fails if the two drift apart. Adding a status means updating both the Go enumeration and the SQL constraint in a new migration, never editing an applied migration.</p>
+
+<table>
+<tr><th>Status</th><th>What it means</th><th>What can follow it</th></tr>
+<tr><td><code>PENDING</code></td><td>The task exists but is not yet eligible to run. In the current version nothing blocks a task, so it becomes ready as soon as a run is requested.</td><td><code>READY</code>, <code>WAITING_APPROVAL</code>, <code>CANCELLED</code></td></tr>
+<tr><td><code>READY</code></td><td>The task is eligible to be picked up.</td><td><code>RUNNING</code>, <code>WAITING_APPROVAL</code>, <code>CANCELLED</code></td></tr>
+<tr><td><code>RUNNING</code></td><td>An agent is executing inside the task's worktree.</td><td><code>VERIFYING</code>, <code>FAILED</code>, <code>CANCELLED</code></td></tr>
+<tr><td><code>VERIFYING</code></td><td>The agent finished and aidev is independently running the task's verification commands.</td><td><code>SUCCEEDED</code>, <code>FAILED</code>, <code>CANCELLED</code></td></tr>
+<tr><td><code>SUCCEEDED</code></td><td>Verification passed. Terminal: nothing follows. Reachable only from VERIFYING, which is what makes an agent's claim irrelevant.</td><td>nothing: terminal</td></tr>
+<tr><td><code>FAILED</code></td><td>The attempt failed: the agent errored, timed out, or verification did not pass. Terminal.</td><td>nothing: terminal</td></tr>
+<tr><td><code>CANCELLED</code></td><td>A human or a shutdown stopped the task. Terminal.</td><td>nothing: terminal</td></tr>
+<tr><td><code>WAITING_APPROVAL</code></td><td>The task is gated by policy and will not execute until an approval is granted. No worktree and no attempt exist yet.</td><td><code>READY</code> (granted), <code>FAILED</code> (denied), <code>CANCELLED</code></td></tr>
+</table>
+
+<p>Two properties are asserted by tests rather than left to review. First, VERIFYING is the only state that can reach SUCCEEDED: there is no edge from RUNNING to SUCCEEDED. Second, every non-terminal state can reach CANCELLED, so no task is unstoppable. <code>FAILED</code> to <code>READY</code> (retry) is deliberately absent: attempts are numbered and appended so retry can be added later, but the edge does not exist yet.</p>
+</section>
+
+<section id="failure-kinds">
+<h2>Failure kinds</h2>
+
+<p><code>task.FailureKind</code> is the shared vocabulary for why something failed. The values come from failure modes actually provoked during research, not from imagination. An unclassifiable failure is recorded as UNKNOWN rather than forced into a plausible bucket.</p>
+
+<table>
+<tr><th>Kind</th><th>Cause</th></tr>
+<tr><td><code>STARTUP</code></td><td>The agent process could not start or rejected its arguments. Observed example: an invalid working directory exits 1 with a message on stderr and nothing on stdout.</td></tr>
+<tr><td><code>AGENT_ERROR</code></td><td>The agent reported an error in its own event stream. Observed example: an invalid model produces an error event on stdout.</td></tr>
+<tr><td><code>AGENT_EXIT</code></td><td>Non-zero exit with no error event.</td></tr>
+<tr><td><code>TIMEOUT</code></td><td>aidev's deadline elapsed. Every external process gets a timeout with no exceptions, including verification commands.</td></tr>
+<tr><td><code>CANCELLED</code></td><td>A human or a shutdown stopped it.</td></tr>
+<tr><td><code>VERIFICATION</code></td><td>The agent finished but verification did not pass. This is the expected failure mode, not an anomaly: it is the one rule producing a FAILED task.</td></tr>
+<tr><td><code>WORKTREE</code></td><td>The isolated workspace could not be prepared or inspected.</td></tr>
+<tr><td><code>APPROVAL_DENIED</code></td><td>Policy refused: a human denied the approval request.</td></tr>
+<tr><td><code>INTERNAL</code></td><td>aidev itself failed, for example a database error.</td></tr>
+<tr><td><code>UNKNOWN</code></td><td>Unclassifiable. Kept as an honest bucket rather than a plausible guess.</td></tr>
+</table>
+
+<p>Classification never trusts the exit code alone. An unknown agent name makes OpenCode print a warning, fall back to its default, and exit zero, so aidev validates agent names itself. See the <a href="debugging.html#task-result">task result section</a> for how to read a failure kind next to its evidence.</p>
+</section>
+
+<section id="events-reference">
+<h2>Event types</h2>
+
+<p>The event log is append-only. The database rejects UPDATE on the events table with a trigger; the way to correct the record is to append a corrective event. Deleting a task cascades to its history, which is legitimate retention. Payloads are always JSON objects, never bare values, so consumers can always index by field name. Defined in <code>internal/event/event.go</code>; every value below is exact.</p>
+
+<table>
+<tr><th>Event type</th><th>When it is appended</th></tr>
+<tr><td><code>task.created</code></td><td>A task was created, in the same transaction as the task row.</td></tr>
+<tr><td><code>task.ready</code></td><td>The task became eligible to run.</td></tr>
+<tr><td><code>task.started</code></td><td>The task was claimed and its attempt opened, atomically: a task can never be RUNNING without a record of which attempt is running it.</td></tr>
+<tr><td><code>task.succeeded</code></td><td>Verification passed and the task reached SUCCEEDED.</td></tr>
+<tr><td><code>task.failed</code></td><td>The attempt failed, with the failure kind in the payload.</td></tr>
+<tr><td><code>task.cancelled</code></td><td>A human or a shutdown cancelled the task, with the reason in the payload.</td></tr>
+<tr><td><code>task.worktree_created</code></td><td>The isolated worktree was created for the attempt.</td></tr>
+<tr><td><code>task.worktree_removed</code></td><td>The worktree was removed, on success or by an operator with <code>aidev worktree remove</code>.</td></tr>
+<tr><td><code>task.worktree_retained</code></td><td>The worktree was kept for inspection after failure or cancellation.</td></tr>
+<tr><td><code>task.worker_started</code></td><td>The agent subprocess started in the worktree.</td></tr>
+<tr><td><code>task.worker_completed</code></td><td>The agent subprocess finished, with its exit classification in the payload.</td></tr>
+<tr><td><code>task.verification_started</code></td><td>aidev began running the task's verification commands.</td></tr>
+<tr><td><code>task.verification_step_completed</code></td><td>One verification step finished, with its command and exit code.</td></tr>
+<tr><td><code>task.verification_completed</code></td><td>The verification pass finished, with the count of passed steps.</td></tr>
+<tr><td><code>task.approval_required</code></td><td>The task was gated behind a human decision.</td></tr>
+<tr><td><code>task.approval_granted</code></td><td>A human approved the task; it becomes READY.</td></tr>
+<tr><td><code>task.approval_denied</code></td><td>A human denied the task; it becomes FAILED with kind APPROVAL_DENIED.</td></tr>
+</table>
+
+<pre><code>aidev task events TASK-000001 --payload
+# shows every type above, in seq order, with payloads
+
+aidev task events TASK-000001 --after 5 --limit 50
+# only events after sequence 5, at most 50 rows</code></pre>
+</section>
+
+<section id="environment">
+<h2>Environment variables</h2>
+
+<p>Configuration is read only by <code>internal/config</code>. Nothing else in aidev reads the environment directly. Everything is validated at startup and every problem is reported at once. <code>DATABASE_URL</code> is the only required variable; everything else has a default.</p>
+
+<table>
+<tr><th>Variable</th><th>Default</th><th>Purpose</th></tr>
+<tr><td><code>DATABASE_URL</code></td><td>none: required</td><td>PostgreSQL connection string, for example <code>postgres://aidev:aidev@127.0.0.1:5434/aidev?sslmode=disable</code>.</td></tr>
+<tr><td><code>WORKSPACE_ROOT</code></td><td><code>$XDG_DATA_HOME/aidev/worktrees</code>, else <code>~/.local/share/aidev/worktrees</code></td><td>Where task worktrees are created. Every worktree path must resolve inside it.</td></tr>
+<tr><td><code>DEFAULT_TASK_TIMEOUT</code></td><td><code>30m</code></td><td>Bounds one agent run when the task does not set its own timeout. Deliberately generous: first runs against unseen repositories were measured taking minutes.</td></tr>
+<tr><td><code>DEFAULT_VERIFICATION_TIMEOUT</code></td><td><code>10m</code></td><td>Bounds one verification step.</td></tr>
+<tr><td><code>OPENCODE_COMMAND</code></td><td><code>opencode</code></td><td>The OpenCode executable aidev invokes.</td></tr>
+<tr><td><code>OPENCODE_MODEL</code></td><td><code>opencode/muse-spark-1.3-contributor-free</code></td><td>Model passed as <code>-m</code>. Needs no credentials. Set to an empty string to let OpenCode choose.</td></tr>
+<tr><td><code>OPENCODE_AGENT</code></td><td><code>build</code></td><td>Default OpenCode agent for tasks that do not name one.</td></tr>
+<tr><td><code>MAX_OUTPUT_BYTES</code></td><td><code>1048576</code> (1 MiB) per captured stream</td><td>Caps each captured stream before it reaches the database. Output beyond it is dropped and flagged as truncated. Minimum 1024.</td></tr>
+<tr><td><code>WORKTREE_CLEANUP</code></td><td><code>on-success</code></td><td><code>on-success</code> commits the work and removes the worktree; <code>never</code> keeps every worktree. Neither discards failed work.</td></tr>
+<tr><td><code>LOG_LEVEL</code></td><td><code>info</code></td><td>Minimum log level: <code>debug</code>, <code>info</code>, <code>warn</code>, <code>error</code>.</td></tr>
+<tr><td><code>OTEL_EXPORTER_OTLP_ENDPOINT</code></td><td>unset: tracing off</td><td>Base OTLP HTTP URL. Traces post to <code>&lt;base&gt;/v1/traces</code>. Tracing is off unless an endpoint is set.</td></tr>
+<tr><td><code>OTEL_EXPORTER_OTLP_TRACES_ENDPOINT</code></td><td>unset</td><td>Full signal-specific traces URL, used as given. Takes precedence over the base variable.</td></tr>
+<tr><td><code>OTEL_EXPORTER_OTLP_HEADERS</code></td><td>unset</td><td>Comma-separated <code>key=value</code> pairs, for example authorization headers.</td></tr>
+<tr><td><code>OTEL_SERVICE_NAME</code></td><td><code>aidev</code></td><td>Service name shown in the tracing backend.</td></tr>
+<tr><td><code>OTEL_TRACES_SAMPLER_ARG</code></td><td><code>1</code></td><td>Sample ratio from 0 to 1. Values outside that range fail at startup.</td></tr>
+</table>
+
+<p>Related variables that are not aidev configuration but appear in its workflow: <code>AIDEV_DB_PORT</code> overrides the host PostgreSQL port for <code>make db-up</code>; <code>TEST_DATABASE_URL</code> points integration tests at a database (without it they skip themselves); <code>AIDEV_TEST_OTLP</code> gates the live tracing export test. See the <a href="debugging.html#tracing">tracing section</a> for the OTLP variables in use.</p>
+
+<pre><code>aidev config
+aidev config --json
+# the resolved configuration, password redacted; the way to check every default above</code></pre>
+</section>
+
+<section id="mcp-tools">
+<h2>MCP tools</h2>
+
+<p>aidev exposes eight tools to an MCP client such as Claude Code, over stdio. The planner on the other side never learns the OpenCode command line. Shapes are defined once in <code>internal/view</code> and shared by the CLI's JSON output and the MCP schemas, so the two cannot drift apart. What is deliberately not exposed: nothing that runs an arbitrary command, no worktree manipulation, no merge or push, no configuration surface, and no project or event writes.</p>
+
+<table>
+<tr><th>Tool</th><th>Required inputs</th><th>Optional inputs</th><th>What it does</th></tr>
+<tr><td><code>aidev_create_task</code></td><td><code>repo_path</code> (absolute path), <code>title</code>, <code>verification</code> (string array, must be non-empty)</td><td><code>description</code>, <code>acceptance_criteria</code>, <code>agent</code> (default <code>build</code>), <code>priority</code> (default 0), <code>requires_approval</code>, <code>base_ref</code>, <code>timeout_seconds</code></td><td>Creates a task. Does not run it. Registers the repository as a project if unknown. Appends <code>task.created</code>, all in one transaction.</td></tr>
+<tr><td><code>aidev_run_task</code></td><td><code>task</code> (reference or UUID)</td><td><code>wait_seconds</code> (default 120, maximum 900, 0 returns at once)</td><td>Isolates, delegates, verifies, records. May return before the task finishes, with <code>still_running: true</code>; the run continues regardless. Calling it again while a run is in flight joins that run. Read <code>succeeded</code>, which is true only when verification passed.</td></tr>
+<tr><td><code>aidev_get_task_result</code></td><td><code>task</code></td><td><code>include_logs</code> (also return the agent transcript, the diff, and full verification output)</td><td>The outcome of the latest attempt: task, attempt, worker (including the agent's claim as <code>summary</code>), verification evidence, worktree, approval. A failing step's output is included even without logs, trimmed to the last 2000 bytes. Absent sections are omitted rather than empty.</td></tr>
+<tr><td><code>aidev_get_task_events</code></td><td><code>task</code></td><td><code>after_seq</code>, <code>limit</code> (default 200, maximum 1000)</td><td>History in order: <code>seq</code>, <code>type</code>, <code>created_at</code>, <code>attempt_id</code>, <code>payload</code>. Returns <code>count</code> and <code>last_seq</code>; pass <code>last_seq</code> back as <code>after_seq</code> to continue.</td></tr>
+<tr><td><code>aidev_list_tasks</code></td><td>none</td><td><code>repo_path</code>, <code>statuses</code> (any of the eight statuses), <code>limit</code> (default 50, maximum 500)</td><td>Finds work, newest first, with <code>count</code>.</td></tr>
+<tr><td><code>aidev_get_task</code></td><td><code>task</code></td><td>none</td><td>Returns one task. References are case-insensitive.</td></tr>
+<tr><td><code>aidev_cancel_task</code></td><td><code>task</code></td><td><code>reason</code></td><td>Stops a task; its worktree is kept. Errors when the task already finished.</td></tr>
+<tr><td><code>aidev_approve_task</code></td><td><code>task</code>, <code>approve</code> (boolean: true grants, false denies)</td><td><code>decided_by</code>, <code>reason</code></td><td>A human releases a gated task. Granted moves it to READY; denied fails it with <code>task.approval_denied</code>. Required rather than defaulted, so approval cannot happen by omission.</td></tr>
+</table>
+
+<p>A run takes as long as the agent does, measured between 9 and 656 seconds, while a client will not wait indefinitely. That is why <code>aidev_run_task</code> waits a bounded time and then returns with <code>still_running</code> set while the task continues. The planner polls <code>aidev_get_task_result</code>. The field to read is <code>succeeded</code>, which is true only when aidev's own verification passed. Back at the <a href="index.html">guide index</a> for the big picture, the <a href="getting-started.html">getting started page</a> for the terminal form of the same flow, and the <a href="debugging.html">debugging page</a> for what to do when <code>succeeded</code> is false.</p>
+</section>
+</main>
+</body>
+</html>

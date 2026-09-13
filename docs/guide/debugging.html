@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Debugging aidev tasks: logs, events, results, worktrees</title>
+<link rel="stylesheet" href="guide.css">
+</head>
+<body>
+<nav class="breadcrumb"><a href="index.html">Guide</a> · <a href="getting-started.html">Getting started</a> · <a href="debugging.html">Debugging</a> · <a href="reference.html">Reference</a></nav>
+<main>
+<h1>Debugging: how to find out what happened</h1>
+
+<p><strong>Debugging</strong> means finding out what happened when something did not work as expected. aidev gives you four places to look: logs, the event history, the task result, and the retained worktree. This page explains each one, in the order to try them.</p>
+
+<div class="notice"><strong>The one rule still applies while debugging:</strong> only verification can move a task to SUCCEEDED. When a task fails, the verification output is the verdict. The agent transcript is context. Do not read the agent's summary first and work backwards. Read the verification result first, then use the agent transcript to understand how it got there.</div>
+
+<section id="where-to-look-first">
+<h2>Where to look first</h2>
+
+<p>Start with the symptom. Match it to a starting point:</p>
+
+<table>
+<tr><th>Symptom</th><th>Start here</th><th>Command</th></tr>
+<tr><td>A task failed and you want to know why</td><td>The result with full output</td><td><code>aidev task result TASK-000001 --logs</code></td></tr>
+<tr><td>A task seems stuck or slow</td><td>The event history</td><td><code>aidev task events TASK-000001</code></td></tr>
+<tr><td>aidev itself printed an error</td><td>The logs on stderr</td><td>Re-run and read stderr; raise <code>LOG_LEVEL</code> to <code>debug</code></td></tr>
+<tr><td>You want the agent's half-finished files</td><td>The retained worktree</td><td><code>aidev worktree list</code></td></tr>
+<tr><td>A task is stuck in RUNNING after a crash</td><td>Recovery by cancellation</td><td><code>aidev task cancel TASK-000001 --reason "..."</code></td></tr>
+<tr><td>You need timings across a whole run</td><td>Tracing</td><td>Set <code>OTEL_EXPORTER_OTLP_ENDPOINT</code> and view the trace</td></tr>
+</table>
+
+<p>The rest of this page takes each row in turn. If you are new, read the whole page once. Afterwards use the table above as an index.</p>
+</section>
+
+<section id="logs">
+<h2>Logs: where they go and why they are on stderr</h2>
+
+<p>A <strong>log</strong> is a line of diagnostic text a program emits while it runs. Every program has two output streams: <strong>stdout</strong> (standard output) and <strong>stderr</strong> (standard error). By convention, stdout carries the program's actual answer and stderr carries diagnostics about how it got there.</p>
+
+<p>aidev follows that convention strictly. Human-readable command output goes to stdout. All logging goes to stderr. There is one reason, and it is load-bearing rather than stylistic: when aidev runs as an MCP server, stdout carries the JSON-RPC protocol that Claude Code speaks. JSON-RPC is a format for one program to call functions on another over a pipe. One stray log line on stdout would corrupt that protocol stream. So the logging package has no stdout option at all. Removing the possibility is more reliable than remembering the rule.</p>
+
+<p>This separation is also what makes JSON output composable. Because logs never touch stdout, this works:</p>
+
+<pre><code>aidev task get TASK-000001 --json | jq .status
+# stdout carries JSON, so piping it to jq works;
+# diagnostics stay visible on stderr, on your terminal</code></pre>
+
+<p>What success looks like: the status printed by <code>jq</code>, plus any log lines shown separately on your terminal. If <code>jq</code> complains about invalid input, something wrote non-JSON to stdout, which should never happen. Report it.</p>
+
+<p>Log lines are structured. Each one carries fields you can use to follow one task through them:</p>
+
+<pre><code>LOG_LEVEL=debug aidev task run TASK-000001 2&gt; aidev.log
+grep 'TASK-000001' aidev.log | head -20</code></pre>
+
+<p>The <code>2&gt;</code> part redirects stderr into a file. That is needed because logs go to stderr, not stdout. The fields to look for are <code>task_id</code>, <code>attempt_id</code>, and <code>worktree_path</code>. They are attached to a logger carried in the program's context, so deep code paths inherit them without passing a logger through every function. To follow one task, filter by its reference or id. To follow one execution, filter by the attempt id.</p>
+
+<p><code>LOG_LEVEL</code> controls how much is emitted. The allowed values are <code>debug</code>, <code>info</code>, <code>warn</code>, and <code>error</code>. The default is <code>info</code>. Set <code>LOG_LEVEL=debug</code> when you need the full picture, for example when a task fails in a way the result does not explain. An unknown value fails at startup with a message naming the allowed values. aidev never logs secrets: connection strings are redacted before they are printed or logged, and the environment handed to a subprocess is never recorded.</p>
+
+<p>If raising the log level does not explain a timing problem, turn on tracing instead, as described in the <a href="debugging.html#tracing">tracing section</a>. Logs tell you what happened. Traces tell you how long each part took.</p>
+</section>
+
+<section id="events">
+<h2>Events: reading the history, including while a task runs</h2>
+
+<p>The event history is the task's diary. Every state change and every major step appends an event in the same database transaction as the change, so history cannot disagree with state. Events have sequence numbers (<code>seq</code>) that give a total order independent of clock resolution: two events written in the same millisecond are still strictly ordered, which timestamps alone cannot guarantee.</p>
+
+<p>Read the history with aidev task events:</p>
+
+<pre><code>aidev task events TASK-000001
+# want, for a finished task, something like:
+#   1       10:02:11.041  task.created
+#   2       10:02:11.058  task.ready
+#   3       10:02:12.004  task.started
+#   4       10:02:12.031  task.worktree_created
+#   5       10:02:12.040  task.worker_started
+#   6       10:12:03.112  task.worker_completed
+#   7       10:12:03.120  task.verification_started
+#   8       10:12:03.205  task.verification_step_completed
+#   9       10:12:03.208  task.verification_completed
+#   10      10:12:03.220  task.succeeded</code></pre>
+
+<p>Each row shows the sequence number, the time in UTC, and the event type. The full vocabulary of event types is on the <a href="reference.html#events-reference">reference page</a>. The important ones for diagnosis are <code>task.created</code>, <code>task.ready</code>, <code>task.started</code>, <code>task.worktree_created</code>, <code>task.worker_started</code>, <code>task.worker_completed</code>, <code>task.verification_started</code>, <code>task.verification_step_completed</code>, <code>task.verification_completed</code>, and the terminal trio <code>task.succeeded</code>, <code>task.failed</code>, <code>task.cancelled</code>.</p>
+
+<p>Three flags change what you see:</p>
+
+<pre><code>aidev task events TASK-000001 --payload
+# include each event's JSON payload, for example the verification exit codes
+
+aidev task events TASK-000001 --after 5
+# only events after sequence number 5; readers page with seq &gt; last_seen
+
+aidev task events TASK-000001 --json | jq .
+# machine-readable output, same information as JSON</code></pre>
+
+<p>What success looks like: the events listed in order, with payloads shown when you ask for them. If the command says there are no events, the task reference is probably wrong, or the task was created but nothing has happened yet. Check the reference with <code>aidev task list</code>.</p>
+
+<p>Watching a task while it runs means running the same command repeatedly from another terminal. A run takes minutes, and most of that is the agent, so the history tells you which stage it is in. If the last event is <code>task.worker_started</code> and several minutes have passed, the agent is still working. That is normal. If the last event is <code>task.verification_started</code>, aidev is running the checks itself and the end is near. For scripted polling, record the highest <code>seq</code> you have seen and pass it back as <code>--after</code> next time, so each call returns only what is new.</p>
+
+<pre><code>watch -n 10 'aidev task events TASK-000001 | tail -5'
+# re-runs the command every 10 seconds; Ctrl-C stops watching
+# if watch is not installed, just re-run aidev task events by hand</code></pre>
+</section>
+
+<section id="task-result">
+<h2>Task result: reading the outcome, including with full output</h2>
+
+<p>The result is the verdict plus the evidence. Read it with aidev task result:</p>
+
+<pre><code>aidev task result TASK-000001
+# the outcome of the latest attempt: status, failure kind, timing,
+# per-step verification results, and where the work is
+
+aidev task result TASK-000001 --logs
+# everything above, plus the agent transcript, the diff, and full output
+
+aidev task result TASK-000001 --json | jq .verification
+# just the verification section, as JSON</code></pre>
+
+<p>What each part means. The task section gives the status, for example SUCCEEDED or FAILED. The attempt section gives the attempt number, its status, the failure kind when it failed (such as VERIFICATION or TIMEOUT), and timing. The worker section describes what the agent did: its argv, its exit code, how many files changed, and its summary. The summary is the agent's claim about its own work, recorded verbatim. It is useful for diagnosis and it never decides anything. The verification section lists one entry per step with the command, the status, and the exit code. This is the evidence. The worktree section gives the path, the branch, and whether it was removed or RETAINED.</p>
+
+<p>A failing step's output is included even without <code>--logs</code>, trimmed to the last 2000 bytes, because it is the first thing anyone needs. A passing step's output is not, to keep the display short. With <code>--logs</code> you get everything: the agent's stdout and stderr streams, the diff aidev collected from git, and the full verification output. Output beyond the per-stream capture limit is dropped and flagged as truncated, so a runaway agent cannot exhaust memory or the database.</p>
+
+<p>If the task has never run, there is no attempt section. That is not an error. It means exactly what it says: the task was created and nothing has executed yet. Run it with <code>aidev task run TASK-000001</code>.</p>
+
+<p>A worked reading of a failure. Suppose the result says FAILED with failure kind VERIFICATION, and the verification section shows <code>go test ./...</code> at exit 1 with output naming a missing function. The diagnosis is: the agent did not write the function, or wrote it with the wrong name. The fix is a better instruction, not a different command. Now check the worker summary: if it says "Done, all tests pass", you have the classic case the integration suite tests for, an agent claiming success while changing nothing. The claim is on record beside the contradiction. Trust the exit code.</p>
+</section>
+
+<section id="worktrees">
+<h2>Worktrees: finding and inspecting a retained failed task</h2>
+
+<p>A failed or cancelled task keeps its worktree on disk, untouched and uncommitted. The status RETAINED means exactly that: kept for inspection. There is deliberately no setting that discards failed work. The cleanup policy has two values only: <code>on-success</code>, which commits the work and removes the worktree, and <code>never</code>, which keeps every worktree. Neither discards failed work. As a backstop, plain <code>git worktree remove</code> refuses to delete a worktree holding uncommitted work, and aidev never passes <code>--force</code> automatically.</p>
+
+<p>List what is being kept:</p>
+
+<pre><code>aidev worktree list
+# each worktree with its task, its status, its size,
+# and a flag when the directory is missing from disk
+
+aidev worktree list --all
+# also include worktrees aidev has already removed
+
+aidev worktree list --json | jq .
+# machine-readable form of the same list</code></pre>
+
+<p>What success looks like: one line per worktree, for example <code>TASK-000002 FAILED attempt 1 RETAINED /path/to/worktrees/TASK-000002-a1</code>, plus a total size at the end. A line flagged as missing from disk means something outside aidev deleted the directory. aidev tells you rather than showing a path that does not exist.</p>
+
+<p>Inspect a retained worktree directly. It is an ordinary directory with an ordinary git checkout in it. Change into it, look at the files, run the failing command by hand:</p>
+
+<pre><code>cd /home/you/.local/share/aidev/worktrees/TASK-000002-a1
+git status --porcelain
+git diff
+go test ./...
+# run the failing check yourself, in the worktree, to see the same failure</code></pre>
+
+<p>The path above is an example. Use the real path from <code>aidev worktree list</code>. Your workspace root may differ; <code>aidev config</code> shows it. Do not edit files in the retained worktree expecting the task to pick them up. The attempt is over. The worktree is evidence, not a second chance. If the partial work is worth keeping, copy the files out or commit them on the task branch yourself.</p>
+
+<p>When you are done, reclaim the disk:</p>
+
+<pre><code>aidev worktree remove TASK-000002
+# refused if the work is uncommitted, which protects a failed attempt's output
+
+aidev worktree remove TASK-000002 --force
+# discard the work permanently; the task's branch is left alone either way</code></pre>
+
+<p>Passing <code>--force</code> discards uncommitted work permanently and records the forced removal in the task's history as your decision. If the task is still RUNNING or VERIFYING, removal is refused: cancel it first. If the directory is already gone from disk, aidev reconciles the record rather than refusing, and prunes git's administrative entry.</p>
+</section>
+
+<section id="tracing">
+<h2>Tracing: turning it on and viewing it</h2>
+
+<p><strong>Tracing</strong> records how long each part of a run took, as a tree of spans. A <strong>span</strong> is one timed operation, like creating the worktree or running the agent. Tracing answers "where did the time go" in a way logs cannot. aidev exports traces in a standard format called OTLP, which keeps no vendor dependency: any backend that accepts OTLP works.</p>
+
+<p>Tracing is off unless you configure an endpoint. When it is off, instrumented code uses a no-op tracer, so there is no overhead and no network connection. To turn it on, point aidev at a backend. The simplest backend for local use is Jaeger, which runs as one container with its UI on port 16686:</p>
+
+<pre><code>make jaeger-up
+eval "$(make jaeger-env)"
+# the second command sets OTEL_EXPORTER_OTLP_ENDPOINT in your current shell
+aidev task run TASK-000001</code></pre>
+
+<p>What success looks like: the run proceeds normally, and afterwards the Jaeger UI at <code>http://localhost:16686</code> shows one trace for the run. <code>eval "$(...)"</code> means "run the output of this command as shell commands", which is how the endpoint address gets into your environment. If the UI shows nothing, check that the endpoint variable is actually set in the shell that ran aidev:</p>
+
+<pre><code>echo "$OTEL_EXPORTER_OTLP_ENDPOINT"
+# want: an http URL printed by make jaeger-env, for example http://localhost:4318</code></pre>
+
+<p>A real run looks like this, with the agent dominating:</p>
+
+<pre><code>aidev.task.run            10.97s
+  aidev.worktree.create    0.02s
+  aidev.agent.run         10.86s   usage {input: 9580, output: 457}
+  aidev.verification       0.08s
+    aidev.verification.step   0s   go test ./... -&gt; exit 0</code></pre>
+
+<p>That shape is typical: aidev's own work is a fraction of a second and the agent is everything else. If a run is slow, the trace shows it is the model, and the remedy is a faster model rather than tuning aidev.</p>
+
+<p>The tracing variables, all optional, with their meaning:</p>
+
+<pre><code>OTEL_EXPORTER_OTLP_ENDPOINT=https://example.com/otel        # base URL; traces post to &lt;base&gt;/v1/traces
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=https://other:4318/v1/traces  # full URL, used as given, takes precedence
+OTEL_EXPORTER_OTLP_HEADERS='Authorization=Bearer secret'     # comma-separated key=value pairs
+OTEL_SERVICE_NAME=aidev                                       # service name shown in the backend
+OTEL_TRACES_SAMPLER_ARG=1                                     # 0 to 1; 1 keeps everything</code></pre>
+
+<p>Two traps are recorded here because both are easy to repeat. First, aidev deliberately does not pass its OTLP configuration to the agent subprocess: OpenCode is itself instrumented, and one run otherwise filed over a thousand spans of its own internals into the backend under aidev's name. Second, if you use self-hosted Langfuse, note version 4 removed <code>GET /api/public/traces</code>: use <code>GET /api/public/v2/observations</code>, and check the HTTP status code rather than reading an empty data field out of an error body.</p>
+</section>
+
+<section id="recovery">
+<h2>Recovery: a task left RUNNING by a crash</h2>
+
+<p>If aidev is killed mid-run, by <code>kill -9</code>, a closed laptop, or a stopped container, the task is left in RUNNING with an open attempt and a worktree on disk. Nothing will pick it up again. A running task is not runnable, and aidev cannot know whether another process is still working on it. aidev deliberately does not expire a stale RUNNING task on its own: declaring a task dead while another process is still driving it would be worse than asking you to cancel it deliberately.</p>
+
+<p>The way back is to cancel it. First find the stuck tasks, then cancel with a reason:</p>
+
+<pre><code>aidev task list --status RUNNING,VERIFYING
+# find every task that was executing when aidev died
+
+aidev task cancel TASK-000001 --reason "aidev was killed mid-run"
+# moves it to CANCELLED, closes the open attempt, retains the worktree</code></pre>
+
+<p>What success looks like: the cancel command reports the task is CANCELLED, and <code>aidev worktree list</code> shows the worktree as RETAINED. The partial work survives and the task's history stays coherent, with the cancellation appended as a new event. Cancelling a task that already finished is an error naming that fact. Cancelling records the reason you gave in the task's history, so write one that your future self will understand.</p>
+
+<p>After cancelling, inspect the retained worktree as described in the <a href="debugging.html#worktrees">worktrees section</a>, and remove it with <code>aidev worktree remove</code> once you are done. Create a new task, or re-run from the corrected state, rather than trying to resume the cancelled attempt. There is no resume in the current version: attempts are append-only and a cancelled attempt stays cancelled.</p>
+</section>
+
+<section id="common-problems">
+<h2>Common problems: symptom, cause, fix</h2>
+
+<table>
+<tr><th>Symptom</th><th>Cause</th><th>Fix</th></tr>
+<tr><td><code>aidev migrate</code> cannot connect to the database</td><td>PostgreSQL is not running, or <code>DATABASE_URL</code> names the wrong port.</td><td>Run <code>make db-up</code>. Check the port matches: the default is 5434, or your <code>AIDEV_DB_PORT</code> override. Run <code>aidev config</code> to see what aidev resolved.</td></tr>
+<tr><td><code>aidev task create</code> rejects the task for missing verification</td><td>At least one <code>--verify</code> command is required, by the domain and by a database constraint.</td><td>Add <code>--verify 'go test ./...'</code> or whatever check fits the repository. A task aidev cannot check is one it will not accept.</td></tr>
+<tr><td>The agent claims success but the task is FAILED</td><td>The agent finished, then verification failed. The claim is recorded; it never decides. This is the one rule working as designed.</td><td>Read <code>aidev task result TASK-000001 --logs</code>. Trust the verification exit codes. Improve the instruction and create a new task.</td></tr>
+<tr><td>A task is slow: ten minutes with no result</td><td>Almost certainly the model, not aidev. aidev's own share was measured at 0.2 seconds against 9 to 656 seconds of agent time.</td><td>Check <code>aidev task events TASK-000001</code> to see the stage. Consider a faster model via <code>OPENCODE_MODEL</code>. Do not shorten timeouts to fix slowness.</td></tr>
+<tr><td><code>aidev task run</code> times out the agent</td><td><code>DEFAULT_TASK_TIMEOUT</code> elapsed before the agent finished.</td><td>Raise the timeout for the task with <code>--timeout 60m</code>, or raise <code>DEFAULT_TASK_TIMEOUT</code>. First runs against a new repository are slow.</td></tr>
+<tr><td><code>aidev worktree remove</code> is refused</td><td>The worktree holds uncommitted work, and git refuses to discard it without <code>--force</code>.</td><td>Review the work first. Then <code>aidev worktree remove TASK-000001 --force</code> to discard it deliberately. The branch is untouched either way.</td></tr>
+<tr><td>A task is stuck in RUNNING after aidev was killed</td><td>The process died mid-run. Nothing reaps it automatically, by design.</td><td><code>aidev task cancel TASK-000001 --reason "aidev was killed mid-run"</code>, then inspect the retained worktree.</td></tr>
+<tr><td>Verification fails with "command not found"</td><td>The check program is not installed in the environment where aidev runs the commands.</td><td>Install the tool, or fix the command spelling. Remember commands run without a shell: pipes and redirects are rejected at parse time.</td></tr>
+<tr><td>Logs are missing or the MCP session breaks</td><td>Something wrote to stdout in MCP mode, or you looked at stdout for logs.</td><td>Logs always go to stderr. In MCP mode stdout belongs to the protocol. Set <code>LOG_LEVEL=debug</code> and read stderr.</td></tr>
+<tr><td>Traces do not appear in the backend</td><td><code>OTEL_EXPORTER_OTLP_ENDPOINT</code> is unset or unreachable, or you queried a removed endpoint.</td><td>Confirm the variable is set in the shell that runs aidev. Against Jaeger check port 16686. Against Langfuse v4 query the v2 observations endpoint and check HTTP status codes.</td></tr>
+</table>
+
+<p>If none of these match, gather the three artifacts in this order and read them together: <code>aidev task result TASK-000001 --logs</code>, <code>aidev task events TASK-000001 --payload</code>, and the retained worktree from <code>aidev worktree list</code>. Between the verdict, the history, and the files, the cause is always in one of the three. Start from the <a href="index.html">guide index</a> if you need the big picture again, or the <a href="reference.html">reference page</a> for the exact flag and variable definitions.</p>
+</section>
+</main>
+</body>
+</html>

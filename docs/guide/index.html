@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>aidev guide: what it is and how it works</title>
+<link rel="stylesheet" href="guide.css">
+</head>
+<body>
+<nav class="breadcrumb"><a href="index.html">Guide</a> · <a href="getting-started.html">Getting started</a> · <a href="debugging.html">Debugging</a> · <a href="reference.html">Reference</a></nav>
+<main>
+<h1>aidev: a control plane for delegating work to a coding agent</h1>
+
+<p>This guide is for someone who is new to the project. It assumes you know how to use a terminal. It assumes nothing else. Every new word is defined when it first appears.</p>
+
+<section id="what-is-aidev">
+<h2>What aidev is</h2>
+
+<p><strong>aidev</strong> is a program you run on your own computer. It takes a unit of programming work, hands it to a coding <strong>agent</strong>, and then checks the result itself.</p>
+
+<p>An <strong>agent</strong> is a program that writes code for you. In this project the agent is usually <strong>OpenCode</strong>, which is an existing open-source coding tool. A <strong>planner</strong> is whoever decides what should be built. The planner can be you at a terminal, or it can be <strong>Claude Code</strong>, which is a separate coding assistant that talks to aidev through a protocol called MCP. MCP stands for Model Context Protocol. It is just a way for two programs to call each other over a local connection.</p>
+
+<p>Here is the short version of what aidev does with one piece of work:</p>
+
+<pre><code>aidev task create --title "Add a Greet function" --verify 'go test ./...'
+aidev task run TASK-000001</code></pre>
+
+<p>The first command records the work. The second command runs it. Running means three steps: aidev isolates the work, the agent writes code, and then aidev runs the checks itself. The checks are called <strong>verification</strong>.</p>
+
+<p>A <strong>task</strong> is one unit of delegated work. It has a title, an instruction for the agent, and a list of verification commands. A <strong>project</strong> is a git repository that aidev is allowed to run tasks against. <strong>git</strong> is a version control tool: it tracks every change to a set of files. A <strong>worktree</strong> is a second checkout of the same repository in a different directory, so two sets of files can exist side by side without interfering with each other.</p>
+
+<p>All state lives in <strong>PostgreSQL</strong>, which is a database program. A database is a program that stores structured records durably on disk. aidev stores the task, every execution of it, the captured output, the resulting code change, the verification results, and a full history there. If aidev is killed halfway through, the records are still on disk.</p>
+</section>
+
+<section id="why">
+<h2>Why aidev exists, and the one rule</h2>
+
+<p>An agent that reports its own success is not a source of truth. An agent can say "all done, tests pass" and be wrong. It can be wrong by mistake. The summary it writes and the code it writes are produced independently, and one run in this project's history produced correct code with an incoherent summary. The reverse also happens: an agent can report success while changing nothing at all.</p>
+
+<div class="notice"><strong>The one rule: only verification can move a task to SUCCEEDED.</strong> aidev runs the task's own verification commands itself, in the task's worktree, and decides the outcome from their exit codes. An <strong>exit code</strong> is a number a command returns when it finishes: zero means success, anything else means failure. The agent saying the work is done changes nothing. There is no path from "the agent finished" to SUCCEEDED. The only path to SUCCEEDED passes through verification.</div>
+
+<p>Let us say that again in different words, because everything else in this guide depends on it. When the agent finishes, the task is not done. It moves to a state called VERIFYING. Then aidev runs each verification command, one by one. If every command exits with zero, the task becomes SUCCEEDED. If any command fails, the task becomes FAILED, no matter what the agent claimed. The agent's claim is recorded word for word, because it helps with diagnosis, but it is never evidence.</p>
+
+<p>Three more consequences follow from the same idea:</p>
+
+<ul>
+<li>A task with no verification command is rejected when you create it. aidev will not accept work whose outcome it could not establish.</li>
+<li>The agent writes only inside a dedicated git worktree. OpenCode was measured writing files with no permission prompt, so the worktree is the only containment boundary. Your own working files are never in reach of the agent.</li>
+<li>History is append-only. The record of what happened is never rewritten. A mistake in the record is corrected by appending a new entry, not by editing the old one.</li>
+</ul>
+
+<p>You can see the rule enforced in a test. The integration suite contains a test where the agent reports success without touching a single file, and the task ends FAILED with the claim stored next to the verification result that contradicts it.</p>
+</section>
+
+<section id="architecture">
+<h2>Architecture: who does what</h2>
+
+<p>There are five pieces. Each one has exactly one job.</p>
+
+<pre class="diagram">Claude Code or CLI (planner: decides WHAT to build)
+        |
+        |  MCP over stdio, or terminal commands
+        v
+   aidev (orchestration: isolates, bounds, verifies, records)
+        |
+        +---> OpenCode in a git worktree (agent: writes code, nothing else)
+        |               |
+        |               v
+        +---> verification (aidev runs the task commands itself)
+        |
+        v
+   PostgreSQL (state and event history)</pre>
+
+<table>
+<tr><th>Component</th><th>What it is</th><th>What it is responsible for</th></tr>
+<tr><td>Planner (Claude Code or CLI)</td><td>Either you typing commands at a terminal (a <strong>CLI</strong> is a command line interface), or Claude Code, a coding assistant that calls aidev through MCP.</td><td>Deciding what to build. It never runs the agent directly and never judges success.</td></tr>
+<tr><td>aidev</td><td>The program in this repository, written in <strong>Go</strong>, which is a compiled programming language.</td><td>Orchestration: creating the worktree, starting the agent with a timeout, collecting the code change from git, running verification, and writing every record.</td></tr>
+<tr><td>OpenCode in a worktree</td><td>The coding agent, running with its working directory set to one isolated worktree.</td><td>Writing code. It cannot reach your working files, it cannot decide the outcome, and its output is captured with a size limit.</td></tr>
+<tr><td>Verification</td><td>The task's own check commands, executed by aidev after the agent finishes.</td><td>The decision. Only these exit codes can move a task to SUCCEEDED.</td></tr>
+<tr><td>PostgreSQL</td><td>A relational database that holds aidev's authoritative state.</td><td>Remembering everything: tasks, attempts, output, diffs, verification results, and the append-only event history.</td></tr>
+</table>
+
+<p>What aidev deliberately does not contain: no scheduler, no web dashboard, no authentication system, no automatic merge of branches. A successful task leaves a commit on its own branch, and a person decides what happens to that branch. Those are explicit non-goals, and the architecture document lists the extension points where each could plug in later.</p>
+
+<p>The code is organized so each piece maps to a directory under <code>internal/</code>. The lifecycle lives in <code>internal/worker</code>. The agent boundary lives in <code>internal/agent</code>, so Claude Code never learns the OpenCode command line. Every external process goes through <code>internal/procexec</code>, which gives each one a deadline, cancellation, and bounded output. Configuration is read only by <code>internal/config</code>. Logs are written only by <code>internal/logging</code>, always to stderr.</p>
+</section>
+
+<section id="lifecycle">
+<h2>The task lifecycle</h2>
+
+<p>A task moves through states. A <strong>state</strong> is the task's current situation, stored as a short word like RUNNING. A <strong>transition</strong> is one allowed move from one state to another. Not every move is allowed. The full list of allowed moves lives in <code>internal/task/status.go</code>, and tests assert its two most important properties.</p>
+
+<pre class="diagram">PENDING --&gt; READY --&gt; RUNNING --&gt; VERIFYING --&gt; SUCCEEDED
+   |            |             |               |
+   |            |             +---------------+--&gt; FAILED
+   |            |
+   +------------+--&gt; WAITING_APPROVAL --+
+                        |
+   any non-terminal state --&gt; CANCELLED</pre>
+
+<p>Reading the diagram from left to right:</p>
+
+<ul>
+<li><strong>PENDING</strong> means the task exists but is not yet eligible to run. In the current version nothing blocks a task, so it becomes ready as soon as a run is requested. The state exists so a future dependency feature has somewhere to hold a waiting task.</li>
+<li><strong>READY</strong> means the task is eligible to be picked up.</li>
+<li><strong>RUNNING</strong> means an agent is executing inside the task's worktree.</li>
+<li><strong>VERIFYING</strong> means the agent finished and aidev is now running the verification commands itself.</li>
+<li><strong>SUCCEEDED</strong> means verification passed. It is reachable only from VERIFYING. This is the one rule, drawn as a diagram: there is no arrow from RUNNING to SUCCEEDED.</li>
+<li><strong>FAILED</strong> means the attempt failed: the agent errored, timed out, or verification did not pass.</li>
+<li><strong>CANCELLED</strong> means a human or a shutdown stopped the task. Every non-terminal state can reach it, so no task can become unstoppable.</li>
+<li><strong>WAITING_APPROVAL</strong> means the task was created with a policy gate and will not execute until a human approves it. Approval granted moves it to READY. Approval denied moves it to FAILED.</li>
+</ul>
+
+<p>There is deliberately no arrow from FAILED back to READY. A future retry feature would add that arrow. Attempts are already numbered and appended, so retry will be a matter of adding a row, but the edge does not exist yet, and adding it will be a deliberate change with a test to update.</p>
+
+<p>One execution of a task is called an <strong>attempt</strong>. Attempts are numbered starting at 1 and are never overwritten. The worktree directory and the branch name both include the attempt number, so a second attempt can never collide with the first. A task that has never run has no attempt. A task that ran once has attempt 1.</p>
+
+<p>Every state change is recorded as an <strong>event</strong> in the same database transaction as the change itself. An event is one immutable record of something that happened, with a sequence number, a type like <code>task.started</code>, and a small JSON payload. History therefore cannot disagree with state. You can read the history with:</p>
+
+<pre><code>aidev task events TASK-000001
+aidev task result TASK-000001 --logs</code></pre>
+
+<p>The first command shows what happened, in order. The second shows the outcome, with the agent transcript and full verification output when you pass <code>--logs</code>. The debugging page explains both in detail.</p>
+</section>
+
+<section id="vocabulary">
+<h2>Vocabulary</h2>
+
+<p>These eight words appear everywhere in aidev. Each one has a precise meaning here, which may be narrower than its everyday meaning.</p>
+
+<table>
+<tr><th>Word</th><th>What it means in aidev</th></tr>
+<tr><td><strong>task</strong></td><td>One unit of delegated work. It has a human-readable reference like TASK-000001, a title, an instruction for the agent, and at least one verification command. Tasks move through the lifecycle states above.</td></tr>
+<tr><td><strong>attempt</strong></td><td>One execution of a task, numbered from 1. A task that runs once has one attempt. Attempts are appended, never overwritten, so the history of a task is the list of its attempts.</td></tr>
+<tr><td><strong>worktree</strong></td><td>An isolated git checkout where one attempt runs. The agent's working directory is set to the worktree, and the worktree path must resolve inside the configured workspace root. On success the work is committed to the task branch and the worktree is removed. On failure it is kept for inspection and marked RETAINED.</td></tr>
+<tr><td><strong>verification</strong></td><td>The task's own check commands, run by aidev itself after the agent finishes. Verification is the only thing that can move a task to SUCCEEDED. A task without at least one verification command cannot be created.</td></tr>
+<tr><td><strong>agent</strong></td><td>The program that writes the code, usually OpenCode. The agent works inside the worktree and nothing else. Its report of what it did is recorded verbatim and never trusted.</td></tr>
+<tr><td><strong>event</strong></td><td>One immutable record in the task's history, for example <code>task.created</code> or <code>task.verification_completed</code>. Events have a total order given by sequence numbers. The log is append-only: corrections are new events, never edits.</td></tr>
+<tr><td><strong>project</strong></td><td>A git repository aidev may run tasks against, registered by its absolute path. Creating a task for an unknown repository registers it automatically.</td></tr>
+<tr><td><strong>approval</strong></td><td>A human decision gating a task. A task created with <code>--requires-approval</code> waits in WAITING_APPROVAL until a person grants or denies it with <code>aidev task approve</code>. A planner must never approve its own task.</td></tr>
+</table>
+
+<p>If you remember only three of these, remember task, verification, and worktree. The task is the work. The worktree is where the agent does it. Verification is how aidev decides whether it worked.</p>
+</section>
+
+<section id="where-next">
+<h2>Where to go next</h2>
+
+<ul>
+<li><a href="getting-started.html">Getting started</a>: from nothing to a finished task. Start PostgreSQL, apply migrations, set the environment variables, create a first task on a throwaway repository, run it, read the result, and review the branch with git.</li>
+<li><a href="debugging.html">Debugging</a>: how to find out what happened. Logs, event history, results with full output, retained worktrees, recovering a task left RUNNING by a crash, tracing, and a table of common problems.</li>
+<li><a href="reference.html">Reference</a>: the complete lists. Every CLI command with every flag, every task status, every failure kind, every event type, every environment variable with its default, and every MCP tool with its inputs.</li>
+</ul>
+
+<p>And keep the one rule in view as you read on: aidev runs the agent in an isolated git worktree, then runs the task's own verification commands itself, and only those commands can move a task to SUCCEEDED. The agent saying the work is done changes nothing. Every other page in this guide repeats that rule where it matters.</p>
+</section>
+</main>
+</body>
+</html>
