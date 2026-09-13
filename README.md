@@ -11,11 +11,10 @@ about whether it succeeded is not an input to that decision.
 Everything — the task, each attempt, the captured output, the diff, the
 verification results, and a full event history — is persisted in PostgreSQL.
 
-> **Status: Phase 3 of 5.** Usable from the terminal today: create a task, run it,
-> read the result. The pipeline has been driven end to end against the real
-> OpenCode, not only against a test double.
->
-> The MCP server that lets Claude Code delegate tasks is Phase 4. See
+> **Status: Phase 4 of 5.** Usable from the terminal and from Claude Code. The
+> pipeline has been driven end to end against the real OpenCode, and the MCP server
+> is registered and connected to the installed Claude Code. Phase 5 is hardening
+> and the remaining documentation. See
 > [docs/architecture.md](docs/architecture.md#status).
 
 ## Why it exists
@@ -310,20 +309,40 @@ See [docs/research.md](docs/research.md) for the measurements behind all of this
 
 ## Claude Code MCP setup
 
-Not required until Phase 4. The registration mechanism was confirmed in Phase 0:
-a local server uses **stdio** transport, and `.mcp.json` in the project root looks
-like this:
+This is what aidev is for: Claude Code plans and reviews, aidev isolates, runs and
+verifies.
 
-```json
-{
-  "mcpServers": {
-    "aidev": { "type": "stdio", "command": "/abs/path/to/aidev", "args": ["mcp"], "env": {} }
-  }
-}
+```bash
+make build
+
+claude mcp add --scope local aidev \
+  -e DATABASE_URL='postgres://aidev:aidev@127.0.0.1:5434/aidev?sslmode=disable' \
+  -e WORKSPACE_ROOT="$HOME/.local/share/aidev/worktrees" \
+  -- "$PWD/bin/aidev" mcp
+
+claude mcp list
+# aidev: /path/to/bin/aidev mcp - ✔ Connected
 ```
 
-Exact instructions, the tool list, and their schemas will live in
-`docs/mcp-tools.md` once Phase 4 lands.
+Claude Code launches the server itself, so the environment goes on the
+registration rather than in your shell. Eight tools become available:
+
+| Tool | Purpose |
+|---|---|
+| `aidev_create_task` | create a task; verification commands are required |
+| `aidev_run_task` | isolate, delegate, verify, record |
+| `aidev_get_task_result` | the outcome, with the verification evidence |
+| `aidev_get_task_events` | history, and progress while a task runs |
+| `aidev_list_tasks` / `aidev_get_task` | find work |
+| `aidev_cancel_task` | stop a task; its worktree is kept |
+| `aidev_approve_task` | a human releases a gated task |
+
+A run takes minutes, so `aidev_run_task` waits a bounded time and then returns with
+`still_running: true` while the task continues; the planner polls
+`aidev_get_task_result`. The field to read is `succeeded`, which is true only when
+aidev's own verification passed.
+
+Full schemas, errors and side effects: **[docs/mcp-tools.md](docs/mcp-tools.md)**.
 
 ## Development and testing
 
@@ -388,4 +407,5 @@ guarantee.
 | [docs/research.md](docs/research.md) | What the installed Claude Code, OpenCode, git and PostgreSQL actually do — measured, with assumptions and open questions marked |
 | [docs/architecture.md](docs/architecture.md) | Package layout, design decisions and their costs, extension seams |
 | [docs/database.md](docs/database.md) | Schema, constraints, lifecycle, concurrency, migrations |
+| [docs/mcp-tools.md](docs/mcp-tools.md) | Every MCP tool: input, output, errors, side effects, and what is deliberately not exposed |
 | [AGENTS.md](AGENTS.md) | Conventions for agents (and people) contributing to this repository |

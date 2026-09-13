@@ -44,12 +44,12 @@ touch the orchestration layer.
 | 1 | Domain, persistence, migrations, config, logging | done |
 | 2 | Git worktrees, `AgentBackend`, OpenCode backend, verification, execution | done |
 | 3 | Task CLI | done |
-| 4 | MCP server | not started |
+| 4 | MCP server | done |
 | 5 | Hardening, E2E, docs | not started |
 
-Sections below describing Phase 4+ state intent, not implementation. Anything not
-yet built says so. The MCP surface does not exist yet; the CLI does, and is the
-only way to drive a task today.
+Sections below describing Phase 5 state intent, not implementation. Anything not
+yet built says so. Both surfaces exist: the CLI and the MCP server, which has been
+registered with and connected to the installed Claude Code.
 
 ## Package layout
 
@@ -69,6 +69,8 @@ internal/
   agent/              the Backend boundary, the OpenCode implementation, a fake
   verification/       aidev running the task's own commands
   worker/             the lifecycle: isolate, delegate, verify, record
+  view/               the external JSON shapes, shared by the CLI and MCP
+  mcp/                the MCP server and its eight tools
   cli/                command line surface
 migrations/           SQL, embedded into the binary
 prompts/              agent instruction templates, embedded
@@ -215,6 +217,30 @@ Cancellation signals the process group, not the pid. `opencode run` spawns no
 children, but verification commands routinely do — `go test` starts compilers and
 test binaries — so killing only the parent would leave them running. The test for
 this was verified to fail when the kill is changed to pid-only.
+
+### One JSON contract, two surfaces
+
+The CLI's `--json` output and the MCP tools' structured results are the same shapes,
+defined once in `internal/view`. The `jsonschema` tags there are what the MCP SDK
+reads to generate each tool's output schema, so the schema a planner sees is
+generated from the same struct the CLI serialises and cannot drift from it.
+
+They stay separate types from the domain structs: this is an interface other things
+depend on, and deriving it from `task.Task` would make an internal rename a silent
+breaking change.
+
+### A long task cannot be a long tool call
+
+A run takes as long as the agent does — 9 to 656 seconds, measured — while an MCP
+client will not wait indefinitely. `aidev_run_task` therefore starts the run on the
+server's own context, waits a bounded time, and returns with `still_running` set if
+it has not finished. The run is unaffected by the call returning or by the client
+abandoning it, and the server drains in-flight runs on shutdown so that quitting
+mid-task records a cancellation rather than leaving a row in `RUNNING`.
+
+A second `aidev_run_task` joins the run in flight rather than failing: the
+orchestrator would reject a concurrent run anyway, and reporting progress is more
+useful than an error.
 
 ### Configuration is read once, in one place
 
