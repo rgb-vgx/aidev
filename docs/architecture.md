@@ -443,6 +443,43 @@ git log --oneline aidev/TASK-000001
 git diff main..aidev/TASK-000001
 ```
 
+## Tracing
+
+`internal/tracing` exports OpenTelemetry spans over OTLP HTTP. It is off unless an
+endpoint is configured, and the disabled path returns a no-op tracer so instrumented
+code never branches on whether tracing is on.
+
+OTLP rather than a vendor SDK, for a reason that proved itself within an hour of
+being written: when traces stopped appearing in Langfuse, pointing the same code at
+Jaeger — one container, no credentials — established in two minutes that the
+instrumentation was correct and the fault was in the backend's ingestion pipeline.
+A vendor client would have left no way to make that distinction.
+
+```bash
+make jaeger-up && eval "$(make jaeger-env)"      # one container, UI on :16686
+make langfuse-up && eval "$(make langfuse-env)"  # six services, UI on :3000
+AIDEV_TEST_OTLP=1 go test ./internal/tracing/ -run TestExport -count=1
+```
+
+### What has been verified, and what has not
+
+**Verified against Jaeger.** A span from aidev's own code arrives with every
+attribute intact, including the `gen_ai.usage.*` fields a backend needs for an LLM
+view. `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318` resolves to
+`/v1/traces` as the specification requires.
+
+**Not working against self-hosted Langfuse.** It accepts the batch with HTTP 200 and
+then never surfaces the trace: its `otel-ingestion-queue` in Redis is never fed, and
+ClickHouse stays empty. A `200` from that endpoint proves little — an empty body gets
+one too — so the export test's claim is deliberately limited to "the backend accepted
+it", which catches a wrong path, host or credential and nothing more.
+
+**Not implemented.** Nothing instruments a task run yet. There are no spans for
+worktree creation, the agent invocation, or verification, so there is no trace to
+look at for real work — only the export path is proven. Wiring that up is the next
+piece, and it should be written against a test that asserts the resulting span shape,
+not merely that the code compiles.
+
 ## What the MVP does not do
 
 Stated plainly so that nobody has to infer it from absence.

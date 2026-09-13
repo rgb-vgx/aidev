@@ -17,7 +17,8 @@ TEST_DB_URL ?= postgres://aidev:aidev@127.0.0.1:$(DB_PORT)/aidev_test?sslmode=di
 
 .PHONY: help build install test test-integration test-e2e test-db-create fmt fmt-check vet lint check \
         db-up db-down db-reset db-logs migrate clean \
-        langfuse-up langfuse-down langfuse-reset langfuse-logs langfuse-env langfuse-credentials
+        langfuse-up langfuse-down langfuse-reset langfuse-logs langfuse-env langfuse-credentials \
+        jaeger-up jaeger-down jaeger-env
 
 help: ## show this help
 	@grep -hE '^[a-z0-9-]+:.*?##' $(MAKEFILE_LIST) | sort | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -65,6 +66,31 @@ db-down: ## stop PostgreSQL, keeping data
 db-reset: ## destroy the database and its data, then start fresh
 	docker compose down -v
 	$(MAKE) db-up
+
+# Jaeger: one container, shows a trace immediately, no credentials. It is the
+# fastest way to tell "aidev's instrumentation is wrong" from "the backend is not
+# showing it", which is a distinction that cost real time before this target
+# existed.
+JAEGER_CONTAINER ?= aidev-jaeger
+
+jaeger-up: ## start Jaeger to view traces (one container, UI on :16686)
+	-docker rm -f $(JAEGER_CONTAINER) >/dev/null 2>&1
+	docker run -d --name $(JAEGER_CONTAINER) \
+		-p 127.0.0.1:16686:16686 -p 127.0.0.1:4318:4318 \
+		jaegertracing/all-in-one:latest >/dev/null
+	@printf 'waiting for jaeger'
+	@for i in $$(seq 1 60); do \
+		if curl -fsS -m 2 http://localhost:16686/ >/dev/null 2>&1; then echo " ready: http://localhost:16686"; exit 0; fi; \
+		printf '.'; sleep 1; \
+	done; echo " timed out"; exit 1
+
+jaeger-down: ## stop and remove Jaeger
+	-docker rm -f $(JAEGER_CONTAINER)
+
+jaeger-env: ## print the export lines that point aidev at the local Jaeger
+	@echo "export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318"
+	@echo "export OTEL_SERVICE_NAME=aidev"
+	@echo "unset OTEL_EXPORTER_OTLP_HEADERS"
 
 LANGFUSE_COMPOSE := deployments/langfuse/docker-compose.yml
 LANGFUSE_ENV     := deployments/langfuse/.env
