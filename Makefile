@@ -14,7 +14,7 @@ DB_PORT ?= 5434
 DB_URL  ?= postgres://aidev:aidev@127.0.0.1:$(DB_PORT)/aidev?sslmode=disable
 TEST_DB_URL ?= postgres://aidev:aidev@127.0.0.1:$(DB_PORT)/aidev_test?sslmode=disable
 
-.PHONY: help build install test test-integration fmt fmt-check vet lint check \
+.PHONY: help build install test test-integration test-e2e test-db-create fmt fmt-check vet lint check \
         db-up db-down db-reset db-logs migrate clean
 
 help: ## show this help
@@ -69,6 +69,10 @@ db-logs: ## follow PostgreSQL logs
 
 migrate: build ## apply pending migrations to the development database
 	DATABASE_URL="$(DB_URL)" $(BIN) migrate
+
+test-e2e: ## run the end-to-end test against the real opencode (slow, needs postgres)
+	TEST_DATABASE_URL="$(TEST_DB_URL)" AIDEV_TEST_OPENCODE=1 \
+		$(GO) test ./tests/e2e/ -count=1 -v -timeout 20m
 
 test-db-create: ## create the database used by integration tests
 	docker compose exec -T postgres psql -U aidev -d postgres -c "SELECT 1 FROM pg_database WHERE datname='aidev_test'" | grep -q 1 \
