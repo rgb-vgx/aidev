@@ -27,8 +27,18 @@ const (
 	DefaultVerificationTimeout = 10 * time.Minute
 	DefaultOpenCodeCommand     = "opencode"
 	DefaultOpenCodeAgent       = "build"
-	DefaultMaxOutputBytes      = 1 << 20 // 1 MiB per captured stream
-	DefaultCleanupPolicy       = CleanupOnSuccess
+
+	// DefaultOpenCodeModel is chosen on measured behaviour, not on branding.
+	// On identical trivial prompts it returned in 3.2-3.9s across repeated runs,
+	// while the alternative free model varied between 3.9s and 100.5s for the
+	// same work (docs/research.md 7c). Predictable latency matters more here than
+	// a marginally better model, because an unpredictable one turns a one-minute
+	// task into an eleven-minute one.
+	//
+	// Set OPENCODE_MODEL to an empty string to let OpenCode choose instead.
+	DefaultOpenCodeModel  = "opencode/muse-spark-1.3-contributor-free"
+	DefaultMaxOutputBytes = 1 << 20 // 1 MiB per captured stream
+	DefaultCleanupPolicy  = CleanupOnSuccess
 )
 
 // CleanupPolicy decides what happens to a task's worktree once it finishes.
@@ -81,8 +91,9 @@ type Config struct {
 	// OpenCodeCommand is the executable used by the OpenCode backend.
 	OpenCodeCommand string
 
-	// OpenCodeModel is passed through as -m. Empty means "let OpenCode
-	// choose", which Phase 0 confirmed works (docs/research.md §2.10).
+	// OpenCodeModel is passed through as -m. Empty means "let OpenCode choose",
+	// which works with no credentials (docs/research.md §2.10), and is what an
+	// explicitly empty OPENCODE_MODEL selects.
 	OpenCodeModel string
 
 	// OpenCodeAgent is the default OpenCode agent for tasks that do not name
@@ -120,6 +131,7 @@ func Load(lookup Lookup) (Config, error) {
 		DefaultTaskTimeout:         DefaultTaskTimeout,
 		DefaultVerificationTimeout: DefaultVerificationTimeout,
 		OpenCodeCommand:            DefaultOpenCodeCommand,
+		OpenCodeModel:              DefaultOpenCodeModel,
 		OpenCodeAgent:              DefaultOpenCodeAgent,
 		MaxOutputBytes:             DefaultMaxOutputBytes,
 		WorktreeCleanup:            DefaultCleanupPolicy,
@@ -168,7 +180,12 @@ func Load(lookup Lookup) (Config, error) {
 	if v := strings.TrimSpace(get(lookup, "OPENCODE_COMMAND")); v != "" {
 		cfg.OpenCodeCommand = v
 	}
-	cfg.OpenCodeModel = strings.TrimSpace(get(lookup, "OPENCODE_MODEL"))
+	// An unset OPENCODE_MODEL takes the default; setting it to an empty string is
+	// how a caller asks OpenCode to choose, which is a different intent and must
+	// stay expressible.
+	if raw, set := lookup("OPENCODE_MODEL"); set {
+		cfg.OpenCodeModel = strings.TrimSpace(raw)
+	}
 	if v := strings.TrimSpace(get(lookup, "OPENCODE_AGENT")); v != "" {
 		cfg.OpenCodeAgent = v
 	}

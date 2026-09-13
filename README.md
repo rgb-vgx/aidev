@@ -119,7 +119,7 @@ required variable; everything else has a default.
 | `DEFAULT_TASK_TIMEOUT` | `30m` | bounds one agent run |
 | `DEFAULT_VERIFICATION_TIMEOUT` | `10m` | bounds one verification step |
 | `OPENCODE_COMMAND` | `opencode` | the OpenCode executable |
-| `OPENCODE_MODEL` | *(empty)* | empty lets OpenCode choose, which works with no credentials |
+| `OPENCODE_MODEL` | `opencode/muse-spark-1.3-contributor-free` | needs no credentials; set it to an empty string to let OpenCode choose |
 | `OPENCODE_AGENT` | `build` | default OpenCode agent |
 | `MAX_OUTPUT_BYTES` | `1048576` | per-stream capture limit; output beyond it is dropped and flagged |
 | `WORKTREE_CLEANUP` | `on-success` | `on-success` commits and removes; `never` keeps every worktree. Neither discards failed work |
@@ -279,6 +279,13 @@ Install OpenCode and make it reachable on `PATH`, or set `OPENCODE_COMMAND`. No
 API credentials are required: the public `opencode/*` models work and report zero
 cost, which is how this project's end-to-end test runs without a key.
 
+The default model is `opencode/muse-spark-1.3-contributor-free`, chosen by
+measurement rather than by name. On identical trivial prompts it returned in
+3.2–3.9s across repeated runs; the other free model varied between 3.9s and 100.5s
+for the same work, which is the difference between a one-minute task and an
+eleven-minute one. Set `OPENCODE_MODEL` to any model you have credentials for, or
+to an empty string to let OpenCode decide.
+
 ```bash
 opencode --version          # verified against 1.18.30
 opencode models | head      # the opencode/* entries need no credentials
@@ -290,9 +297,11 @@ it is aidev's job, not the planner's.
 
 Two measured behaviours worth knowing before your first task:
 
-- **The first run against a repository OpenCode has not seen can take minutes**
-  before producing any output, then seconds afterwards. One end-to-end run here
-  took 301 seconds. This is why `DEFAULT_TASK_TIMEOUT` is 30 minutes.
+- **A task takes as long as the model does.** aidev's own share of a run —
+  worktree, diff, verification, every database write — measured 0.2 seconds
+  against agent times of 9 to 656 seconds. Free-tier latency is the variable that
+  matters, and it is not always predictable, which is why
+  `DEFAULT_TASK_TIMEOUT` is 30 minutes.
 - **OpenCode writes files without asking**, even without its `--auto` flag. That
   is why every task runs in a dedicated worktree and why aidev refuses a worktree
   path that would land inside your repository.

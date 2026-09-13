@@ -29,8 +29,10 @@ import (
 )
 
 // freeModel needs no credentials and reports zero cost, so this test can run on a
-// developer machine without an API key (docs/research.md §2.10).
-const freeModel = "opencode/nemotron-3.5-lightning-free"
+// developer machine without an API key (docs/research.md §2.10). It is the same
+// model aidev defaults to, chosen for predictable latency (§7c) — which also keeps
+// this test from timing out on a slow provider.
+const freeModel = config.DefaultOpenCodeModel
 
 // e2eTimeout is generous because OpenCode's first run against a repository it has
 // not seen can take minutes before producing any output (docs/research.md §2.9).

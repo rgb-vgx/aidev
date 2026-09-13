@@ -37,8 +37,8 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	if cfg.OpenCodeAgent != DefaultOpenCodeAgent {
 		t.Errorf("opencode agent = %q, want %q", cfg.OpenCodeAgent, DefaultOpenCodeAgent)
 	}
-	if cfg.OpenCodeModel != "" {
-		t.Errorf("model = %q, want empty so OpenCode chooses", cfg.OpenCodeModel)
+	if cfg.OpenCodeModel != DefaultOpenCodeModel {
+		t.Errorf("model = %q, want the measured-fast default %q", cfg.OpenCodeModel, DefaultOpenCodeModel)
 	}
 	if cfg.LogLevel != slog.LevelInfo {
 		t.Errorf("log level = %s, want INFO", cfg.LogLevel)
@@ -275,5 +275,34 @@ func TestCleanupPolicyValidity(t *testing.T) {
 	}
 	if CleanupPolicy("force").Valid() {
 		t.Error("an unknown policy reported itself valid")
+	}
+}
+
+// Unset and explicitly-empty are different intents: the first takes aidev's
+// default, the second asks OpenCode to choose. Collapsing them would remove the
+// only way to express the second.
+func TestEmptyModelMeansLetOpenCodeChoose(t *testing.T) {
+	cfg, err := Load(env(map[string]string{
+		"DATABASE_URL":   testDSN,
+		"OPENCODE_MODEL": "",
+	}))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.OpenCodeModel != "" {
+		t.Errorf("model = %q, want empty when OPENCODE_MODEL is explicitly empty", cfg.OpenCodeModel)
+	}
+}
+
+func TestModelOverrideWins(t *testing.T) {
+	cfg, err := Load(env(map[string]string{
+		"DATABASE_URL":   testDSN,
+		"OPENCODE_MODEL": "anthropic/claude-opus-5",
+	}))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.OpenCodeModel != "anthropic/claude-opus-5" {
+		t.Errorf("model = %q", cfg.OpenCodeModel)
 	}
 }
