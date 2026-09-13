@@ -12,8 +12,18 @@ import (
 )
 
 // The unit tests cover the disabled path only, which proves nothing about whether
-// a span ever reaches a backend. This test does: it exports against a real OTLP
-// endpoint and fails if the backend rejected the batch.
+// a span ever leaves the process. This test does.
+//
+// What it establishes, precisely: the exporter posted to a URL the backend accepts
+// and the backend did not reject the batch. That is enough to catch a wrong signal
+// path, a wrong host, and bad credentials, which is what it is for.
+//
+// What it does NOT establish: that the trace becomes visible in whatever UI sits on
+// top. Ingestion beyond the HTTP response is the backend's business and can fail
+// afterwards — with self-hosted Langfuse it was observed accepting a batch with 200,
+// storing it in object storage, and never surfacing it, because its own ingestion
+// queue was never fed. Conflating "accepted" with "visible" cost real time, so the
+// distinction is written down here rather than left to be rediscovered.
 //
 // It must not judge success by whether shutdown returns an error. That was tried,
 // and it is wrong: a batch span processor reports an export failure to the global
