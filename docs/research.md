@@ -787,6 +787,53 @@ test anything is the reviewer's question. Not covered: code passed with `-c` (`p
 `sh -c`), whose imports aidev cannot see; interpreters other than `sh`/`bash`/`python`; and
 modules beside a script shadowing its imports.
 
+## 7f. Auto mode through 9router with muse-spark **[OBSERVED]**
+
+A Claude Code session running through 9router 0.5.75 (`ANTHROPIC_BASE_URL=http://localhost:20128`,
+every model slot `oc/muse-spark-1.3-contributor-free(xhigh)`) denied 49 tool calls in auto mode
+with "temporarily unavailable, so auto mode cannot determine the safety". The calls never reached
+aidev: its MCP log shows the connection and no tool call. Read, Edit and Write were unaffected;
+Bash that would be allowed in acceptEdits mode skipped the classifier and ran.
+
+The router's own history is no evidence either way: `usageHistory` recorded 681 requests and all
+681 as `ok`, so failures are simply not written.
+
+Reproduced with `claude -p --permission-mode auto --debug-file` through a logging proxy:
+
+| Request | Shape | Result |
+|---|---|---|
+| main loop | `stream: true`, `max_tokens` 32000 | Anthropic SSE, works |
+| auto-mode classifier (`stage=xml_s1`) | no `stream`, `max_tokens` 2112 | HTTP 200 with an OpenAI `chat.completion`, empty content, no `usage` |
+
+Claude Code then logs `Auto mode classifier (XML) error: undefined is not an object (evaluating
+'xt.usage.input_tokens')` and `Auto mode classifier unavailable, denying with retry guidance (fail
+closed)`. It first tries the Sonnet slot as classifier ("Got error trying Sonnet 5 as auto mode
+classifier") before falling back to the main model.
+
+Isolated directly against the router with the same request body:
+
+| Model | `stream: false` | `stream: true` |
+|---|---|---|
+| `oc/muse-spark-1.3-contributor-free(xhigh)` | OpenAI JSON, empty | Anthropic SSE with text and `usage` |
+| `oc/muse-spark-1.3-contributor-free` | OpenAI JSON, empty | — |
+| `oc/mimo-v2.5-free` | Anthropic JSON with text and `usage` | Anthropic SSE |
+
+The fault is muse-spark's non-streaming path, not 9router as a whole. 0.5.75 is the latest release.
+Upstream also rejects `max_output_tokens` below 16, which is not what the classifier hits (2112).
+
+Two fixes, both verified with the reproduction: `ANTHROPIC_DEFAULT_SONNET_MODEL=oc/mimo-v2.5-free`
+(classifier stage 1 `outcome=ok` in 8.3 s), or `tools/anthropic-shim`, which sends non-streaming
+requests upstream as streaming and assembles the SSE into an Anthropic message (stages 1 and 2
+`outcome=ok`, about 15 s, muse-spark kept as classifier). The user chose the shim to keep
+muse-spark.
+
+The 15 s came from the classifier's first stage getting nothing to judge. Sampled directly
+against the router, 1 of 8 streaming muse-spark replies to the same prompt was a complete
+stream (`message_delta`, `message_stop`) holding only a thinking block, with `usage` 0/0;
+through the shim, 1 of 3. Real replies always carried usage (input 2014). The shim retries
+that exact shape once for converted requests and returns a second empty reply unchanged, so
+a bad stretch cannot become a loop.
+
 ## 8. Reproducing this research
 
 Probes ran in a gitignored `.probe/` directory inside the repository (scratch repo, worktrees,
