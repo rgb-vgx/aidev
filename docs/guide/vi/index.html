@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hướng dẫn aidev: aidev là gì và hoạt động ra sao</title>
+<link rel="stylesheet" href="../guide.css">
+</head>
+<body>
+<nav class="breadcrumb"><a href="index.html">Hướng dẫn</a> · <a href="getting-started.html">Bắt đầu</a> · <a href="debugging.html">Gỡ lỗi</a> · <a href="reference.html">Tra cứu</a></nav>
+<nav class="lang-switch"><a href="../index.html">English</a></nav>
+<main>
+<h1>aidev: bộ điều phối việc giao code cho agent</h1>
+
+<p>Trang hướng dẫn này dành cho người hoàn toàn mới với dự án. Bạn chỉ cần biết dùng terminal là đủ, ngoài ra không cần biết gì khác. Mỗi từ mới đều được giải thích ngay khi xuất hiện lần đầu.</p>
+
+<section id="what-is-aidev">
+<h2>aidev là gì</h2>
+
+<p><strong>aidev</strong> là một chương trình bạn chạy trên máy của mình. Nó nhận một đơn vị công việc lập trình, giao cho một <strong>agent</strong> viết code, rồi tự mình kiểm tra lại kết quả.</p>
+
+<p><strong>agent</strong> là chương trình tự viết code thay bạn. Trong dự án này agent thường là <strong>OpenCode</strong>, một công cụ viết code mã nguồn mở đã có sẵn. <strong>planner</strong> là bên quyết định cần làm gì: có thể là chính bạn gõ lệnh ở terminal, hoặc là <strong>Claude Code</strong>, một trợ lý viết code khác nói chuyện với aidev qua giao thức MCP. MCP là viết tắt của Model Context Protocol, hiểu đơn giản là cách để hai chương trình gọi nhau qua một kết nối nội bộ trên máy.</p>
+
+<p>Nói ngắn gọn thì aidev xử lý một đơn vị công việc như sau:</p>
+
+<pre><code>aidev task create --title "Add a Greet function" --verify 'go test ./...'
+aidev task run TASK-000001</code></pre>
+
+<p>Lệnh đầu tiên ghi nhận công việc. Lệnh thứ hai chạy nó. Chạy ở đây gồm ba bước: aidev cách ly công việc, agent viết code, rồi aidev tự chạy các bước kiểm tra. Các bước kiểm tra này gọi là <strong>verification</strong>.</p>
+
+<p>Một <strong>task</strong> là một đơn vị công việc được giao. Nó có tiêu đề, hướng dẫn dành cho agent và danh sách các lệnh verification. Một <strong>project</strong> là một kho git mà aidev được phép chạy task trên đó. <strong>git</strong> là công cụ quản lý phiên bản: nó theo dõi mọi thay đổi của một tập tin. Một bản sao làm việc tách biệt (worktree) là một bản checkout thứ hai của cùng kho mã, nằm ở thư mục khác, để hai bộ tập tin tồn tại song song mà không ảnh hưởng lẫn nhau.</p>
+
+<p>Mọi trạng thái đều nằm trong <strong>PostgreSQL</strong>, một chương trình cơ sở dữ liệu. Cơ sở dữ liệu là chương trình lưu trữ các bản ghi có cấu trúc một cách bền bỉ trên đĩa. aidev lưu ở đó task, từng lần chạy, toàn bộ output thu được, thay đổi code, kết quả verification và toàn bộ lịch sử. Nếu aidev bị tắt ngang giữa chừng thì các bản ghi vẫn còn trên đĩa.</p>
+</section>
+
+<section id="why">
+<h2>Vì sao có aidev, và quy tắc duy nhất</h2>
+
+<p>Một agent tự chấm điểm cho chính nó thì không thể coi là căn cứ đáng tin. Agent có thể nói "xong rồi, test đã qua hết" trong khi thực tế không phải vậy. Có khi nó nhầm lẫn một cách vô tình. Phần tóm tắt nó viết và phần code nó viết được sinh ra độc lập với nhau, đã từng có lần trong lịch sử dự án này code thì đúng mà phần tóm tắt thì viết lan man khó hiểu. Chiều ngược lại cũng xảy ra: agent báo thành công trong khi thật ra chẳng sửa dòng nào.</p>
+
+<div class="notice"><strong>Quy tắc duy nhất: chỉ verification mới được đưa task sang SUCCEEDED.</strong> aidev tự chạy các lệnh verification của task, ngay trong worktree của task đó, và quyết định kết quả dựa trên mã thoát (exit code) của chúng. <strong>Mã thoát</strong> là con số một lệnh trả về khi kết thúc: số 0 nghĩa là thành công, số khác 0 nghĩa là thất bại. Agent nói công việc đã xong cũng không thay đổi điều gì. Không có đường nào từ "agent đã chạy xong" dẫn tới SUCCEEDED. Con đường duy nhất tới SUCCEEDED phải đi qua verification.</div>
+
+<p>Nói lại theo cách khác, vì mọi thứ còn lại trong hướng dẫn này đều dựa vào ý đó. Khi agent chạy xong, task vẫn chưa xong. Nó chuyển sang trạng thái VERIFYING. Rồi aidev chạy từng lệnh verification, từng lệnh một. Nếu mọi lệnh đều thoát với số 0 thì task trở thành SUCCEEDED. Nếu chỉ một lệnh thất bại thì task trở thành FAILED, bất kể agent đã nói gì. Lời agent nói được ghi lại nguyên văn vì nó giúp ích khi tìm nguyên nhân, nhưng nó không bao giờ được coi là bằng chứng.</p>
+
+<p>Cùng một ý tưởng đó kéo theo ba hệ quả nữa:</p>
+
+<ul>
+<li>Task không có lệnh verification nào sẽ bị từ chối ngay khi tạo. aidev không nhận công việc mà nó không thể tự kiểm chứng kết quả.</li>
+<li>Agent chỉ được viết code trong một worktree git riêng. Qua đo đạc thực tế, OpenCode có thể ghi tập tin mà không hỏi ý kiến, nên worktree là ranh giới cách ly duy nhất. Các tập tin bạn đang làm việc không bao giờ nằm trong tầm với của agent.</li>
+<li>Lịch sử chỉ được ghi thêm, không được sửa. Những gì đã xảy ra không bao giờ bị viết lại. Ghi sai thì sửa bằng cách ghi thêm một mục mới, chứ không sửa mục cũ.</li>
+</ul>
+
+<p>Bạn có thể thấy quy tắc này được ép bằng test. Bộ test tích hợp có một test mà trong đó agent báo thành công nhưng không chạm vào một tập tin nào, và task kết thúc ở FAILED, lời báo thành công được lưu ngay cạnh kết quả verification bác bỏ nó.</p>
+</section>
+
+<section id="architecture">
+<h2>Kiến trúc: ai làm việc gì</h2>
+
+<p>Có năm thành phần. Mỗi thành phần chỉ làm đúng một việc.</p>
+
+<pre class="diagram">Claude Code or CLI (planner: decides WHAT to build)
+        |
+        |  MCP over stdio, or terminal commands
+        v
+   aidev (orchestration: isolates, bounds, verifies, records)
+        |
+        +---&gt; OpenCode in a git worktree (agent: writes code, nothing else)
+        |               |
+        |               v
+        +---&gt; verification (aidev runs the task commands itself)
+        |
+        v
+   PostgreSQL (state and event history)</pre>
+
+<table>
+<tr><th>Thành phần</th><th>Nó là gì</th><th>Nó chịu trách nhiệm việc gì</th></tr>
+<tr><td>Planner (Claude Code hoặc CLI)</td><td>Hoặc là bạn gõ lệnh ở terminal (<strong>CLI</strong> là giao diện dòng lệnh), hoặc là Claude Code, trợ lý viết code gọi tới aidev qua MCP.</td><td>Quyết định làm gì. Nó không bao giờ tự chạy agent và không bao giờ tự chấm thành công.</td></tr>
+<tr><td>aidev</td><td>Chương trình trong kho mã này, viết bằng <strong>Go</strong>, một ngôn ngữ lập trình biên dịch.</td><td>Điều phối: tạo worktree, khởi động agent kèm thời gian giới hạn, thu thập thay đổi code từ git, chạy verification và ghi lại mọi bản ghi.</td></tr>
+<tr><td>OpenCode trong worktree</td><td>Agent viết code, chạy với thư mục làm việc đặt vào một worktree tách biệt.</td><td>Viết code. Nó không chạm tới tập tin của bạn, không được quyết định kết quả, và output của nó bị giới hạn dung lượng khi thu lại.</td></tr>
+<tr><td>Verification</td><td>Các lệnh kiểm tra của chính task, do aidev tự chạy sau khi agent xong việc.</td><td>Quyết định. Chỉ mã thoát của các lệnh này mới được đưa task sang SUCCEEDED.</td></tr>
+<tr><td>PostgreSQL</td><td>Cơ sở dữ liệu quan hệ giữ trạng thái chính thức của aidev.</td><td>Ghi nhớ mọi thứ: task, attempt, output, diff, kết quả verification và lịch sử event chỉ ghi thêm.</td></tr>
+</table>
+
+<p>Những thứ aidev cố tình không có: không bộ lập lịch, không trang web điều khiển, không hệ thống đăng nhập, không tự động merge nhánh (branch). Task thành công để lại một commit trên nhánh (branch) riêng của nó, còn việc xử lý nhánh đó ra sao là do con người quyết định. Đó là các mục tiêu đã nêu rõ là không làm, và tài liệu kiến trúc liệt kê sẵn chỗ để sau này gắn từng thứ vào nếu cần.</p>
+
+<p>Mã nguồn được sắp xếp sao cho mỗi thành phần ứng với một thư mục dưới <code>internal/</code>. Vòng đời task nằm ở <code>internal/worker</code>. Ranh giới với agent nằm ở <code>internal/agent</code>, nhờ đó Claude Code không bao giờ cần biết dòng lệnh OpenCode. Mọi tiến trình ngoài đều đi qua <code>internal/procexec</code>, nơi mỗi tiến trình được cấp thời hạn, khả năng hủy và giới hạn output. Cấu hình chỉ do <code>internal/config</code> đọc. Log chỉ do <code>internal/logging</code> ghi, luôn ghi ra stderr.</p>
+</section>
+
+<section id="lifecycle">
+<h2>Vòng đời của task</h2>
+
+<p>Một task đi qua nhiều trạng thái. <strong>Trạng thái</strong> là tình hình hiện tại của task, lưu dưới dạng một từ ngắn như RUNNING. <strong>Chuyển trạng thái</strong> là một bước đi được phép từ trạng thái này sang trạng thái khác. Không phải bước nào cũng được phép. Danh sách đầy đủ các bước được phép nằm ở <code>internal/task/status.go</code>, và test khẳng định hai tính chất quan trọng nhất của nó.</p>
+
+<pre class="diagram">PENDING --&gt; READY --&gt; RUNNING --&gt; VERIFYING --&gt; SUCCEEDED
+   |            |             |               |
+   |            |             +---------------+--&gt; FAILED
+   |            |
+   +------------+--&gt; WAITING_APPROVAL --+
+                        |
+   any non-terminal state --&gt; CANCELLED</pre>
+
+<p>Đọc sơ đồ từ trái sang phải:</p>
+
+<ul>
+<li><strong>PENDING</strong> nghĩa là task đã tồn tại nhưng chưa đủ điều kiện chạy. Ở phiên bản hiện tại chưa có gì chặn task cả, nên nó sẵn sàng ngay khi bạn yêu cầu chạy. Trạng thái này tồn tại để sau này tính năng phụ thuộc có chỗ giữ task đang chờ.</li>
+<li><strong>READY</strong> nghĩa là task đã đủ điều kiện để được nhận chạy.</li>
+<li><strong>RUNNING</strong> nghĩa là agent đang chạy bên trong worktree của task.</li>
+<li><strong>VERIFYING</strong> nghĩa là agent đã xong và aidev đang tự chạy các lệnh verification.</li>
+<li><strong>SUCCEEDED</strong> nghĩa là verification đã qua. Nó chỉ tới được từ VERIFYING. Đây chính là quy tắc duy nhất vẽ dưới dạng sơ đồ: không có mũi tên nào từ RUNNING tới SUCCEEDED.</li>
+<li><strong>FAILED</strong> nghĩa là lần chạy thất bại: agent lỗi, quá thời gian, hoặc verification không qua.</li>
+<li><strong>CANCELLED</strong> nghĩa là con người hoặc hệ thống tắt ngang đã dừng task. Mọi trạng thái chưa kết thúc đều tới được đây, nên không task nào bị kẹt tới mức không dừng được.</li>
+<li><strong>WAITING_APPROVAL</strong> nghĩa là task bị giữ lại bởi một cửa kiểm duyệt và sẽ không chạy cho tới khi con người duyệt. Duyệt cho qua thì sang READY. Từ chối thì sang FAILED.</li>
+</ul>
+
+<p>Cố tình không có mũi tên từ FAILED quay lại READY. Tính năng chạy lại sau này sẽ thêm mũi tên đó. Các attempt đã được đánh số và ghi nối tiếp, nên việc chạy lại về sau chỉ là thêm một dòng, nhưng cạnh đó hiện chưa tồn tại, và việc thêm nó sẽ là một thay đổi có chủ ý kèm test cần cập nhật.</p>
+
+<p>Một lần chạy task gọi là một <strong>attempt</strong>. Các attempt được đánh số từ 1 và không bao giờ bị ghi đè. Cả thư mục worktree lẫn tên branch đều chứa số attempt, nên lần chạy thứ hai không bao giờ trùng với lần đầu. Task chưa chạy lần nào thì chưa có attempt. Task đã chạy một lần thì có attempt 1.</p>
+
+<p>Mỗi lần đổi trạng thái đều được ghi thành một <strong>event</strong> trong cùng một transaction cơ sở dữ liệu với chính thay đổi đó. Event là một bản ghi bất biến ghi lại một việc đã xảy ra, gồm số thứ tự, kiểu như <code>task.started</code> và một payload JSON nhỏ. Nhờ vậy lịch sử không bao giờ vênh với trạng thái. Bạn đọc lịch sử bằng:</p>
+
+<pre><code>aidev task events TASK-000001
+aidev task result TASK-000001 --logs</code></pre>
+
+<p>Lệnh đầu cho thấy chuyện gì đã xảy ra, theo đúng thứ tự. Lệnh thứ hai cho thấy kết quả, kèm bản ghi của agent và toàn bộ output verification khi bạn thêm <code>--logs</code>. Trang gỡ lỗi giải thích kỹ cả hai lệnh.</p>
+</section>
+
+<section id="vocabulary">
+<h2>Từ vựng</h2>
+
+<p>Tám từ dưới đây xuất hiện khắp nơi trong aidev. Mỗi từ ở đây có nghĩa chính xác, có khi hẹp hơn nghĩa thông thường ngoài đời.</p>
+
+<table>
+<tr><th>Từ</th><th>Nghĩa trong aidev</th></tr>
+<tr><td><strong>task</strong></td><td>Một đơn vị công việc được giao. Nó có mã tham chiếu dễ đọc như TASK-000001, tiêu đề, hướng dẫn cho agent và ít nhất một lệnh verification. Task đi qua các trạng thái vòng đời ở trên.</td></tr>
+<tr><td><strong>attempt</strong></td><td>Một lần chạy của task, đánh số từ 1. Task chạy một lần thì có một attempt. Các attempt được ghi nối tiếp, không bao giờ ghi đè, nên lịch sử của task chính là danh sách các attempt của nó.</td></tr>
+<tr><td><strong>worktree</strong></td><td>Bản checkout git tách biệt nơi một attempt chạy. Thư mục làm việc của agent được đặt vào worktree, và đường dẫn worktree phải nằm trong thư mục workspace đã cấu hình. Khi thành công, công việc được commit lên nhánh của task rồi worktree bị xóa. Khi thất bại, nó được giữ lại để xem xét và đánh dấu RETAINED.</td></tr>
+<tr><td><strong>verification</strong></td><td>Các lệnh kiểm tra của chính task, do aidev tự chạy sau khi agent xong việc. Verification là thứ duy nhất được đưa task sang SUCCEEDED. Task không có ít nhất một lệnh verification thì không tạo được.</td></tr>
+<tr><td><strong>agent</strong></td><td>Chương trình viết code, thường là OpenCode. Agent làm việc bên trong worktree, không gì khác. Những gì nó báo cáo lại được ghi nguyên văn và không bao giờ được tin ngay.</td></tr>
+<tr><td><strong>event</strong></td><td>Một bản ghi bất biến trong lịch sử của task, ví dụ <code>task.created</code> hay <code>task.verification_completed</code>. Các event có thứ tự toàn phần nhờ số thứ tự. Nhật ký chỉ ghi thêm: muốn sửa thì ghi event mới, không bao giờ sửa event cũ.</td></tr>
+<tr><td><strong>project</strong></td><td>Một kho git mà aidev được phép chạy task trên đó, đăng ký bằng đường dẫn tuyệt đối. Tạo task cho một kho chưa biết sẽ tự đăng ký nó.</td></tr>
+<tr><td><strong>approval</strong></td><td>Quyết định của con người giữ cửa cho task. Task tạo kèm <code>--requires-approval</code> sẽ chờ ở WAITING_APPROVAL cho tới khi có người đồng ý hoặc từ chối bằng <code>aidev task approve</code>. Planner không bao giờ được tự duyệt task của chính mình.</td></tr>
+</table>
+
+<p>Nếu chỉ nhớ ba từ thì hãy nhớ task, verification và worktree. Task là công việc. Worktree là nơi agent làm việc đó. Verification là cách aidev kết luận việc đó có đạt hay không.</p>
+</section>
+
+<section id="where-next">
+<h2>Đọc tiếp ở đâu</h2>
+
+<ul>
+<li><a href="getting-started.html">Bắt đầu</a>: từ con số không tới một task hoàn chỉnh. Khởi động PostgreSQL, chạy migration, đặt biến môi trường, tạo task đầu tiên trên một kho mã dùng một lần, chạy nó, đọc kết quả và xem lại nhánh bằng git.</li>
+<li><a href="debugging.html">Gỡ lỗi</a>: cách tìm ra chuyện gì đã xảy ra. Log, lịch sử event, kết quả kèm output đầy đủ, worktree được giữ lại, cách cứu task bị kẹt ở RUNNING sau sự cố, tracing, và bảng các sự cố thường gặp.</li>
+<li><a href="reference.html">Tra cứu</a>: các danh sách đầy đủ. Mọi lệnh CLI kèm mọi cờ, mọi trạng thái task, mọi loại thất bại, mọi kiểu event, mọi biến môi trường kèm giá trị mặc định, và mọi công cụ MCP kèm đầu vào.</li>
+</ul>
+
+<p>Và hãy giữ quy tắc duy nhất trong đầu khi đọc tiếp: aidev chạy agent trong một worktree git tách biệt, rồi tự chạy các lệnh verification của task, và chỉ các lệnh đó mới được đưa task sang SUCCEEDED. Agent nói công việc đã xong cũng không thay đổi điều gì. Mọi trang còn lại trong hướng dẫn này đều nhắc lại quy tắc đó ở chỗ cần thiết.</p>
+</section>
+</main>
+</body>
+</html>

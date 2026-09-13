@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gỡ lỗi task aidev: log, event, kết quả, worktree</title>
+<link rel="stylesheet" href="../guide.css">
+</head>
+<body>
+<nav class="breadcrumb"><a href="index.html">Hướng dẫn</a> · <a href="getting-started.html">Bắt đầu</a> · <a href="debugging.html">Gỡ lỗi</a> · <a href="reference.html">Tra cứu</a></nav>
+<nav class="lang-switch"><a href="../debugging.html">English</a></nav>
+<main>
+<h1>Gỡ lỗi: cách tìm ra chuyện gì đã xảy ra</h1>
+
+<p><strong>Gỡ lỗi</strong> nghĩa là tìm ra chuyện gì đã xảy ra khi mọi thứ không như mong đợi. aidev cho bạn bốn chỗ để xem: log, lịch sử event, kết quả task và worktree được giữ lại. Trang này giải thích từng chỗ, theo đúng thứ tự nên thử.</p>
+
+<div class="notice"><strong>Quy tắc duy nhất vẫn đúng khi gỡ lỗi:</strong> chỉ verification mới được đưa task sang SUCCEEDED. Khi task hỏng, output của verification là phán quyết. Bản ghi của agent chỉ là bối cảnh. Đừng đọc tóm tắt của agent trước rồi suy ngược. Hãy đọc kết quả verification trước, rồi mới dùng bản ghi của agent để hiểu nó đã đi tới đó bằng cách nào.</div>
+
+<section id="where-to-look-first">
+<h2>Xem ở đâu trước</h2>
+
+<p>Bắt đầu từ triệu chứng. Đối chiếu nó với điểm xuất phát:</p>
+
+<table>
+<tr><th>Triệu chứng</th><th>Bắt đầu ở</th><th>Lệnh</th></tr>
+<tr><td>Task hỏng và bạn muốn biết vì sao</td><td>Kết quả kèm output đầy đủ</td><td><code>aidev task result TASK-000001 --logs</code></td></tr>
+<tr><td>Task có vẻ kẹt hoặc chậm</td><td>Lịch sử event</td><td><code>aidev task events TASK-000001</code></td></tr>
+<tr><td>Chính aidev in lỗi</td><td>Log trên stderr</td><td>Chạy lại và đọc stderr; nâng <code>LOG_LEVEL</code> lên <code>debug</code></td></tr>
+<tr><td>Bạn muốn lấy các tập tin agent làm dở</td><td>Worktree được giữ lại</td><td><code>aidev worktree list</code></td></tr>
+<tr><td>Task kẹt ở RUNNING sau sự cố</td><td>Khôi phục bằng cách hủy</td><td><code>aidev task cancel TASK-000001 --reason "..."</code></td></tr>
+<tr><td>Bạn cần thời gian từng chặng của cả lần chạy</td><td>Tracing</td><td>Đặt <code>OTEL_EXPORTER_OTLP_ENDPOINT</code> rồi xem trace</td></tr>
+</table>
+
+<p>Phần còn lại của trang đi qua từng dòng một. Nếu bạn mới thì đọc hết trang một lần. Sau đó dùng bảng trên như mục lục.</p>
+</section>
+
+<section id="logs">
+<h2>Log: chúng nằm ở đâu và vì sao lại ở stderr</h2>
+
+<p><strong>Log</strong> là dòng chữ chẩn đoán chương trình in ra trong lúc chạy. Mỗi chương trình có hai luồng output: <strong>stdout</strong> (output chuẩn) và <strong>stderr</strong> (lỗi chuẩn). Theo quy ước, stdout mang đáp án thật của chương trình còn stderr mang thông tin chẩn đoán về cách nó ra đáp án đó.</p>
+
+<p>aidev theo quy ước đó một cách nghiêm ngặt. Output dạng người đọc của lệnh đi ra stdout. Mọi log đi ra stderr. Lý do chỉ có một, và nó liên quan tới tính đúng đắn chứ không phải phong cách: khi aidev chạy dưới dạng máy chủ MCP thì stdout mang giao thức JSON-RPC mà Claude Code nói. JSON-RPC là định dạng để một chương trình gọi hàm của chương trình khác qua pipe. Chỉ một dòng log lạc sang stdout cũng đủ làm hỏng luồng giao thức đó. Vì vậy gói logging không có tùy chọn stdout nào cả. Bỏ hẳn khả năng đó đáng tin hơn là trông chờ mọi người nhớ quy tắc.</p>
+
+<p>Chính sự tách bạch này làm output JSON ghép nối được. Vì log không bao giờ đụng tới stdout nên cách viết này luôn đúng:</p>
+
+<pre><code>aidev task get TASK-000001 --json | jq .status
+# stdout carries JSON, so piping it to jq works;
+# diagnostics stay visible on stderr, on your terminal</code></pre>
+
+<p>Dấu hiệu đúng: <code>jq</code> in ra trạng thái, còn các dòng log hiện riêng trên terminal của bạn. Nếu <code>jq</code> than input không phải JSON thì đã có thứ gì đó ghi chữ không phải JSON ra stdout, điều không bao giờ được xảy ra. Hãy báo lại việc đó.</p>
+
+<p>Các dòng log có cấu trúc. Mỗi dòng mang các trường để bạn lần theo một task:</p>
+
+<pre><code>LOG_LEVEL=debug aidev task run TASK-000001 2&gt; aidev.log
+grep 'TASK-000001' aidev.log | head -20</code></pre>
+
+<p>Đoạn <code>2&gt;</code> chuyển hướng stderr vào tập tin. Phải làm vậy vì log đi ra stderr chứ không phải stdout. Các trường cần tìm là <code>task_id</code>, <code>attempt_id</code> và <code>worktree_path</code>. Chúng gắn với một logger nằm trong context của chương trình, nên code ở sâu bên trong tự kế thừa mà không cần truyền logger qua từng hàm. Muốn theo một task thì lọc theo mã tham chiếu hoặc id của nó. Muốn theo một lần chạy thì lọc theo id attempt.</p>
+
+<p><code>LOG_LEVEL</code> điều khiển lượng log in ra. Các giá trị cho phép là <code>debug</code>, <code>info</code>, <code>warn</code> và <code>error</code>. Mặc định là <code>info</code>. Đặt <code>LOG_LEVEL=debug</code> khi cần bức tranh đầy đủ, ví dụ task hỏng theo cách mà kết quả không giải thích được. Giá trị lạ làm khởi động thất bại kèm thông báo nêu các giá trị cho phép. aidev không bao giờ ghi bí mật vào log: chuỗi kết nối được che trước khi in hoặc ghi, và môi trường đưa cho tiến trình con không bao giờ bị ghi lại.</p>
+
+<p>Nếu nâng mức log vẫn không giải thích được vấn đề thời gian thì bật tracing như <a href="debugging.html#tracing">phần tracing</a> mô tả. Log cho biết chuyện gì đã xảy ra. Trace cho biết mỗi phần tốn bao lâu.</p>
+</section>
+
+<section id="events">
+<h2>Event: đọc lịch sử, kể cả khi task đang chạy</h2>
+
+<p>Lịch sử event là nhật ký của task. Mỗi lần đổi trạng thái và mỗi bước lớn đều ghi thêm một event trong cùng transaction cơ sở dữ liệu với chính thay đổi đó, nên lịch sử không thể vênh với trạng thái. Event có số thứ tự (<code>seq</code>) tạo thứ tự toàn phần không phụ thuộc độ phân giải đồng hồ: hai event ghi trong cùng một mili-giây vẫn xếp trước sau rõ ràng, điều mà timestamp một mình không đảm bảo được.</p>
+
+<p>Đọc lịch sử bằng aidev task events:</p>
+
+<pre><code>aidev task events TASK-000001
+# want, for a finished task, something like:
+#   1       10:02:11.041  task.created
+#   2       10:02:11.058  task.ready
+#   3       10:02:12.004  task.started
+#   4       10:02:12.031  task.worktree_created
+#   5       10:02:12.040  task.worker_started
+#   6       10:12:03.112  task.worker_completed
+#   7       10:12:03.120  task.verification_started
+#   8       10:12:03.205  task.verification_step_completed
+#   9       10:12:03.208  task.verification_completed
+#   10      10:12:03.220  task.succeeded</code></pre>
+
+<p>Mỗi dòng cho số thứ tự, giờ UTC và kiểu event. Từ vựng đầy đủ các kiểu event nằm ở <a href="reference.html#events-reference">trang tra cứu</a>. Các kiểu quan trọng khi chẩn đoán là <code>task.created</code>, <code>task.ready</code>, <code>task.started</code>, <code>task.worktree_created</code>, <code>task.worker_started</code>, <code>task.worker_completed</code>, <code>task.verification_started</code>, <code>task.verification_step_completed</code>, <code>task.verification_completed</code> và bộ ba kết thúc <code>task.succeeded</code>, <code>task.failed</code>, <code>task.cancelled</code>.</p>
+
+<p>Ba cờ làm thay đổi những gì bạn thấy:</p>
+
+<pre><code>aidev task events TASK-000001 --payload
+# include each event's JSON payload, for example the verification exit codes
+
+aidev task events TASK-000001 --after 5
+# only events after sequence number 5; readers page with seq &gt; last_seen
+
+aidev task events TASK-000001 --json | jq .
+# machine-readable output, same information as JSON</code></pre>
+
+<p>Dấu hiệu đúng: các event liệt kê theo thứ tự, có payload khi bạn yêu cầu. Nếu lệnh báo không có event nào thì غالب mã task sai, hoặc task mới tạo mà chưa có gì xảy ra. Kiểm tra mã bằng <code>aidev task list</code>.</p>
+
+<p>Theo dõi task đang chạy nghĩa là mở terminal khác chạy lặp lại cùng lệnh. Một lần chạy tốn hàng phút, phần lớn là agent, nên lịch sử cho biết nó đang ở chặng nào. Nếu event cuối là <code>task.worker_started</code> mà đã trôi qua vài phút thì agent vẫn đang làm, đó là bình thường. Nếu event cuối là <code>task.verification_started</code> thì aidev đang tự chạy các bước kiểm tra và sắp xong. Muốn thăm dò bằng script thì ghi lại <code>seq</code> lớn nhất đã thấy rồi lần sau truyền lại qua <code>--after</code>, để mỗi lần gọi chỉ trả về cái mới.</p>
+
+<pre><code>watch -n 10 'aidev task events TASK-000001 | tail -5'
+# re-runs the command every 10 seconds; Ctrl-C stops watching
+# if watch is not installed, just re-run aidev task events by hand</code></pre>
+</section>
+
+<section id="task-result">
+<h2>Kết quả task: đọc phán quyết, kể cả kèm output đầy đủ</h2>
+
+<p>Kết quả là phán quyết cộng bằng chứng. Đọc nó bằng aidev task result:</p>
+
+<pre><code>aidev task result TASK-000001
+# the outcome of the latest attempt: status, failure kind, timing,
+# per-step verification results, and where the work is
+
+aidev task result TASK-000001 --logs
+# everything above, plus the agent transcript, the diff, and full output
+
+aidev task result TASK-000001 --json | jq .verification
+# just the verification section, as JSON</code></pre>
+
+<p>Ý nghĩa từng phần. Phần task cho trạng thái, ví dụ SUCCEEDED hay FAILED. Phần attempt cho số attempt, trạng thái của nó, loại thất bại khi hỏng (như VERIFICATION hay TIMEOUT) và thời gian. Phần worker mô tả agent đã làm gì: dòng lệnh khởi động, mã thoát, đổi bao nhiêu tập tin, và tóm tắt của nó. Tóm tắt là lời agent tự nói về việc mình làm, ghi nguyên văn. Nó hữu ích khi chẩn đoán và không bao giờ quyết định điều gì. Phần verification liệt kê từng bước với lệnh, trạng thái và mã thoát. Đây là bằng chứng. Phần worktree cho đường dẫn, nhánh và việc nó đã xóa hay giữ lại (RETAINED).</p>
+
+<p>Output của bước hỏng luôn được kèm theo ngay cả khi không có <code>--logs</code>, cắt lấy 2000 byte cuối, vì đó là thứ ai cũng cần đầu tiên. Output của bước qua thì không kèm, để màn hình gọn. Với <code>--logs</code> bạn có mọi thứ: stdout và stderr của agent, diff aidev thu từ git, và toàn bộ output verification. Output vượt giới hạn thu của mỗi luồng sẽ bị bỏ và đánh dấu đã cắt bớt, để agent chạy loạn không làm tràn bộ nhớ hay cơ sở dữ liệu.</p>
+
+<p>Nếu task chưa chạy lần nào thì không có phần attempt. Đó không phải lỗi. Nó đúng như chữ viết: task đã tạo và chưa có gì chạy. Hãy chạy bằng <code>aidev task run TASK-000001</code>.</p>
+
+<p>Ví dụ đọc một lần hỏng. Giả sử kết quả báo FAILED với loại VERIFICATION, và phần verification cho thấy <code>go test ./...</code> thoát 1 kèm output nêu thiếu hàm. Chẩn đoán là: agent chưa viết hàm, hoặc viết sai tên. Cách sửa là viết hướng dẫn rõ hơn, chứ không phải đổi lệnh. Giờ xem tóm tắt worker: nếu nó viết "Done, all tests pass" thì bạn gặp đúng ca kinh điển mà bộ test tích hợp kiểm tra, agent nói thành công trong khi chẳng đổi gì. Lời nói dối nằm trong hồ sơ ngay cạnh mâu thuẫn. Hãy tin mã thoát.</p>
+</section>
+
+<section id="worktrees">
+<h2>Worktree: tìm và xem xét task hỏng được giữ lại</h2>
+
+<p>Task hỏng hoặc bị hủy giữ nguyên worktree trên đĩa, chưa commit gì. Trạng thái RETAINED nghĩa đúng như vậy: giữ lại để xem xét. Cố tình không có thiết lập nào vứt bỏ công việc hỏng. Chính sách dọn dẹp chỉ có hai giá trị: <code>on-success</code>, tức là commit công việc rồi xóa worktree, và <code>never</code>, tức là giữ mọi worktree. Không giá trị nào vứt công việc hỏng. Để chắc ăn, lệnh <code>git worktree remove</code> thuần túy từ chối xóa worktree còn việc chưa commit, và aidev không bao giờ tự thêm <code>--force</code>.</p>
+
+<p>Liệt kê những gì đang giữ:</p>
+
+<pre><code>aidev worktree list
+# each worktree with its task, its status, its size,
+# and a flag when the directory is missing from disk
+
+aidev worktree list --all
+# also include worktrees aidev has already removed
+
+aidev worktree list --json | jq .
+# machine-readable form of the same list</code></pre>
+
+<p>Dấu hiệu đúng: mỗi worktree một dòng, ví dụ <code>TASK-000002 FAILED attempt 1 RETAINED /path/to/worktrees/TASK-000002-a1</code>, kèm tổng dung lượng cuối cùng. Dòng bị gắn cờ mất khỏi đĩa nghĩa là có thứ ngoài aidev đã xóa thư mục. aidev báo cho bạn biết chứ không đưa đường dẫn không tồn tại.</p>
+
+<p>Xem trực tiếp worktree được giữ lại. Nó là thư mục bình thường chứa một bản checkout git bình thường. Vào đó, xem tập tin, tự chạy lại lệnh hỏng:</p>
+
+<pre><code>cd /home/you/.local/share/aidev/worktrees/TASK-000002-a1
+git status --porcelain
+git diff
+go test ./...
+# run the failing check yourself, in the worktree, to see the same failure</code></pre>
+
+<p>Đường dẫn trên chỉ là ví dụ. Hãy dùng đường dẫn thật từ <code>aidev worktree list</code>. Workspace root của bạn có thể khác; <code>aidev config</code> cho biết nó ở đâu. Đừng sửa tập tin trong worktree được giữ lại rồi mong task nhận thay đổi. Attempt đã kết thúc. Worktree là tang chứng, không phải cơ hội thứ hai. Nếu phần việc dở dang đáng giữ thì tự chép tập tin ra ngoài hoặc tự commit chúng lên nhánh của task.</p>
+
+<p>Xem xong thì lấy lại đĩa:</p>
+
+<pre><code>aidev worktree remove TASK-000002
+# refused if the work is uncommitted, which protects a failed attempt's output
+
+aidev worktree remove TASK-000002 --force
+# discard the work permanently; the task's branch is left alone either way</code></pre>
+
+<p>Truyền <code>--force</code> là vứt bỏ vĩnh viễn việc chưa commit, và việc xóa cưỡng bức được ghi vào lịch sử task như quyết định của bạn. Nếu task còn RUNNING hay VERIFYING thì bị từ chối xóa: hãy hủy nó trước. Nếu thư mục đã mất khỏi đĩa thì aidev đối chiếu lại bản ghi chứ không từ chối, đồng thời dọn mục quản trị của git.</p>
+</section>
+
+<section id="tracing">
+<h2>Tracing: cách bật và cách xem</h2>
+
+<p><strong>Tracing</strong> ghi lại mỗi phần của lần chạy tốn bao lâu, dưới dạng cây các span. Một khoảng đo (span) là một thao tác được bấm giờ, như tạo worktree hay chạy agent. Tracing trả lời "thời gian đi đâu" theo cách log không làm được. aidev xuất trace theo định dạng chuẩn OTLP, không dính nhà cung cấp nào: backend nào nhận OTLP đều dùng được.</p>
+
+<p>Tracing tắt trừ khi bạn cấu hình endpoint. Khi tắt, code có gắn đo đạc dùng tracer rỗng nên không tốn gì và không kết nối mạng. Muốn bật thì trỏ aidev tới một backend. Backend đơn giản nhất dùng trên máy cá nhân là Jaeger, chạy bằng một container với giao diện ở cổng 16686:</p>
+
+<pre><code>make jaeger-up
+eval "$(make jaeger-env)"
+# the second command sets OTEL_EXPORTER_OTLP_ENDPOINT in your current shell
+aidev task run TASK-000001</code></pre>
+
+<p>Dấu hiệu đúng: lần chạy vẫn diễn ra bình thường, sau đó giao diện Jaeger ở <code>http://localhost:16686</code> hiện một trace của lần chạy. <code>eval "$(...)"</code> nghĩa là "chạy output của lệnh này như lệnh shell", nhờ đó địa chỉ endpoint chui vào môi trường của bạn. Nếu giao diện trống trơn thì kiểm tra xem biến endpoint có thật sự đặt trong shell đã chạy aidev không:</p>
+
+<pre><code>echo "$OTEL_EXPORTER_OTLP_ENDPOINT"
+# want: an http URL printed by make jaeger-env, for example http://localhost:4318</code></pre>
+
+<p>Một lần chạy thật trông thế này, agent chiếm gần hết:</p>
+
+<pre><code>aidev.task.run            10.97s
+  aidev.worktree.create    0.02s
+  aidev.agent.run         10.86s   usage {input: 9580, output: 457}
+  aidev.verification       0.08s
+    aidev.verification.step   0s   go test ./... -&gt; exit 0</code></pre>
+
+<p>Hình dạng đó là điển hình: việc của riêng aidev chỉ một phần của giây, còn lại là agent. Nếu lần chạy chậm thì trace cho thấy đó là do model, và cách xử lý là đổi model nhanh hơn chứ không phải chỉnh aidev.</p>
+
+<p>Các biến tracing, tất cả không bắt buộc, với ý nghĩa:</p>
+
+<pre><code>OTEL_EXPORTER_OTLP_ENDPOINT=https://example.com/otel        # base URL; traces post to &lt;base&gt;/v1/traces
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=https://other:4318/v1/traces  # full URL, used as given, takes precedence
+OTEL_EXPORTER_OTLP_HEADERS='Authorization=Bearer secret'     # comma-separated key=value pairs
+OTEL_SERVICE_NAME=aidev                                       # service name shown in the backend
+OTEL_TRACES_SAMPLER_ARG=1                                     # 0 to 1; 1 keeps everything</code></pre>
+
+<p>Hai cái bẫy ghi ở đây vì cả hai đều dễ lặp lại. Thứ nhất, aidev cố tình không truyền cấu hình OTLP cho tiến trình agent: OpenCode tự nó cũng có đo đạc, và đã có lần nó nã hơn nghìn span nội bộ của chính nó vào backend dưới tên aidev. Thứ hai, nếu dùng Langfuse tự host thì lưu ý bản 4 đã bỏ <code>GET /api/public/traces</code>: hãy dùng <code>GET /api/public/v2/observations</code>, và xem mã trạng thái HTTP thay vì đọc trường data rỗng trong thân lỗi.</p>
+</section>
+
+<section id="recovery">
+<h2>Khôi phục: task kẹt ở RUNNING sau sự cố</h2>
+
+<p>Nếu aidev bị diệt giữa lần chạy, bằng <code>kill -9</code>, gập laptop hay dừng container, task nằm lại ở RUNNING với attempt mở dở và worktree trên đĩa. Sẽ không có gì nhận lại nó. Task đang chạy thì không chạy được nữa, và aidev không biết liệu còn tiến trình nào khác đang làm nó không. aidev cố tình không tự cho task RUNNING quá hạn là chết: tuyên bố task đã chết trong khi tiến trình khác còn đang chạy nó thì tệ hơn nhiều so với việc để bạn tự hủy một cách có ý thức.</p>
+
+<p>Đường về là hủy nó. Trước hết tìm task kẹt, rồi hủy kèm lý do:</p>
+
+<pre><code>aidev task list --status RUNNING,VERIFYING
+# find every task that was executing when aidev died
+
+aidev task cancel TASK-000001 --reason "aidev was killed mid-run"
+# moves it to CANCELLED, closes the open attempt, retains the worktree</code></pre>
+
+<p>Dấu hiệu đúng: lệnh hủy báo task đã CANCELLED, và <code>aidev worktree list</code> cho worktree ở RETAINED. Công việc dở dang còn nguyên và lịch sử task vẫn mạch lạc, với lần hủy ghi nối tiếp thành event mới. Hủy task đã xong là lỗi, thông báo sẽ nói rõ vậy. Lý do hủy ghi vào lịch sử task nên hãy viết sao cho chính bạn sau này đọc vẫn hiểu.</p>
+
+<p>Hủy xong thì xem worktree được giữ lại như <a href="debugging.html#worktrees">phần worktrees</a> mô tả, rồi xóa bằng <code>aidev worktree remove</code> khi đã xong. Hãy tạo task mới, hoặc chạy lại từ trạng thái đã sửa, thay vì cố tiếp tục attempt đã hủy. Bản hiện tại không có tiếp tục: attempt chỉ ghi thêm và attempt đã hủy thì mãi mãi là đã hủy.</p>
+</section>
+
+<section id="common-problems">
+<h2>Sự cố thường gặp: triệu chứng, nguyên nhân, cách sửa</h2>
+
+<table>
+<tr><th>Triệu chứng</th><th>Nguyên nhân</th><th>Cách sửa</th></tr>
+<tr><td><code>aidev migrate</code> không nối được cơ sở dữ liệu</td><td>PostgreSQL chưa chạy, hoặc <code>DATABASE_URL</code> ghi sai cổng.</td><td>Chạy <code>make db-up</code>. Đối chiếu cổng: mặc định 5434, hoặc giá trị <code>AIDEV_DB_PORT</code> bạn đổi. Chạy <code>aidev config</code> để xem aidev đã nhận gì.</td></tr>
+<tr><td><code>aidev task create</code> từ chối vì thiếu verification</td><td>Ít nhất một lệnh <code>--verify</code> là bắt buộc, theo cả domain và ràng buộc cơ sở dữ liệu.</td><td>Thêm <code>--verify 'go test ./...'</code> hoặc bước kiểm tra hợp với kho mã. Task mà aidev không kiểm được thì nó không nhận.</td></tr>
+<tr><td>Agent nói thành công mà task FAILED</td><td>Agent xong việc rồi verification hỏng. Lời nói được ghi lại, không bao giờ quyết định. Đây là quy tắc duy nhất vận hành đúng như thiết kế.</td><td>Đọc <code>aidev task result TASK-000001 --logs</code>. Tin mã thoát của verification. Viết hướng dẫn tốt hơn rồi tạo task mới.</td></tr>
+<tr><td>Task chậm: mười phút chưa có kết quả</td><td>Gần như chắc chắn do model chứ không phải aidev. Phần của aidev được đo chỉ 0,2 giây trong khi agent tốn 9 tới 656 giây.</td><td>Xem <code>aidev task events TASK-000001</code> để biết đang ở chặng nào. Cân nhắc model nhanh hơn qua <code>OPENCODE_MODEL</code>. Đừng rút ngắn timeout để chữa chậm.</td></tr>
+<tr><td><code>aidev task run</code> diệt agent vì quá giờ</td><td><code>DEFAULT_TASK_TIMEOUT</code> hết trước khi agent xong.</td><td>Nâng timeout cho task bằng <code>--timeout 60m</code>, hoặc nâng <code>DEFAULT_TASK_TIMEOUT</code>. Lần đầu chạy trên kho mã mới thường chậm.</td></tr>
+<tr><td><code>aidev worktree remove</code> bị từ chối</td><td>Worktree còn việc chưa commit, và git không cho vứt nếu thiếu <code>--force</code>.</td><td>Xem lại công việc trước. Rồi <code>aidev worktree remove TASK-000001 --force</code> để vứt một cách có chủ ý. Nhánh không ảnh hưởng gì cả hai cách.</td></tr>
+<tr><td>Task kẹt ở RUNNING sau khi aidev bị diệt</td><td>Tiến trình chết giữa lần chạy. Không có gì tự dọn, đó là chủ ý.</td><td><code>aidev task cancel TASK-000001 --reason "aidev was killed mid-run"</code>, rồi xem worktree được giữ lại.</td></tr>
+<tr><td>Verification hỏng kiểu "command not found"</td><td>Chương trình kiểm tra chưa cài trong môi trường aidev chạy lệnh.</td><td>Cài công cụ, hoặc sửa chính tả lệnh. Nhớ lệnh chạy không qua shell: pipe và chuyển hướng bị từ chối ngay khi phân tích.</td></tr>
+<tr><td>Thiếu log hoặc phiên MCP gãy</td><td>Có thứ gì đó ghi ra stdout ở chế độ MCP, hoặc bạn tìm log ở stdout.</td><td>Log luôn đi ra stderr. Ở chế độ MCP, stdout thuộc về giao thức. Đặt <code>LOG_LEVEL=debug</code> rồi đọc stderr.</td></tr>
+<tr><td>Trace không hiện trong backend</td><td><code>OTEL_EXPORTER_OTLP_ENDPOINT</code> chưa đặt hoặc không tới được, hoặc bạn truy vấn endpoint đã bỏ.</td><td>Xác nhận biến đã đặt trong shell chạy aidev. Với Jaeger thì xem cổng 16686. Với Langfuse v4 thì truy vấn endpoint observations bản v2 và kiểm tra mã trạng thái HTTP.</td></tr>
+</table>
+
+<p>Nếu không dòng nào khớp, gom ba thứ theo thứ tự rồi đọc cùng nhau: <code>aidev task result TASK-000001 --logs</code>, <code>aidev task events TASK-000001 --payload</code> và worktree giữ lại từ <code>aidev worktree list</code>. Giữa phán quyết, lịch sử và tập tin, nguyên nhân luôn nằm ở một trong ba. Quay lại <a href="index.html">trang đầu hướng dẫn</a> nếu cần bức tranh lớn, hoặc <a href="reference.html">trang tra cứu</a> để xem định nghĩa chính xác từng cờ và biến.</p>
+</section>
+</main>
+</body>
+</html>

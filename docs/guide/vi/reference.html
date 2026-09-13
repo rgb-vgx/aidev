@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tra cứu aidev: lệnh, trạng thái, event, biến, công cụ</title>
+<link rel="stylesheet" href="../guide.css">
+</head>
+<body>
+<nav class="breadcrumb"><a href="index.html">Hướng dẫn</a> · <a href="getting-started.html">Bắt đầu</a> · <a href="debugging.html">Gỡ lỗi</a> · <a href="reference.html">Tra cứu</a></nav>
+<nav class="lang-switch"><a href="../reference.html">English</a></nav>
+<main>
+<h1>Tra cứu: các danh sách đầy đủ</h1>
+
+<p>Trang này liệt kê mọi thứ một cách chính xác. Nếu trang bắt đầu và trang gỡ lỗi là câu chuyện thì đây là từ điển. Mọi lệnh kèm mọi cờ, mọi trạng thái, mọi loại thất bại, mọi kiểu event, mọi biến môi trường kèm giá trị mặc định, và mọi công cụ MCP kèm đầu vào. Giá trị ở đây lấy từ code, không phải từ trí nhớ.</p>
+
+<div class="notice"><strong>Nhắc lại quy tắc duy nhất:</strong> aidev chạy agent trong một worktree git tách biệt, rồi tự chạy các lệnh verification của task, và chỉ các lệnh đó mới được đưa task sang SUCCEEDED. Agent nói công việc đã xong cũng không thay đổi điều gì. Bảng trạng thái và bảng loại thất bại dưới đây đều xoay quanh quy tắc đó.</div>
+
+<section id="cli">
+<h2>Lệnh CLI</h2>
+
+<p>Mọi lệnh nhận cờ bằng hai gạch ngang, kiểu <code>--json</code>. Mọi lệnh có in gì ra đều nhận <code>--json</code> để ra output máy đọc được; chữ cho người đọc là mặc định. Mã định danh task, viết <code>&lt;task&gt;</code> dưới đây, là mã tham chiếu (<code>TASK-000001</code>, không phân biệt hoa thường) hoặc UUID. Log luôn đi ra stderr nên việc nối output <code>--json</code> sang <code>jq</code> lúc nào cũng đúng.</p>
+
+<h3>Lệnh cấp cao nhất</h3>
+
+<table>
+<tr><th>Lệnh</th><th>Cờ</th><th>Làm gì</th></tr>
+<tr><td><code>aidev version</code></td><td>không có</td><td>In phiên bản aidev.</td></tr>
+<tr><td><code>aidev config</code></td><td><code>--json</code>: in dạng JSON</td><td>In cấu hình đã nhận, với mật khẩu cơ sở dữ liệu đã che. Dùng nó để kiểm tra aidev thật sự đã đọc gì.</td></tr>
+<tr><td><code>aidev migrate</code></td><td><code>--json</code>: in kết quả dạng JSON</td><td>Áp các migration cơ sở dữ liệu còn thiếu. Lũy đẳng: chạy lại thoải mái.</td></tr>
+<tr><td><code>aidev mcp</code></td><td>không có</td><td>Chạy máy chủ MCP trên stdio, cho Claude Code. Mọi log đi ra stderr vì stdout mang giao thức.</td></tr>
+</table>
+
+<pre><code>aidev version
+aidev config
+aidev config --json
+aidev migrate
+aidev migrate --json</code></pre>
+
+<h3><code>aidev task create</code></h3>
+
+<p>Tạo task. Chưa chạy. Ít nhất một <code>--verify</code> là bắt buộc.</p>
+
+<table>
+<tr><th>Cờ</th><th>Làm gì</th></tr>
+<tr><td><code>--title T</code> (bắt buộc)</td><td>Một dòng ngắn nói cần làm gì. Không được rỗng và dài nhất 200 ký tự.</td></tr>
+<tr><td><code>--verify CMD</code> (bắt buộc, lặp được)</td><td>Một lệnh aidev tự chạy để kiểm chứng task. Muốn nhiều lệnh thì lặp lại. Lệnh chạy không qua shell: pipe, chuyển hướng và các toán tử như <code>|</code>, <code>&gt;</code>, <code>&amp;&amp;</code> bị từ chối ngay khi phân tích kèm giải thích.</td></tr>
+<tr><td><code>--repo PATH</code></td><td>Đường dẫn tới kho git. Mặc định: thư mục hiện tại. Kho chưa biết được tự đăng ký thành project.</td></tr>
+<tr><td><code>--description D</code></td><td>Hướng dẫn đầy đủ cho agent.</td></tr>
+<tr><td><code>--acceptance A</code></td><td>Xong trông ra sao, viết bằng văn xuôi.</td></tr>
+<tr><td><code>--agent NAME</code></td><td>Agent dùng. Mặc định: thiết lập <code>OPENCODE_AGENT</code>, tức là <code>build</code>. aidev tự kiểm tra tên vì OpenCode lặng lẽ dùng mặc định khi gặp tên lạ mà vẫn thoát 0.</td></tr>
+<tr><td><code>--priority N</code></td><td>Số lớn chạy trước. Mặc định 0. Từ -1000 tới 1000.</td></tr>
+<tr><td><code>--max-retries N</code></td><td>Ghi nhận cho tính năng chạy lại sau này. Bản hiện tại không bao giờ chạy lại.</td></tr>
+<tr><td><code>--requires-approval</code></td><td>Giữ task sau cửa quyết định của con người. Nó sẽ chờ ở WAITING_APPROVAL cho tới khi được duyệt.</td></tr>
+<tr><td><code>--base-ref REF</code></td><td>Git ref để tách nhánh. Mặc định: nhánh mặc định của project. Kiểm tra ngay lúc này chứ không đợi tới khi tạo worktree.</td></tr>
+<tr><td><code>--timeout DURATION</code></td><td>Giới hạn lần chạy agent của task này, ví dụ <code>60m</code>. Mặc định: DEFAULT_TASK_TIMEOUT.</td></tr>
+<tr><td><code>--json</code></td><td>In task vừa tạo dạng JSON.</td></tr>
+</table>
+
+<h3><code>aidev task list</code>, <code>get</code>, <code>run</code></h3>
+
+<table>
+<tr><th>Lệnh</th><th>Cờ</th><th>Làm gì</th></tr>
+<tr><td><code>aidev task list</code></td><td><code>--status S,S</code>: các trạng thái muốn lấy, cách nhau bằng phẩy; <code>--repo PATH</code>: chỉ task của kho này; <code>--limit N</code>: số task tối đa; <code>--json</code></td><td>Liệt kê task, mới nhất trước. Trạng thái lạ bị từ chối kèm nêu tên. Kho chưa có task thì kết quả rỗng, không phải lỗi.</td></tr>
+<tr><td><code>aidev task get &lt;task&gt;</code></td><td><code>--json</code></td><td>Xem một task. Nhận mã tham chiếu hoặc UUID.</td></tr>
+<tr><td><code>aidev task run &lt;task&gt;</code></td><td><code>--json</code></td><td>Chạy task tới cùng: tạo worktree git tách biệt, chạy agent trong đó, rồi chạy các lệnh verification và ghi kết quả. Thoát mã khác 0 khi task không thành công. Cửa kiểm duyệt không phải thất bại: nó báo cần con người quyết định rồi thoát 0.</td></tr>
+</table>
+
+<h3><code>aidev task result</code>, <code>events</code>, <code>cancel</code>, <code>approve</code></h3>
+
+<table>
+<tr><th>Lệnh</th><th>Cờ</th><th>Làm gì</th></tr>
+<tr><td><code>aidev task result &lt;task&gt;</code></td><td><code>--logs</code>: kèm bản ghi của agent, diff và toàn bộ output verification; <code>--json</code></td><td>Xem kết quả attempt mới nhất của task. Task chưa chạy lần nào không phải lỗi: phần attempt của nó đơn giản là vắng mặt.</td></tr>
+<tr><td><code>aidev task events &lt;task&gt;</code></td><td><code>--payload</code>: kèm payload của từng event; <code>--after SEQ</code>: chỉ event sau số thứ tự này; <code>--limit N</code>: số event tối đa; <code>--json</code></td><td>Xem lịch sử event của task theo thứ tự. Phân trang bằng <code>seq &gt; last_seen</code>.</td></tr>
+<tr><td><code>aidev task cancel &lt;task&gt;</code></td><td><code>--reason R</code>: vì sao hủy (mặc định ghi lại dòng lệnh); <code>--json</code></td><td>Hủy task chưa xong. Đưa nó sang CANCELLED, đóng attempt đang mở, đánh dấu worktree đang dùng là RETAINED, và ghi thêm <code>task.cancelled</code>. Việc đang làm không bao giờ bị vứt. Hủy task đã xong là lỗi.</td></tr>
+<tr><td><code>aidev task approve &lt;task&gt;</code></td><td><code>--deny</code>: từ chối thay vì duyệt, tức là làm task hỏng; <code>--by WHO</code>: ai quyết (mặc định: <code>$USER</code>); <code>--reason R</code>: vì sao; <code>--json</code></td><td>Duyệt hoặc từ chối task đang chờ ở WAITING_APPROVAL. Duyệt cho qua thì sang READY; từ chối thì sang FAILED. Đây là quyết định của con người: planner không được tự gọi nó.</td></tr>
+</table>
+
+<h3><code>aidev worktree</code></h3>
+
+<table>
+<tr><th>Lệnh</th><th>Cờ</th><th>Làm gì</th></tr>
+<tr><td><code>aidev worktree list</code></td><td><code>--all</code>: kèm cả worktree aidev đã xóa; <code>--json</code></td><td>Liệt kê worktree kèm task, trạng thái, dung lượng và nhánh. Gắn cờ bản ghi mà thư mục của nó đã mất khỏi đĩa.</td></tr>
+<tr><td><code>aidev worktree remove &lt;task&gt;</code></td><td><code>--force</code>: vứt việc chưa commit trong worktree</td><td>Xóa worktree của attempt mới nhất của task. Không có <code>--force</code> thì git từ chối xóa worktree còn việc chưa commit hoặc tập tin chưa theo dõi. Có <code>--force</code> thì việc đó bị vứt vĩnh viễn và lần xóa cưỡng bức được ghi vào lịch sử task. Nhánh của task không ảnh hưởng gì cả hai cách. Bị từ chối khi task còn RUNNING hoặc VERIFYING.</td></tr>
+</table>
+
+<pre><code>aidev task list --status RUNNING,VERIFYING
+aidev task result TASK-000001 --logs
+aidev task events TASK-000001 --payload --after 5
+aidev worktree list
+aidev worktree remove TASK-000001 --force</code></pre>
+</section>
+
+<section id="task-statuses">
+<h2>Trạng thái task</h2>
+
+<p>Danh sách chính thức nằm ở <code>internal/task/status.go</code>. Ràng buộc CHECK của SQL chép lại nó, và test hỏng nếu hai bên lệch nhau. Thêm trạng thái nghĩa là cập nhật cả enum Go lẫn ràng buộc SQL trong một migration mới, không bao giờ sửa migration đã áp.</p>
+
+<table>
+<tr><th>Trạng thái</th><th>Nghĩa là gì</th><th>Sau nó là gì</th></tr>
+<tr><td><code>PENDING</code></td><td>Task đã tồn tại nhưng chưa đủ điều kiện chạy. Bản hiện tại chưa có gì chặn task nên nó sẵn sàng ngay khi được yêu cầu chạy.</td><td><code>READY</code>, <code>WAITING_APPROVAL</code>, <code>CANCELLED</code></td></tr>
+<tr><td><code>READY</code></td><td>Task đã đủ điều kiện để được nhận chạy.</td><td><code>RUNNING</code>, <code>WAITING_APPROVAL</code>, <code>CANCELLED</code></td></tr>
+<tr><td><code>RUNNING</code></td><td>Agent đang chạy bên trong worktree của task.</td><td><code>VERIFYING</code>, <code>FAILED</code>, <code>CANCELLED</code></td></tr>
+<tr><td><code>VERIFYING</code></td><td>Agent đã xong và aidev đang độc lập chạy các lệnh verification của task.</td><td><code>SUCCEEDED</code>, <code>FAILED</code>, <code>CANCELLED</code></td></tr>
+<tr><td><code>SUCCEEDED</code></td><td>Verification đã qua. Kết thúc: sau nó không còn gì. Chỉ tới được từ VERIFYING, đó là điều làm lời agent nói trở nên vô nghĩa.</td><td>không còn gì: kết thúc</td></tr>
+<tr><td><code>FAILED</code></td><td>Lần chạy thất bại: agent lỗi, quá giờ, hoặc verification không qua. Kết thúc.</td><td>không còn gì: kết thúc</td></tr>
+<tr><td><code>CANCELLED</code></td><td>Con người hoặc hệ thống tắt ngang đã dừng task. Kết thúc.</td><td>không còn gì: kết thúc</td></tr>
+<tr><td><code>WAITING_APPROVAL</code></td><td>Task bị giữ bởi chính sách và không chạy cho tới khi được duyệt. Chưa có worktree và chưa có attempt.</td><td><code>READY</code> (được duyệt), <code>FAILED</code> (bị từ chối), <code>CANCELLED</code></td></tr>
+</table>
+
+<p>Hai tính chất do test khẳng định thay vì để người đọc tự soát. Thứ nhất, VERIFYING là trạng thái duy nhất tới được SUCCEEDED: không có cạnh từ RUNNING tới SUCCEEDED. Thứ hai, mọi trạng thái chưa kết thúc đều tới được CANCELLED nên không task nào không dừng được. <code>FAILED</code> sang <code>READY</code> (chạy lại) cố tình vắng mặt: attempt được đánh số và ghi nối tiếp để sau này thêm chạy lại, nhưng cạnh đó hiện chưa tồn tại.</p>
+</section>
+
+<section id="failure-kinds">
+<h2>Loại thất bại</h2>
+
+<p><code>task.FailureKind</code> là từ vựng chung để nói vì sao hỏng. Các giá trị xuất phát từ những kiểu hỏng thật sự đã khơi ra khi nghiên cứu, không phải tưởng tượng. Lỗi không xếp loại được ghi là UNKNOWN chứ không ép vào ô nào cho có vẻ hợp.</p>
+
+<table>
+<tr><th>Loại</th><th>Nguyên nhân</th></tr>
+<tr><td><code>STARTUP</code></td><td>Tiến trình agent không khởi động được hoặc từ chối tham số. Ví dụ quan sát được: thư mục làm việc sai thoát 1 với thông báo trên stderr và không có gì trên stdout.</td></tr>
+<tr><td><code>AGENT_ERROR</code></td><td>Agent tự báo lỗi trong luồng event của nó. Ví dụ quan sát được: model sai tạo event lỗi trên stdout.</td></tr>
+<tr><td><code>AGENT_EXIT</code></td><td>Thoát mã khác 0 mà không có event lỗi.</td></tr>
+<tr><td><code>TIMEOUT</code></td><td>Thời hạn của aidev đã hết. Mọi tiến trình ngoài đều có timeout, không ngoại lệ, kể cả lệnh verification.</td></tr>
+<tr><td><code>CANCELLED</code></td><td>Con người hoặc hệ thống tắt ngang đã dừng nó.</td></tr>
+<tr><td><code>VERIFICATION</code></td><td>Agent xong việc nhưng verification không qua. Đây là kiểu hỏng bình thường chứ không phải bất thường: nó chính là quy tắc duy nhất tạo ra task FAILED.</td></tr>
+<tr><td><code>WORKTREE</code></td><td>Không chuẩn bị hoặc không xem xét được workspace tách biệt.</td></tr>
+<tr><td><code>APPROVAL_DENIED</code></td><td>Chính sách từ chối: con người không duyệt yêu cầu.</td></tr>
+<tr><td><code>INTERNAL</code></td><td>Chính aidev hỏng, ví dụ lỗi cơ sở dữ liệu.</td></tr>
+<tr><td><code>UNKNOWN</code></td><td>Không xếp loại được. Giữ lại như một ô trung thực chứ không đoán cho có vẻ hợp.</td></tr>
+</table>
+
+<p>Việc xếp loại không bao giờ chỉ tin mã thoát. Tên agent lạ làm OpenCode in cảnh báo, lặng lẽ dùng mặc định rồi vẫn thoát 0, nên aidev tự kiểm tra tên agent. Xem <a href="debugging.html#task-result">phần kết quả task</a> để biết cách đọc loại thất bại cạnh bằng chứng của nó.</p>
+</section>
+
+<section id="events-reference">
+<h2>Kiểu event</h2>
+
+<p>Nhật ký event chỉ ghi thêm. Cơ sở dữ liệu từ chối UPDATE bảng event bằng trigger; muốn sửa bản ghi thì ghi thêm event đính chính. Xóa task kéo theo xóa lịch sử của nó, điều này là hợp lệ khi dọn dữ liệu. Payload luôn là object JSON, không bao giờ là giá trị trần, để bên đọc luôn truy cập được theo tên trường. Định nghĩa ở <code>internal/event/event.go</code>; mọi giá trị dưới đây đều chính xác từng chữ.</p>
+
+<table>
+<tr><th>Kiểu event</th><th>Ghi thêm khi nào</th></tr>
+<tr><td><code>task.created</code></td><td>Task được tạo, trong cùng transaction với dòng task.</td></tr>
+<tr><td><code>task.ready</code></td><td>Task đủ điều kiện chạy.</td></tr>
+<tr><td><code>task.started</code></td><td>Task được nhận và attempt của nó được mở, nguyên tử: task không bao giờ RUNNING mà không có bản ghi attempt nào đang chạy nó.</td></tr>
+<tr><td><code>task.succeeded</code></td><td>Verification qua và task tới SUCCEEDED.</td></tr>
+<tr><td><code>task.failed</code></td><td>Lần chạy thất bại, với loại thất bại trong payload.</td></tr>
+<tr><td><code>task.cancelled</code></td><td>Con người hoặc hệ thống tắt ngang hủy task, với lý do trong payload.</td></tr>
+<tr><td><code>task.worktree_created</code></td><td>Worktree tách biệt được tạo cho attempt.</td></tr>
+<tr><td><code>task.worktree_removed</code></td><td>Worktree bị xóa, khi thành công hoặc khi người vận hành chạy <code>aidev worktree remove</code>.</td></tr>
+<tr><td><code>task.worktree_retained</code></td><td>Worktree được giữ lại để xem xét sau thất bại hoặc hủy.</td></tr>
+<tr><td><code>task.worker_started</code></td><td>Tiến trình agent khởi động trong worktree.</td></tr>
+<tr><td><code>task.worker_completed</code></td><td>Tiến trình agent kết thúc, với xếp loại thoát trong payload.</td></tr>
+<tr><td><code>task.verification_started</code></td><td>aidev bắt đầu chạy các lệnh verification của task.</td></tr>
+<tr><td><code>task.verification_step_completed</code></td><td>Một bước verification xong, với lệnh và mã thoát của nó.</td></tr>
+<tr><td><code>task.verification_completed</code></td><td>Lượt verification xong, với số bước qua.</td></tr>
+<tr><td><code>task.approval_required</code></td><td>Task bị giữ sau quyết định của con người.</td></tr>
+<tr><td><code>task.approval_granted</code></td><td>Con người duyệt task; nó sang READY.</td></tr>
+<tr><td><code>task.approval_denied</code></td><td>Con người từ chối task; nó sang FAILED với loại APPROVAL_DENIED.</td></tr>
+</table>
+
+<pre><code>aidev task events TASK-000001 --payload
+# shows every type above, in seq order, with payloads
+
+aidev task events TASK-000001 --after 5 --limit 50
+# only events after sequence 5, at most 50 rows</code></pre>
+</section>
+
+<section id="environment">
+<h2>Biến môi trường</h2>
+
+<p>Cấu hình chỉ do <code>internal/config</code> đọc. Không chỗ nào khác trong aidev đọc môi trường trực tiếp. Mọi thứ được kiểm tra khi khởi động và mọi lỗi báo một lúc. <code>DATABASE_URL</code> là biến bắt buộc duy nhất; còn lại đều có mặc định.</p>
+
+<table>
+<tr><th>Biến</th><th>Mặc định</th><th>Mục đích</th></tr>
+<tr><td><code>DATABASE_URL</code></td><td>không có: bắt buộc</td><td>Chuỗi kết nối PostgreSQL, ví dụ <code>postgres://aidev:aidev@127.0.0.1:5434/aidev?sslmode=disable</code>.</td></tr>
+<tr><td><code>WORKSPACE_ROOT</code></td><td><code>$XDG_DATA_HOME/aidev/worktrees</code>, nếu không thì <code>~/.local/share/aidev/worktrees</code></td><td>Nơi tạo worktree của task. Mọi đường dẫn worktree phải nằm trong nó.</td></tr>
+<tr><td><code>DEFAULT_TASK_TIMEOUT</code></td><td><code>30m</code></td><td>Giới hạn một lần chạy agent khi task không đặt timeout riêng. Rộng rãi có chủ ý: lần đầu chạy trên kho chưa từng thấy từng bị đo là mất hàng phút.</td></tr>
+<tr><td><code>DEFAULT_VERIFICATION_TIMEOUT</code></td><td><code>10m</code></td><td>Giới hạn một bước verification.</td></tr>
+<tr><td><code>OPENCODE_COMMAND</code></td><td><code>opencode</code></td><td>Chương trình OpenCode mà aidev gọi.</td></tr>
+<tr><td><code>OPENCODE_MODEL</code></td><td><code>opencode/muse-spark-1.3-contributor-free</code></td><td>Model truyền qua <code>-m</code>. Không cần tài khoản. Đặt chuỗi rỗng để OpenCode tự chọn.</td></tr>
+<tr><td><code>OPENCODE_AGENT</code></td><td><code>build</code></td><td>Agent OpenCode mặc định cho task không nêu tên.</td></tr>
+<tr><td><code>MAX_OUTPUT_BYTES</code></td><td><code>1048576</code> (1 MiB) cho mỗi luồng thu</td><td>Trần mỗi luồng thu trước khi vào cơ sở dữ liệu. Vượt trần thì bỏ phần dư và gắn cờ đã cắt bớt. Tối thiểu 1024.</td></tr>
+<tr><td><code>WORKTREE_CLEANUP</code></td><td><code>on-success</code></td><td><code>on-success</code> commit công việc rồi xóa worktree; <code>never</code> giữ mọi worktree. Không giá trị nào vứt công việc hỏng.</td></tr>
+<tr><td><code>LOG_LEVEL</code></td><td><code>info</code></td><td>Mức log tối thiểu: <code>debug</code>, <code>info</code>, <code>warn</code>, <code>error</code>.</td></tr>
+<tr><td><code>OTEL_EXPORTER_OTLP_ENDPOINT</code></td><td>không đặt: tracing tắt</td><td>URL HTTP OTLP gốc. Trace gửi tới <code>&lt;base&gt;/v1/traces</code>. Tracing tắt trừ khi có endpoint.</td></tr>
+<tr><td><code>OTEL_EXPORTER_OTLP_TRACES_ENDPOINT</code></td><td>không đặt</td><td>URL trace đầy đủ cho riêng tín hiệu trace, dùng nguyên như cho. Ưu tiên hơn biến gốc.</td></tr>
+<tr><td><code>OTEL_EXPORTER_OTLP_HEADERS</code></td><td>không đặt</td><td>Các cặp <code>key=value</code> cách nhau bằng phẩy, ví dụ header xác thực.</td></tr>
+<tr><td><code>OTEL_SERVICE_NAME</code></td><td><code>aidev</code></td><td>Tên dịch vụ hiện trong backend tracing.</td></tr>
+<tr><td><code>OTEL_TRACES_SAMPLER_ARG</code></td><td><code>1</code></td><td>Tỉ lệ lấy mẫu từ 0 tới 1. Ngoài khoảng đó thì khởi động thất bại.</td></tr>
+</table>
+
+<p>Các biến liên quan nhưng không phải cấu hình aidev mà xuất hiện trong quy trình của nó: <code>AIDEV_DB_PORT</code> đổi cổng PostgreSQL trên máy cho <code>make db-up</code>; <code>TEST_DATABASE_URL</code> trỏ test tích hợp tới cơ sở dữ liệu (không có nó thì test tự bỏ qua); <code>AIDEV_TEST_OTLP</code> giữ cửa cho test xuất tracing thật. Xem <a href="debugging.html#tracing">phần tracing</a> để thấy các biến OTLP khi dùng thật.</p>
+
+<pre><code>aidev config
+aidev config --json
+# the resolved configuration, password redacted; the way to check every default above</code></pre>
+</section>
+
+<section id="mcp-tools">
+<h2>Công cụ MCP</h2>
+
+<p>aidev mở tám công cụ cho client MCP như Claude Code, qua stdio. Planner bên kia không bao giờ cần biết dòng lệnh OpenCode. Hình dạng định nghĩa một lần ở <code>internal/view</code> rồi dùng chung cho output JSON của CLI và schema MCP, nên hai bên không lệch nhau được. Những thứ cố tình không mở: không gì chạy lệnh tùy ý, không thao tác worktree, không merge hay push, không xem cấu hình, và không ghi project hay event.</p>
+
+<table>
+<tr><th>Công cụ</th><th>Đầu vào bắt buộc</th><th>Đầu vào không bắt buộc</th><th>Làm gì</th></tr>
+<tr><td><code>aidev_create_task</code></td><td><code>repo_path</code> (đường dẫn tuyệt đối), <code>title</code>, <code>verification</code> (mảng chuỗi, không được rỗng)</td><td><code>description</code>, <code>acceptance_criteria</code>, <code>agent</code> (mặc định <code>build</code>), <code>priority</code> (mặc định 0), <code>requires_approval</code>, <code>base_ref</code>, <code>timeout_seconds</code></td><td>Tạo task. Chưa chạy. Đăng ký kho thành project nếu chưa biết. Ghi thêm <code>task.created</code>, tất cả trong một transaction.</td></tr>
+<tr><td><code>aidev_run_task</code></td><td><code>task</code> (mã tham chiếu hoặc UUID)</td><td><code>wait_seconds</code> (mặc định 120, tối đa 900, 0 trả về ngay)</td><td>Cách ly, giao việc, kiểm chứng, ghi nhận. Có thể trả về trước khi task xong, với <code>still_running: true</code>; lần chạy vẫn tiếp tục. Gọi lại khi lần chạy đang diễn ra thì nhập vào lần chạy đó. Hãy đọc <code>succeeded</code>, chỉ đúng khi verification đã qua.</td></tr>
+<tr><td><code>aidev_get_task_result</code></td><td><code>task</code></td><td><code>include_logs</code> (trả thêm bản ghi của agent, diff và toàn bộ output verification)</td><td>Kết quả attempt mới nhất: task, attempt, worker (kèm lời agent nói dưới dạng <code>summary</code>), bằng chứng verification, worktree, approval. Output của bước hỏng luôn kèm theo ngay cả khi không xin log, cắt lấy 2000 byte cuối. Phần vắng mặt thì bỏ chứ không để rỗng.</td></tr>
+<tr><td><code>aidev_get_task_events</code></td><td><code>task</code></td><td><code>after_seq</code>, <code>limit</code> (mặc định 200, tối đa 1000)</td><td>Lịch sử theo thứ tự: <code>seq</code>, <code>type</code>, <code>created_at</code>, <code>attempt_id</code>, <code>payload</code>. Trả về <code>count</code> và <code>last_seq</code>; lần sau truyền <code>last_seq</code> lại qua <code>after_seq</code> để đọc tiếp.</td></tr>
+<tr><td><code>aidev_list_tasks</code></td><td>không có</td><td><code>repo_path</code>, <code>statuses</code> (bất kỳ trong tám trạng thái), <code>limit</code> (mặc định 50, tối đa 500)</td><td>Tìm việc, mới nhất trước, kèm <code>count</code>.</td></tr>
+<tr><td><code>aidev_get_task</code></td><td><code>task</code></td><td>không có</td><td>Trả về một task. Mã tham chiếu không phân biệt hoa thường.</td></tr>
+<tr><td><code>aidev_cancel_task</code></td><td><code>task</code></td><td><code>reason</code></td><td>Dừng task; worktree của nó được giữ. Task đã xong thì báo lỗi.</td></tr>
+<tr><td><code>aidev_approve_task</code></td><td><code>task</code>, <code>approve</code> (boolean: true duyệt, false từ chối)</td><td><code>decided_by</code>, <code>reason</code></td><td>Con người mở cửa cho task bị giữ. Duyệt cho qua thì sang READY; từ chối thì hỏng với <code>task.approval_denied</code>. Bắt buộc nêu rõ chứ không mặc định, để duyệt không xảy ra do bỏ sót.</td></tr>
+</table>
+
+<p>Một lần chạy tốn đúng thời gian agent tốn, đo được từ 9 tới 656 giây, trong khi client không đợi vô hạn được. Vì vậy <code>aidev_run_task</code> chờ có giới hạn rồi trả về với <code>still_running</code> trong khi task vẫn chạy tiếp. Planner thăm dò bằng <code>aidev_get_task_result</code>. Trường cần đọc là <code>succeeded</code>, chỉ đúng khi verification của aidev đã qua. Quay lại <a href="index.html">trang đầu hướng dẫn</a> để xem bức tranh lớn, <a href="getting-started.html">trang bắt đầu</a> cho cùng luồng đó dưới dạng terminal, và <a href="debugging.html">trang gỡ lỗi</a> cho việc cần làm khi <code>succeeded</code> là sai.</p>
+</section>
+</main>
+</body>
+</html>
