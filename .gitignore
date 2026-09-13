@@ -16,3 +16,6 @@
 # editor / OS
 .DS_Store
 *.swp
+
+# Python bytecode from tools/anthropic-shim
+__pycache__/
