@@ -325,3 +325,54 @@ func TestBoundedBufferReportsFullWrites(t *testing.T) {
 		t.Error("Truncated() = false after exceeding the cap")
 	}
 }
+
+// An instrumented subprocess must not inherit aidev's exporter configuration. With
+// tracing enabled, OpenCode published 1536 spans of its own internals against 8 of
+// aidev's, all under aidev's service name in the operator's backend.
+func TestSubprocessDoesNotInheritTelemetryConfig(t *testing.T) {
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
+	t.Setenv("OTEL_SERVICE_NAME", "aidev")
+	t.Setenv("OTEL_EXPORTER_OTLP_HEADERS", "Authorization=Basic secret")
+
+	s := spec(t, "sh", "-c", `printf '%s|%s|%s|%s' "$OTEL_EXPORTER_OTLP_ENDPOINT" "$OTEL_SERVICE_NAME" "$OTEL_EXPORTER_OTLP_HEADERS" "${HOME:+has-home}"`)
+
+	res, err := Run(context.Background(), s)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got, want := res.Stdout, "|||has-home"; got != want {
+		t.Errorf("subprocess environment = %q, want %q: OTEL_* must be stripped while the rest is inherited", got, want)
+	}
+}
+
+// Stripping must not remove the ability to configure a child deliberately, so an
+// explicit ExtraEnv entry wins.
+func TestExtraEnvCanStillSetTelemetryConfig(t *testing.T) {
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://inherited:4318")
+
+	s := spec(t, "sh", "-c", `printf '%s' "$OTEL_EXPORTER_OTLP_ENDPOINT"`)
+	s.ExtraEnv = []string{"OTEL_EXPORTER_OTLP_ENDPOINT=http://deliberate:4318"}
+
+	res, err := Run(context.Background(), s)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Stdout != "http://deliberate:4318" {
+		t.Errorf("stdout = %q, want the explicitly passed endpoint", res.Stdout)
+	}
+}
+
+func TestStripTelemetryEnvKeepsEverythingElse(t *testing.T) {
+	in := []string{"PATH=/usr/bin", "OTEL_SERVICE_NAME=aidev", "HOME=/home/x", "OTELLIKE=keep", "OTEL_=drop"}
+	got := stripTelemetryEnv(in)
+
+	want := map[string]bool{"PATH=/usr/bin": true, "HOME=/home/x": true, "OTELLIKE=keep": true}
+	if len(got) != len(want) {
+		t.Fatalf("kept %v, want %d entries", got, len(want))
+	}
+	for _, entry := range got {
+		if !want[entry] {
+			t.Errorf("kept %q, which should have been dropped or was unexpected", entry)
+		}
+	}
+}

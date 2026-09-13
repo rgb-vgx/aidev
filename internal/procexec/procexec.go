@@ -63,11 +63,14 @@ type Spec struct {
 	// the current directory would be exactly the wrong failure mode.
 	Dir string
 
-	// ExtraEnv entries ("KEY=value") are appended to the inherited environment.
+	// ExtraEnv entries ("KEY=value") are appended to the inherited environment,
+	// and override a stripped variable if one is set explicitly.
 	//
 	// The environment is inherited because the tools aidev runs need it —
 	// OpenCode reads HOME for its configuration and credentials, and compilers
 	// need PATH. Inherited values are never recorded or logged.
+	//
+	// OTEL_* is the exception: see stripTelemetryEnv.
 	ExtraEnv []string
 
 	// Timeout bounds the run. It is required: an unbounded subprocess is the
@@ -177,7 +180,7 @@ func Run(ctx context.Context, spec Spec) (Result, error) {
 
 	cmd := exec.CommandContext(runCtx, spec.Command, spec.Args...)
 	cmd.Dir = spec.Dir
-	cmd.Env = append(os.Environ(), spec.ExtraEnv...)
+	cmd.Env = append(stripTelemetryEnv(os.Environ()), spec.ExtraEnv...)
 
 	// No stdin. A subprocess that reads stdin would block forever here, and
 	// Phase 0 showed tools behave correctly when it is closed.
@@ -274,6 +277,30 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 func (b *boundedBuffer) String() string { return b.buf.String() }
 
 func (b *boundedBuffer) Truncated() bool { return b.total > b.buf.Len() }
+
+// stripTelemetryEnv removes OTEL_* from an inherited environment.
+//
+// Without this, aidev's own exporter configuration is handed to every tool it
+// runs, and an instrumented tool will publish its internal telemetry to the
+// operator's backend under aidev's service name. That is not hypothetical: with
+// tracing pointed at Langfuse, one task run produced 1536 spans from OpenCode's
+// internals against 8 of aidev's, a ratio of 192 to 1, all filed under the
+// operator's aidev project. The signal aidev exists to provide was buried under
+// the agent's.
+//
+// aidev's own spans are created in-process, so nothing it needs is lost. A caller
+// that genuinely wants to configure a child's exporter can still do it through
+// ExtraEnv, which is appended afterwards and therefore wins.
+func stripTelemetryEnv(env []string) []string {
+	kept := make([]string, 0, len(env))
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "OTEL_") {
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	return kept
+}
 
 func quote(s string) string {
 	if s == "" {
