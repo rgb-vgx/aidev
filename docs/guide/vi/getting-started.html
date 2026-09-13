@@ -264,6 +264,43 @@ aidev task list
 
 <p>Quay lại vào ngày mai: nếu bạn đã đóng terminal thì không cần cài đặt lại gì cả. Hãy chắc PostgreSQL đang chạy bằng <code>make db-up</code>, rồi cứ gõ <code>aidev</code>. Cấu hình của bạn đã nằm sẵn trong <code>~/.config/aidev/config.env</code>, terminal mới nào cũng tự nhận, và nhờ <code>make install</code> nên lệnh <code>aidev</code> vẫn tìm thấy. Muốn chắc thì chạy <code>aidev config</code> để xem trước khi chạy task.</p>
 </section>
+<section id="claude-code">
+<h2>Kết nối Claude Code: giao việc từ bất kỳ kho mã nào</h2>
+
+<p>Từ đầu trang tới giờ bạn dùng aidev ở terminal. Nhưng aidev được làm ra để <strong>Claude Code</strong> điều khiển: Claude Code quyết định cần làm gì và viết task, còn aidev cô lập task, chạy agent, rồi tự kiểm tra kết quả. Hai bên nói chuyện qua <strong>MCP</strong> (Model Context Protocol), một cách chuẩn để Claude Code gọi công cụ nằm trong chương trình khác. Bạn chỉ đăng ký aidev một lần, sau đó mọi kho mã trên máy đều dùng được.</p>
+
+<pre><code>make install
+# puts aidev in $(go env GOPATH)/bin, a path that does not move
+
+claude mcp add --scope user aidev -- "$(go env GOPATH)/bin/aidev" mcp
+# registers aidev for every project on this machine</code></pre>
+
+<p>Hãy dùng <code>--scope user</code>. Nếu bỏ cờ này, Claude Code dùng phạm vi <code>local</code>, tức là gắn việc đăng ký vào đúng thư mục bạn đứng khi gõ lệnh. Khi đó aidev chạy được ở kho mã đó và không tồn tại ở bất kỳ kho nào khác. Không có thông báo lỗi nào cả: công cụ chỉ đơn giản là không có. Đoạn này viết ra chính là để bạn tránh lỗi đó.</p>
+
+<p>Không có mật khẩu hay chuỗi kết nối nào nằm trong phần đăng ký. aidev tự đọc <code>~/.config/aidev/config.env</code>, cũng là file mà các lệnh terminal dùng, nên <code>aidev config</code> cho bạn thấy đúng những gì máy chủ MCP sẽ thấy.</p>
+
+<p>Kiểm tra việc đăng ký từ một thư mục <em>không phải</em> kho mã aidev, vì phạm vi sai chỉ lộ ra ở đó:</p>
+
+<pre><code>cd /tmp
+claude mcp get aidev</code></pre>
+
+<p>Dấu hiệu đúng. Dòng quan trọng là dòng phạm vi (scope):</p>
+
+<pre><code>aidev:
+  Scope: User config (available in all your projects)
+  Status: ✔ Connected
+  Type: stdio
+  Command: /home/you/go/bin/aidev
+  Args: mcp</code></pre>
+
+<p>Nếu dòng scope ghi bất cứ thứ gì khác <code>User config</code>, hãy gỡ đăng ký bằng đúng lệnh in ở dòng cuối của output đó, rồi chạy lại lệnh <code>claude mcp add --scope user</code>. Nếu trạng thái không phải Connected thì aidev không khởi động được: chạy <code>aidev config</code> ở terminal, lệnh này sẽ báo lỗi với đúng lý do mà máy chủ MCP gặp.</p>
+
+<p>Sau khi đăng ký, hãy mở một phiên Claude Code mới. Phiên đã mở từ trước không nhận máy chủ được thêm vào sau.</p>
+
+<p>Dùng ở kho mã khác thì không cần cài gì thêm cho từng kho. Mở Claude Code trong kho mã đó, ví dụ trong VS Code, rồi yêu cầu bằng lời thường, kèm lệnh kiểm tra chứng minh việc đã xong: <em>"Dùng aidev thêm hàm farewell vào greet.py, kiểm tra bằng <code>python3 -m pytest -q</code>."</em> Claude Code sẽ gọi <code>aidev_create_task</code> và <code>aidev_run_task</code>, rồi đọc <code>aidev_get_task_result</code>. Trường quyết định là <code>succeeded</code>, chỉ bằng true khi chính verification của aidev đã đạt. Điều kiện duy nhất: kho mã phải là kho git, và PostgreSQL phải đang chạy (<code>make db-up</code> trong thư mục aidev).</p>
+
+<p>Một điều hay làm người mới bất ngờ khi dùng với kho mã thật: worktree là một bản checkout sạch, nên chỉ chứa các file git đang theo dõi. Thứ gì cài bên ngoài git thì không có ở đó. <code>go test</code> chạy được vì bộ nhớ đệm module của Go dùng chung, nhưng dự án Python hay JavaScript cần công cụ test đã cài sẵn trên máy, hoặc một bước verification cài nó trước. <a href="reference.html#mcp-tools">Trang tra cứu</a> liệt kê mọi công cụ và đầu vào của chúng.</p>
+</section>
 </main>
 </body>
 </html>

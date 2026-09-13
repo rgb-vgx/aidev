@@ -146,6 +146,15 @@ aidev worktree list --json | jq .
 
 <p>Dấu hiệu đúng: mỗi worktree một dòng, ví dụ <code>TASK-000002 FAILED attempt 1 RETAINED /path/to/worktrees/TASK-000002-a1</code>, kèm tổng dung lượng cuối cùng. Dòng bị gắn cờ mất khỏi đĩa nghĩa là có thứ ngoài aidev đã xóa thư mục. aidev báo cho bạn biết chứ không đưa đường dẫn không tồn tại.</p>
 
+<p>Cột trạng thái chỉ có ba giá trị, và mỗi giá trị trả lời câu hỏi "công việc đang nằm ở đâu?":</p>
+
+<table>
+<tr><th>Trạng thái</th><th>Nghĩa là gì</th><th>Công việc nằm ở đâu</th></tr>
+<tr><td><code>ACTIVE</code></td><td>Worktree đang tồn tại và có một attempt đang dùng nó. Bạn sẽ thấy trạng thái này trong lúc task đang chạy.</td><td>Trong thư mục worktree, vẫn đang thay đổi. Đừng tự tay sửa vào đó.</td></tr>
+<tr><td><code>REMOVED</code></td><td>aidev đã xóa thư mục sau khi thành công trọn vẹn. Lệnh <code>aidev worktree list</code> thường sẽ ẩn các dòng này; thêm <code>--all</code> mới hiện.</td><td>Đã commit lên nhánh của task, ví dụ <code>aidev/TASK-000001</code>. Không mất gì cả: chỉ có thư mục là không còn.</td></tr>
+<tr><td><code>RETAINED</code></td><td>aidev giữ lại thư mục vì attempt thất bại hoặc bị hủy. Không bao giờ bị xóa ngầm.</td><td>Trong thư mục worktree, chưa commit, đúng như agent để lại.</td></tr>
+</table>
+
 <p>Xem trực tiếp worktree được giữ lại. Nó là thư mục bình thường chứa một bản checkout git bình thường. Vào đó, xem tập tin, tự chạy lại lệnh hỏng:</p>
 
 <pre><code>cd /home/you/.local/share/aidev/worktrees/TASK-000002-a1

@@ -96,6 +96,7 @@ func englishPages() []page {
 			sections: []string{
 				"prerequisites", "install", "database", "configuration",
 				"first-task", "reading-the-result", "where-the-work-is",
+				"claude-code",
 			},
 			mustMention: []string{
 				"make db-up",
@@ -111,6 +112,14 @@ func englishPages() []page {
 				// where configuration lives and how aidev gets on the PATH.
 				"config.env",
 				"make install",
+				// aidev exists to be driven by Claude Code. A guide that never says
+				// how to connect the two leaves the reader with a CLI and no
+				// planner. --scope user, because the default local scope confines
+				// the server to one directory and it silently vanishes in every
+				// other repository; the success line is real output, not invented.
+				"claude mcp add --scope user",
+				"claude mcp get aidev",
+				"Scope: User config",
 			},
 			minBytes:      9000,
 			minCodeBlocks: 6,
@@ -130,6 +139,11 @@ func englishPages() []page {
 				"--logs",
 				"aidev worktree list",
 				"RETAINED",
+				// Every status `aidev worktree list --all` can print must be
+				// explained where the list is, or the reader meets words the guide
+				// never defined.
+				"ACTIVE",
+				"REMOVED",
 				"aidev task cancel",
 				"LOG_LEVEL",
 				"OTEL_EXPORTER_OTLP_ENDPOINT",

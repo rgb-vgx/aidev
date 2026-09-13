@@ -264,6 +264,43 @@ aidev task list
 
 <p>Coming back tomorrow: if you closed your terminal, there is nothing to set up again. Make sure PostgreSQL is running with <code>make db-up</code>, then just run <code>aidev</code>. Your configuration is already in <code>~/.config/aidev/config.env</code>, every new terminal picks it up, and <code>make install</code> means the <code>aidev</code> command is still found. Check with <code>aidev config</code> if you want proof before running a task.</p>
 </section>
+<section id="claude-code">
+<h2>Connecting Claude Code: delegating from any repository</h2>
+
+<p>Everything so far used aidev from a terminal. aidev is built to be driven by <strong>Claude Code</strong>: Claude Code decides what to build and writes the task, aidev isolates it, runs the agent, and checks the result itself. The two talk over <strong>MCP</strong> (Model Context Protocol), a standard way for Claude Code to call tools that live in another program. You register aidev once, and it is available in every repository on the machine.</p>
+
+<pre><code>make install
+# puts aidev in $(go env GOPATH)/bin, a path that does not move
+
+claude mcp add --scope user aidev -- "$(go env GOPATH)/bin/aidev" mcp
+# registers aidev for every project on this machine</code></pre>
+
+<p>Use <code>--scope user</code>. Without it, Claude Code uses the <code>local</code> scope, which ties the registration to the directory you ran the command in. aidev then works in that one repository and does not exist in any other. There is no error message: the tools are simply missing. That is the mistake this paragraph is here to prevent.</p>
+
+<p>No password or connection string goes on the registration. aidev reads <code>~/.config/aidev/config.env</code> itself, the same file the terminal commands use, so <code>aidev config</code> shows you exactly what the MCP server will see.</p>
+
+<p>Check the registration from a directory that is <em>not</em> the aidev repository, because that is where a wrong scope shows up:</p>
+
+<pre><code>cd /tmp
+claude mcp get aidev</code></pre>
+
+<p>What success looks like. The line that matters is the scope:</p>
+
+<pre><code>aidev:
+  Scope: User config (available in all your projects)
+  Status: ✔ Connected
+  Type: stdio
+  Command: /home/you/go/bin/aidev
+  Args: mcp</code></pre>
+
+<p>If the scope line says anything other than <code>User config</code>, remove the registration with the command printed on the last line of that output, then run the <code>claude mcp add --scope user</code> command again. If the status is not Connected, aidev could not start: run <code>aidev config</code> in a terminal, which fails with the same reason the MCP server would.</p>
+
+<p>Start a new Claude Code session after registering. A session that was already open does not pick up a server added later.</p>
+
+<p>Using it in another repository needs nothing per repository. Open Claude Code in that repository, for example in VS Code, and ask in plain words, naming the check that proves the work: <em>"Use aidev to add a farewell function to greet.py, verified by <code>python3 -m pytest -q</code>."</em> Claude Code calls <code>aidev_create_task</code> and <code>aidev_run_task</code>, then reads <code>aidev_get_task_result</code>. The field that decides is <code>succeeded</code>, which is true only when aidev's own verification passed. The only requirements are that the repository is a git repository and that PostgreSQL is running (<code>make db-up</code> in the aidev directory).</p>
+
+<p>One thing that surprises people in a real repository: the worktree is a clean checkout, so it contains only files tracked by git. Anything installed outside git is not there. <code>go test</code> works because Go's module cache is shared, but a Python or JavaScript project needs its test tool installed on the machine, or a verification step that installs it first. The <a href="reference.html#mcp-tools">reference page</a> lists every tool and its inputs.</p>
+</section>
 </main>
 </body>
 </html>

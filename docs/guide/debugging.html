@@ -146,6 +146,15 @@ aidev worktree list --json | jq .
 
 <p>What success looks like: one line per worktree, for example <code>TASK-000002 FAILED attempt 1 RETAINED /path/to/worktrees/TASK-000002-a1</code>, plus a total size at the end. A line flagged as missing from disk means something outside aidev deleted the directory. aidev tells you rather than showing a path that does not exist.</p>
 
+<p>The status column has three possible values, and each one answers "where is the work?":</p>
+
+<table>
+<tr><th>Status</th><th>What it means</th><th>Where the work is</th></tr>
+<tr><td><code>ACTIVE</code></td><td>The worktree exists and an attempt is using it. This is what you see while a task is running.</td><td>In the worktree directory, still changing. Do not edit it by hand.</td></tr>
+<tr><td><code>REMOVED</code></td><td>aidev deleted the directory after a clean success. Plain <code>aidev worktree list</code> hides these rows; <code>--all</code> shows them.</td><td>Committed on the task's branch, for example <code>aidev/TASK-000001</code>. Nothing was lost: only the directory is gone.</td></tr>
+<tr><td><code>RETAINED</code></td><td>aidev kept the directory because the attempt failed or was cancelled. It is never deleted implicitly.</td><td>In the worktree directory, uncommitted, exactly as the agent left it.</td></tr>
+</table>
+
 <p>Inspect a retained worktree directly. It is an ordinary directory with an ordinary git checkout in it. Change into it, look at the files, run the failing command by hand:</p>
 
 <pre><code>cd /home/you/.local/share/aidev/worktrees/TASK-000002-a1
