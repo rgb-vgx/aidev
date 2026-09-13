@@ -9,12 +9,17 @@ package worker
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"aidev/internal/agent"
 	"aidev/internal/config"
@@ -226,9 +231,13 @@ type run struct {
 
 	workerRun *task.WorkerRun
 	report    *verification.Report
+
+	// failureKind records how the run failed for the trace. It stays
+	// FailureNone when the run succeeded or has not failed yet.
+	failureKind task.FailureKind
 }
 
-func (r *run) execute(ctx context.Context) (Outcome, error) {
+func (r *run) execute(ctx context.Context) (outcome Outcome, retErr error) {
 	if r.task.Status.Terminal() {
 		return Outcome{}, fmt.Errorf("%s is already %s: %w", r.task.Identifier(), r.task.Status, ErrNotRunnable)
 	}
@@ -238,15 +247,35 @@ func (r *run) execute(ctx context.Context) (Outcome, error) {
 		return Outcome{}, fmt.Errorf("%s is already %s: %w", r.task.Identifier(), r.task.Status, ErrNotRunnable)
 	}
 
-	if outcome, stopped, err := r.enforceApproval(ctx); stopped || err != nil {
-		return outcome, err
+	// One trace per run, joined via the context: child spans started from this
+	// context share its trace. With no provider configured the global tracer
+	// is a no-op, so the run behaves exactly as before.
+	ctx, root := otel.Tracer("aidev").Start(ctx, "aidev.task.run")
+	defer func() {
+		r.finishRootSpan(root, retErr, outcome)
+	}()
+	root.SetAttributes(
+		attribute.String("aidev.task.ref", r.task.Ref),
+		attribute.String("aidev.task.id", r.task.ID.String()),
+		attribute.String("aidev.project.id", r.task.ProjectID.String()),
+	)
+
+	if out, stopped, err := r.enforceApproval(ctx); stopped || err != nil {
+		outcome, retErr = out, err
+		// The gated task never got an attempt, so there is no failure
+		// classification to record; the span still ends via the deferred
+		// finalizer with the waiting status and an error status.
+		return outcome, retErr
 	}
 	if err := r.becomeReady(ctx); err != nil {
-		return Outcome{}, err
+		retErr = err
+		return Outcome{}, retErr
 	}
 	if err := r.startAttempt(ctx); err != nil {
-		return Outcome{}, err
+		retErr = err
+		return Outcome{}, retErr
 	}
+	root.SetAttributes(attribute.Int("aidev.attempt.number", r.attempt.AttemptNumber))
 
 	r.log = r.log.With(
 		logging.FieldAttemptID, r.attempt.ID.String(),
@@ -255,12 +284,88 @@ func (r *run) execute(ctx context.Context) (Outcome, error) {
 	r.log.InfoContext(ctx, "task started", logging.FieldBackend, r.o.Backend.Name())
 
 	if err := r.prepareWorktree(ctx); err != nil {
-		return r.fail(ctx, task.FailureWorktree, err)
+		outcome, retErr = r.fail(ctx, task.FailureWorktree, err)
+		return outcome, retErr
 	}
 	if err := r.runAgent(ctx); err != nil {
-		return r.fail(ctx, r.workerFailureKind(), err)
+		outcome, retErr = r.fail(ctx, r.workerFailureKind(), err)
+		return outcome, retErr
 	}
-	return r.verify(ctx)
+	outcome, retErr = r.verify(ctx)
+	return outcome, retErr
+}
+
+// finishRootSpan records the final status on the run span. It runs deferred,
+// so every path through execute — success, recorded failure, early error,
+// cancellation — ends the span with the outcome visible in the trace.
+func (r *run) finishRootSpan(root trace.Span, retErr error, outcome Outcome) {
+	if r.attempt.AttemptNumber != 0 {
+		root.SetAttributes(attribute.Int("aidev.attempt.number", r.attempt.AttemptNumber))
+	}
+	status := r.task.Status
+	if outcome.Task.Status.Valid() && outcome.Task.Status.String() != "" {
+		// A recorded outcome carries the authoritative final status.
+		status = outcome.Task.Status
+	}
+	root.SetAttributes(attribute.String("aidev.task.status", string(status)))
+	if r.failureKind != task.FailureNone && r.failureKind != "" {
+		root.SetAttributes(attribute.String("aidev.failure_kind", string(r.failureKind)))
+	}
+	if status != task.StatusSucceeded {
+		root.SetStatus(codes.Error, rootErrorDescription(status, r.failureKind, retErr))
+	}
+	root.End()
+}
+
+// rootErrorDescription keeps the span status readable: a backend error view
+// shows this string, not a full log, so a recorded failure reports only its
+// classification while an early error reports the error itself.
+func rootErrorDescription(status task.Status, kind task.FailureKind, retErr error) string {
+	if retErr != nil {
+		return truncateForSpan(retErr.Error())
+	}
+	if kind != task.FailureNone && kind != "" {
+		return fmt.Sprintf("task %s (%s)", status, kind)
+	}
+	return fmt.Sprintf("task %s", status)
+}
+
+// truncateForSpan bounds the error description so a verbose failure cannot
+// bloat the span.
+func truncateForSpan(s string) string {
+	const limit = 512
+	if len(s) <= limit {
+		return s
+	}
+	return s[:limit]
+}
+
+// tokenUsage mirrors the integer fields a backend reports in WorkerRun.Tokens.
+// Pointers distinguish "absent" from zero, so only present values become
+// attributes.
+type tokenUsage struct {
+	InputTokens  *int `json:"input_tokens"`
+	OutputTokens *int `json:"output_tokens"`
+}
+
+// usageAttributes parses the raw token JSON without ever failing the task:
+// tracing is observability, not control flow.
+func usageAttributes(tokens []byte) []attribute.KeyValue {
+	if len(tokens) == 0 {
+		return nil
+	}
+	var usage tokenUsage
+	if err := json.Unmarshal(tokens, &usage); err != nil {
+		return nil
+	}
+	var attrs []attribute.KeyValue
+	if usage.InputTokens != nil {
+		attrs = append(attrs, attribute.Int("gen_ai.usage.input_tokens", *usage.InputTokens))
+	}
+	if usage.OutputTokens != nil {
+		attrs = append(attrs, attribute.Int("gen_ai.usage.output_tokens", *usage.OutputTokens))
+	}
+	return attrs
 }
 
 // enforceApproval applies the approval policy. It is checked before anything is
@@ -365,6 +470,9 @@ func (r *run) startAttempt(ctx context.Context) error {
 
 // prepareWorktree creates the isolated checkout the agent will run in.
 func (r *run) prepareWorktree(ctx context.Context) error {
+	ctx, span := otel.Tracer("aidev").Start(ctx, "aidev.worktree.create")
+	defer span.End()
+
 	project, err := r.o.Store.GetProject(ctx, r.task.ProjectID)
 	if err != nil {
 		return err
@@ -389,6 +497,12 @@ func (r *run) prepareWorktree(ctx context.Context) error {
 		return err
 	}
 	r.worktree = wt
+	// The path and branch identify the checkout in the trace without
+	// reading the database.
+	span.SetAttributes(
+		attribute.String("aidev.worktree.path", wt.Path),
+		attribute.String("aidev.worktree.branch", wt.Branch),
+	)
 	r.log = r.log.With(logging.FieldWorktreePath, wt.Path)
 
 	writeCtx, cancel := writeContext(ctx)
@@ -419,6 +533,14 @@ func (r *run) prepareWorktree(ctx context.Context) error {
 // runAgent delegates the implementation and records what the agent did, including
 // the diff aidev collected itself rather than the one the agent claimed.
 func (r *run) runAgent(ctx context.Context) error {
+	ctx, span := otel.Tracer("aidev").Start(ctx, "aidev.agent.run")
+	defer span.End()
+	// Rendered as an LLM call by backends, hence the generation marker.
+	span.SetAttributes(
+		attribute.String("aidev.agent.backend", r.o.Backend.Name()),
+		attribute.String("langfuse.observation.type", "generation"),
+	)
+
 	prompt, err := buildPrompt(r.task)
 	if err != nil {
 		return err
@@ -449,6 +571,8 @@ func (r *run) runAgent(ctx context.Context) error {
 	record := r.persistWorkerRun(ctx, result)
 	r.workerRun = record
 
+	r.setAgentUsageSpan(span, record)
+
 	r.emit(ctx, event.TypeWorkerCompleted, map[string]any{
 		"status":        string(result.Status),
 		"failure_kind":  string(result.FailureKind),
@@ -478,6 +602,35 @@ func (r *run) runAgent(ctx context.Context) error {
 		return fmt.Errorf("agent run %s", result.Status)
 	}
 	return nil
+}
+
+// setAgentUsageSpan records what the backend reported about the invocation.
+// Usage is observability, so a missing or unparseable value only means the
+// attribute is omitted, never a task failure.
+func (r *run) setAgentUsageSpan(span trace.Span, record *task.WorkerRun) {
+	backend := r.o.Backend.Name()
+	sessionID := ""
+	var tokens []byte
+	var cost *float64
+	if record != nil {
+		if record.Backend != "" {
+			backend = record.Backend
+		}
+		sessionID = record.SessionID
+		tokens = record.Tokens
+		cost = record.Cost
+	}
+	attrs := []attribute.KeyValue{
+		attribute.String("aidev.agent.backend", backend),
+	}
+	if sessionID != "" {
+		attrs = append(attrs, attribute.String("aidev.agent.session_id", sessionID))
+	}
+	attrs = append(attrs, usageAttributes(tokens)...)
+	if cost != nil {
+		attrs = append(attrs, attribute.Float64("gen_ai.usage.cost", *cost))
+	}
+	span.SetAttributes(attrs...)
 }
 
 // persistWorkerRun records the agent invocation together with the diff aidev
@@ -551,6 +704,9 @@ func (r *run) persistWorkerRun(ctx context.Context, result agent.Result) *task.W
 
 // verify runs the task's own commands and decides the outcome.
 func (r *run) verify(ctx context.Context) (Outcome, error) {
+	ctx, span := otel.Tracer("aidev").Start(ctx, "aidev.verification")
+	defer span.End()
+
 	if err := r.transition(ctx, task.StatusVerifying, event.TypeVerificationStarted, map[string]any{
 		"steps": len(r.task.Verification),
 	}); err != nil {
@@ -563,9 +719,13 @@ func (r *run) verify(ctx context.Context) (Outcome, error) {
 		Steps:      r.task.Verification,
 	})
 	if err != nil {
+		// The pass never ran, so it did not pass.
+		span.SetAttributes(attribute.Bool("aidev.verification.passed", false))
 		return r.fail(ctx, task.FailureInternal, err)
 	}
 	r.report = &report
+	r.traceVerificationSteps(ctx, report)
+	span.SetAttributes(attribute.Bool("aidev.verification.passed", report.Passed))
 
 	r.persistVerification(ctx, report)
 
@@ -584,6 +744,24 @@ func (r *run) verify(ctx context.Context) (Outcome, error) {
 		return r.fail(ctx, report.FailureKind, fmt.Errorf("verification did not pass: %s", report.Summary()))
 	}
 	return r.succeed(ctx)
+}
+
+// traceVerificationSteps emits one span per declared step, including steps that
+// were skipped, so a reader can account for every step from the trace alone.
+func (r *run) traceVerificationSteps(ctx context.Context, report verification.Report) {
+	tracer := otel.Tracer("aidev")
+	for _, vr := range report.Runs {
+		_, stepSpan := tracer.Start(ctx, "aidev.verification.step")
+		attrs := []attribute.KeyValue{
+			attribute.String("aidev.verification.command", vr.Command),
+			attribute.String("aidev.verification.status", string(vr.Status)),
+		}
+		if vr.ExitCode != nil {
+			attrs = append(attrs, attribute.Int("aidev.verification.exit_code", *vr.ExitCode))
+		}
+		stepSpan.SetAttributes(attrs...)
+		stepSpan.End()
+	}
 }
 
 func (r *run) persistVerification(ctx context.Context, report verification.Report) {
@@ -704,6 +882,8 @@ func (r *run) fail(ctx context.Context, kind task.FailureKind, cause error) (Out
 		evType = event.TypeTaskCancelled
 		kind = task.FailureCancelled
 	}
+	// Remembered for the root span, which is finalized when execute returns.
+	r.failureKind = kind
 
 	message := ""
 	if cause != nil {
