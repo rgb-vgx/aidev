@@ -461,6 +461,7 @@ func (r *run) runAgent(ctx context.Context) error {
 
 	r.log.InfoContext(ctx, "agent finished",
 		logging.FieldBackend, r.o.Backend.Name(),
+		logging.FieldWorkerRunID, workerRunID(record),
 		"status", string(result.Status),
 		logging.FieldFailureKind, string(result.FailureKind),
 		logging.FieldExitCode, result.ExitCode,
@@ -926,6 +927,15 @@ func branchName(t task.Task, attempt task.TaskAttempt) string {
 		return "aidev/" + t.Identifier()
 	}
 	return fmt.Sprintf("aidev/%s-a%d", t.Identifier(), attempt.AttemptNumber)
+}
+
+// workerRunID names the audit record of this agent invocation, so a log line can
+// be tied to the row holding its captured output and diff.
+func workerRunID(run *task.WorkerRun) string {
+	if run == nil {
+		return ""
+	}
+	return run.ID.String()
 }
 
 func changedFiles(run *task.WorkerRun) int {

@@ -28,8 +28,12 @@ const (
 	FieldExitCode     = "exit_code"
 	FieldDurationMS   = "duration_ms"
 	FieldFailureKind  = "failure_kind"
-	FieldCorrelation  = "correlation_id"
 )
+
+// There is deliberately no separate correlation id. A task execution is already
+// identified by task_id and attempt_id, which are the values a reader searches on
+// and which tie a log line to a row in the database; a third identifier would be
+// one more thing to keep consistent and nothing to gain.
 
 // New returns a JSON logger writing to stderr at the given level.
 func New(level slog.Level) *slog.Logger {
