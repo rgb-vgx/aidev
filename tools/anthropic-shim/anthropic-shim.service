@@ -1,0 +1,19 @@
+# anthropic-shim: answers non-streaming /v1/messages requests in Anthropic format
+# in front of 9router, so Claude Code's auto-mode classifier works with muse-spark.
+# See the docstring of the script for why.
+#
+#   systemctl --user status anthropic-shim
+#   journalctl --user -u anthropic-shim -f
+#   export ANTHROPIC_BASE_URL=http://127.0.0.1:20198
+
+[Unit]
+Description=anthropic-shim for 9router (Anthropic-format non-streaming responses)
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 %h/.local/share/anthropic-shim/anthropic_shim.py --upstream http://localhost:20128 --port 20198
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

@@ -18,7 +18,8 @@ TEST_DB_URL ?= postgres://aidev:aidev@127.0.0.1:$(DB_PORT)/aidev_test?sslmode=di
 .PHONY: help build install test test-integration test-e2e test-db-create fmt fmt-check vet lint check \
         db-up db-down db-reset db-logs migrate clean \
         langfuse-up langfuse-down langfuse-reset langfuse-logs langfuse-env langfuse-credentials \
-        jaeger-up jaeger-down jaeger-env
+        jaeger-up jaeger-down jaeger-env \
+        shim-test shim-install
 
 help: ## show this help
 	@grep -hE '^[a-z0-9-]+:.*?##' $(MAKEFILE_LIST) | sort | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -57,8 +58,22 @@ lint: ## run staticcheck when it is installed
 	elif [ -x "$$($(GO) env GOPATH)/bin/staticcheck" ]; then "$$($(GO) env GOPATH)/bin/staticcheck" ./...; \
 	else echo "staticcheck not installed; skipping (go install honnef.co/go/tools/cmd/staticcheck@latest)"; fi
 
-check: fmt-check vet lint test ## the gate: formatting, static analysis, tests
+check: fmt-check vet lint test shim-test ## the gate: formatting, static analysis, tests
 	@echo "all checks passed"
+
+# tools/anthropic-shim lets Claude Code's auto mode work through 9router with
+# muse-spark (docs/research.md 7f). Its self-test runs in the gate so the tool
+# cannot rot unnoticed; like staticcheck, it is skipped where python3 is absent.
+shim-test: ## self-test tools/anthropic-shim (skipped without python3)
+	@if command -v python3 >/dev/null 2>&1; then python3 tools/anthropic-shim/anthropic_shim.py --self-test 2>/dev/null; \
+	else echo "python3 not installed; skipping anthropic-shim self-test"; fi
+
+shim-install: shim-test ## install anthropic-shim as a systemd user service on 127.0.0.1:20198
+	install -D -m 0755 tools/anthropic-shim/anthropic_shim.py $(HOME)/.local/share/anthropic-shim/anthropic_shim.py
+	install -D -m 0644 tools/anthropic-shim/anthropic-shim.service $(HOME)/.config/systemd/user/anthropic-shim.service
+	systemctl --user daemon-reload
+	systemctl --user enable anthropic-shim
+	systemctl --user restart anthropic-shim
 
 db-up: ## start PostgreSQL and wait for it to accept connections
 	docker compose up -d
