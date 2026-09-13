@@ -11,14 +11,11 @@ about whether it succeeded is not an input to that decision.
 Everything — the task, each attempt, the captured output, the diff, the
 verification results, and a full event history — is persisted in PostgreSQL.
 
-> **Status: Phase 2 of 5.** The pipeline works end to end: a task is isolated in a
-> git worktree, implemented by the real OpenCode, verified independently by aidev,
-> committed to its own branch, and recorded in PostgreSQL. This has been run
-> against the installed OpenCode, not only against a test double.
+> **Status: Phase 3 of 5.** Usable from the terminal today: create a task, run it,
+> read the result. The pipeline has been driven end to end against the real
+> OpenCode, not only against a test double.
 >
-> What is missing is the surface: there is no `aidev task` CLI yet (Phase 3) and no
-> MCP server (Phase 4), so running a task today means calling
-> `internal/worker` from Go or from the test suite. See
+> The MCP server that lets Claude Code delegate tasks is Phase 4. See
 > [docs/architecture.md](docs/architecture.md#status).
 
 ## Why it exists
@@ -140,18 +137,112 @@ aidev config
 aidev config --json
 ```
 
-## Commands available today
+## Your first task
+
+With PostgreSQL running and the schema applied, from inside any git repository:
+
+```bash
+aidev task create \
+  --title "Add a Greet function" \
+  --description "Create greet.go with Greet(name string) string returning \"Hello, \" + name" \
+  --verify 'go test ./...' \
+  --verify 'go vet ./...'
+# created TASK-000001  Add a Greet function
+#   run it with: aidev task run TASK-000001
+
+aidev task run TASK-000001
+```
+
+That takes minutes, not seconds — most of it is OpenCode. While it runs, the event
+log shows where it is:
+
+```bash
+aidev task events TASK-000001
+#   1  task.created
+#   2  task.ready
+#   3  task.started
+#   4  task.worktree_created
+#   5  task.worker_started
+```
+
+A real run of exactly this, on a repository whose test did not compile until the
+work was done:
+
+```text
+TASK-000001 succeeded: 2/2 verification steps passed, work committed on aidev/TASK-000001
+
+agent (opencode)
+  outcome       SUCCEEDED
+  changed files 1
+  took          10m56s
+  says          Tests: The=": chúng, DP eng 들어 ஆக ree? (embцион upcoming…
+
+verification (run by aidev)
+  ✓ PASSED    go test ./...
+  ✓ PASSED    go vet ./...
+
+worktree
+  REMOVED  /home/you/.local/share/aidev/worktrees/TASK-000001-a1
+  branch  aidev/TASK-000001
+```
+
+Note the `says` line. That run used a free model whose closing summary was
+incoherent — and it did not matter. The code it wrote was correct, and what
+established that was aidev running `go test` and `go vet` itself. An agent's
+account of its own work is recorded because it helps diagnosis, and it is never
+evidence.
+
+The other side of the same coin, with an agent that reported success and touched
+nothing:
+
+```text
+TASK-000002 FAILED (VERIFICATION): verification did not pass: 0/1 steps passed
+
+agent (opencode)
+  outcome       SUCCEEDED
+  changed files 0
+  says          Done! I implemented the function and all tests pass.
+
+verification (run by aidev)
+  ✗ FAILED    test -f farewell.go  (exit 1)
+
+the work was kept for inspection
+  cd /home/you/.local/share/aidev/worktrees/TASK-000002-a1
+```
+
+`aidev task run` exits non-zero when a task does not succeed, so
+`aidev task run TASK-000001 && ./deploy.sh` behaves as you would expect.
+
+## Commands
 
 ```bash
 aidev version
-aidev config [--json]     # print the resolved configuration
-aidev migrate [--json]    # apply pending migrations
+aidev config [--json]                 # the resolved configuration, password redacted
+aidev migrate [--json]                # apply pending migrations
+
+aidev task create --title T --verify CMD [--repo .] [--description D]
+                  [--acceptance A] [--agent build] [--priority N]
+                  [--requires-approval] [--base-ref REF] [--timeout 30m]
+aidev task list   [--status S,S] [--repo .] [--limit N] [--json]
+aidev task get    <task> [--json]
+aidev task run    <task> [--json]
+aidev task result <task> [--logs] [--json]
+aidev task events <task> [--payload] [--after SEQ] [--json]
+aidev task cancel <task> [--reason R] [--json]
+aidev task approve <task> [--deny] [--by WHO] [--reason R] [--json]
 ```
 
-Task commands (`aidev task create|get|list|run|cancel|result`) arrive in Phase 3,
-and the MCP server for Claude Code in Phase 4.
+`<task>` is either the reference (`TASK-000001`, case-insensitive) or the UUID.
+Every command takes `--json` for machine-readable output; human-readable is the
+default. Logs always go to stderr, so `aidev task get TASK-000001 --json | jq`
+works while diagnostics stay visible.
 
-## What happens when a task runs
+Tasks marked `--requires-approval` stop before doing anything — no worktree, no
+attempt — until `aidev task approve` releases them.
+
+The MCP server for Claude Code arrives in Phase 4.
+
+## What happens under the hood
 
 ```text
 create task ──▶ isolate in a git worktree ──▶ run the agent there

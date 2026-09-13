@@ -43,13 +43,13 @@ touch the orchestration layer.
 | 0 | Environment research | done — [docs/research.md](research.md) |
 | 1 | Domain, persistence, migrations, config, logging | done |
 | 2 | Git worktrees, `AgentBackend`, OpenCode backend, verification, execution | done |
-| 3 | Task CLI | not started |
+| 3 | Task CLI | done |
 | 4 | MCP server | not started |
 | 5 | Hardening, E2E, docs | not started |
 
-Sections below describing Phase 3+ state intent, not implementation. Anything not
-yet built says so. There is no CLI or MCP surface for running a task yet: the
-orchestration is exercised through `internal/worker` by the test suites.
+Sections below describing Phase 4+ state intent, not implementation. Anything not
+yet built says so. The MCP surface does not exist yet; the CLI does, and is the
+only way to drive a task today.
 
 ## Package layout
 
