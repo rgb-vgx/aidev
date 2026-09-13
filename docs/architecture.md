@@ -79,6 +79,33 @@ tests/e2e/            real PostgreSQL, real git, real OpenCode (opt-in)
 docs/                 this directory
 ```
 
+### Deviations from the specified layout, and why
+
+Three departures from the layout in the brief, each a decision rather than an
+oversight.
+
+**No `Dockerfile`, and no `deployments/`.** aidev must run on the host. It operates on
+the developer's own repositories, creates git worktrees next to them, and executes the
+`opencode` binary and the task's verification commands — `go test`, a linter, whatever
+the project uses. A containerised aidev would need the repository bind-mounted, git
+and its identity available inside, the OpenCode install and its credentials mounted,
+and the project's whole toolchain present in the image. That is a large amount of
+fragile plumbing in exchange for nothing: the thing being isolated is the *agent*, and
+a git worktree already does that. Docker Compose is used for PostgreSQL, which is a
+service and belongs in one.
+
+**No `internal/approval/`.** Approvals are part of the task aggregate: the record
+lives in `internal/task` beside the task it gates, and the policy that enforces it
+lives in `internal/worker` with the rest of the lifecycle. A package containing one
+struct and no behaviour would be directory symmetry, not structure.
+
+**Four packages the brief did not list.** `internal/procexec` exists so that
+subprocess handling is written once rather than in both the agent backend and the
+verification runner. `internal/view` exists so the CLI's JSON and the MCP schemas
+cannot drift apart. `internal/cli` keeps commands out of `main` so they can be tested
+without spawning a binary. `internal/logging` is small but is the single place that
+enforces stderr-only output.
+
 ### Why the domain is one package, not one per table
 
 `internal/task` holds `Task`, `TaskAttempt`, `WorkerRun`, `VerificationRun`,
