@@ -36,18 +36,22 @@ const exporterTimeout = 10 * time.Second
 
 // Config is read from the environment by FromEnv.
 type Config struct {
-	Enabled     bool
-	Endpoint    string            // OTLP HTTP endpoint, e.g. https://cloud.langfuse.com/api/public/otel
-	Headers     map[string]string // extra OTLP headers, e.g. Authorization
-	ServiceName string            // defaults to "aidev"
-	SampleRatio float64           // 0..1, defaults to 1
+	Enabled        bool
+	Endpoint       string            // base OTLP HTTP URL from OTEL_EXPORTER_OTLP_ENDPOINT
+	TracesEndpoint string            // full URL the traces exporter posts to (<base>/v1/traces, or OTEL_EXPORTER_OTLP_TRACES_ENDPOINT as given)
+	Headers        map[string]string // extra OTLP headers, e.g. Authorization
+	ServiceName    string            // defaults to "aidev"
+	SampleRatio    float64           // 0..1, defaults to 1
 }
 
-// FromEnv reads OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_EXPORTER_OTLP_HEADERS,
-// OTEL_SERVICE_NAME and OTEL_TRACES_SAMPLER_ARG. Enabled is true only when a
-// non-empty endpoint is set. OTEL_EXPORTER_OTLP_HEADERS is a comma-separated
-// list of key=value pairs. Returns an error for a malformed header list or a
-// sample ratio outside 0..1.
+// FromEnv reads OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_EXPORTER_OTLP_TRACES_ENDPOINT,
+// OTEL_EXPORTER_OTLP_HEADERS, OTEL_SERVICE_NAME and OTEL_TRACES_SAMPLER_ARG.
+// Enabled is true when either endpoint variable sets a non-empty value.
+// OTEL_EXPORTER_OTLP_TRACES_ENDPOINT is the full signal-specific URL and is used
+// as given; otherwise TracesEndpoint appends /v1/traces to the base endpoint, as
+// the OpenTelemetry specification defines the base variable without a signal
+// path. OTEL_EXPORTER_OTLP_HEADERS is a comma-separated list of key=value pairs.
+// Returns an error for a malformed header list or a sample ratio outside 0..1.
 func FromEnv(lookup func(string) (string, bool)) (Config, error) {
 	if lookup == nil {
 		lookup = os.LookupEnv
@@ -63,7 +67,15 @@ func FromEnv(lookup func(string) (string, bool)) (Config, error) {
 	}
 
 	cfg.Endpoint = strings.TrimSpace(get("OTEL_EXPORTER_OTLP_ENDPOINT"))
-	cfg.Enabled = cfg.Endpoint != ""
+	tracesEndpoint := strings.TrimSpace(get("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"))
+	switch {
+	case tracesEndpoint != "":
+		// Signal-specific URL takes precedence and is used verbatim.
+		cfg.TracesEndpoint = tracesEndpoint
+	case cfg.Endpoint != "":
+		cfg.TracesEndpoint = resolveTracesEndpoint(cfg.Endpoint)
+	}
+	cfg.Enabled = cfg.Endpoint != "" || cfg.TracesEndpoint != ""
 
 	if v := strings.TrimSpace(get("OTEL_SERVICE_NAME")); v != "" {
 		cfg.ServiceName = v
@@ -91,6 +103,18 @@ func FromEnv(lookup func(string) (string, bool)) (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// resolveTracesEndpoint appends the /v1/traces signal path to a base OTLP URL.
+// A trailing slash on the base must not produce a double slash, and any query
+// string or fragment is preserved because only the path is joined.
+func resolveTracesEndpoint(base string) string {
+	u, err := url.Parse(base)
+	if err != nil {
+		return strings.TrimSuffix(strings.TrimSpace(base), "/") + "/v1/traces"
+	}
+	u.Path = strings.TrimSuffix(u.Path, "/") + "/v1/traces"
+	return u.String()
 }
 
 // parseHeaders splits a comma-separated key=value list. Entries without a
@@ -141,23 +165,28 @@ func Start(ctx context.Context, cfg Config) (trace.Tracer, func(context.Context)
 	if cfg.SampleRatio < 0 || cfg.SampleRatio > 1 {
 		return nil, nil, fmt.Errorf("create tracer for service %q: sample ratio %v is outside 0..1", serviceName, cfg.SampleRatio)
 	}
-	if strings.TrimSpace(cfg.Endpoint) == "" {
+	if strings.TrimSpace(cfg.Endpoint) == "" && strings.TrimSpace(cfg.TracesEndpoint) == "" {
 		return nil, nil, fmt.Errorf("create tracer for service %q: tracing is enabled without an endpoint", serviceName)
+	}
+	endpoint := strings.TrimSpace(cfg.TracesEndpoint)
+	if endpoint == "" {
+		// Configs built without TracesEndpoint still resolve from the base.
+		endpoint = resolveTracesEndpoint(strings.TrimSpace(cfg.Endpoint))
 	}
 	// WithEndpointURL silently keeps its default on an invalid URL, so the
 	// endpoint is validated here to surface a typo instead of exporting to
 	// localhost unexpectedly.
-	if err := checkEndpointURL(cfg.Endpoint); err != nil {
+	if err := checkEndpointURL(endpoint); err != nil {
 		return nil, nil, fmt.Errorf("create tracer for service %q: %w", serviceName, err)
 	}
 
 	exporter, err := otlptracehttp.New(ctx,
-		otlptracehttp.WithEndpointURL(cfg.Endpoint),
+		otlptracehttp.WithEndpointURL(endpoint),
 		otlptracehttp.WithHeaders(cfg.Headers),
 		otlptracehttp.WithTimeout(exporterTimeout),
 	)
 	if err != nil {
-		return nil, nil, fmt.Errorf("create OTLP exporter for endpoint %q: %w", cfg.Endpoint, err)
+		return nil, nil, fmt.Errorf("create OTLP exporter for endpoint %q: %w", endpoint, err)
 	}
 
 	res, err := resource.New(ctx,
