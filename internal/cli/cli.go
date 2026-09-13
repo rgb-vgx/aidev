@@ -59,6 +59,11 @@ func Run(ctx context.Context, version string, args []string, stdout, stderr io.W
 			summary: "apply pending database migrations",
 			run:     runMigrate,
 		},
+		"task": {
+			name:    "task",
+			summary: "create, inspect and run tasks",
+			run:     runTask,
+		},
 	}
 
 	if len(args) == 0 {

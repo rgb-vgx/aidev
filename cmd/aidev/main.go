@@ -33,6 +33,12 @@ func main() {
 			fmt.Fprintf(os.Stderr, "aidev: %v\n", usage)
 			os.Exit(2)
 		}
+		// A task that ran and did not succeed exits non-zero without an error
+		// message: the outcome has already been reported on stdout.
+		var exit interface{ Code() int }
+		if errors.As(err, &exit) {
+			os.Exit(exit.Code())
+		}
 		fmt.Fprintf(os.Stderr, "aidev: %v\n", err)
 		os.Exit(1)
 	}
