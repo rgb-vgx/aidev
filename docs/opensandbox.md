@@ -16,7 +16,7 @@ recommendation in the last section is **defer**, with the conditions that would
 change it.
 
 Style follows docs/research.md: `[OBSERVED]` marks what was read in a file,
-`[UNRESOLVED]` marks what reading could not establish. Nothing was executed
+`[UNRESOLVED]` marks what reading could not establish. Nothing was executed by the author; one module lookup was run during review
 (see the fifth section).
 
 ## What OpenSandbox is
@@ -49,9 +49,11 @@ Runtime selection is a single required key: `runtime.type` is `docker` or
 Docker section defaults `network_mode` to `"host"` and documents `bridge` or a
 custom network as the alternatives, noting that the egress sidecar plus
 `networkPolicy` requires `bridge` [OBSERVED]
-(`opensandbox:server/configuration.md:115-130`). Outbound policy without the
-sidecar's requirements is rejected for incompatible modes [OBSERVED]
-(`opensandbox:server/configuration.md:231-243`). So the default sandbox shares
+(`opensandbox:server/configuration.md:115-130`). The sidecar itself is attached only when a create request
+carries a `networkPolicy`, and its image must then be configured [OBSERVED]
+(`opensandbox:server/configuration.md:231-243`). What the server does with a
+`networkPolicy` under `host` networking is [UNRESOLVED]: the configuration
+reference states the requirement, not the failure. So the default sandbox shares
 the host network namespace, and the contained-network configuration is the one
 that needs asking for.
 
@@ -64,10 +66,12 @@ documents dropped capabilities, `no-new-privileges` and a PID limit as ordinary
 server configuration [OBSERVED]
 (`opensandbox:server/docker-compose.example.yaml:22-28`).
 
-There is a Go SDK, at `sdks/sandbox/go` — an earlier draft of this assessment's
-test-suite lore records a claim that there was none, and the module file refutes
-it: the module path is `github.com/alibaba/OpenSandbox/sdks/sandbox/go`
-[OBSERVED] (`opensandbox:sdks/sandbox/go/go.mod:1`). It covers the three APIs:
+There is a Go SDK, at `sdks/sandbox/go`. A claim made while planning this work,
+that there was none, was wrong. Its module path is
+`github.com/alibaba/OpenSandbox/sdks/sandbox/go` [OBSERVED]
+(`opensandbox:sdks/sandbox/go/go.mod:1`), and during review `go list -m -versions`
+resolved both that path and `github.com/opensandbox-group/OpenSandbox/sdks/sandbox/go`
+on proxy.golang.org, at v1.0.0 through v1.0.5. It covers the three APIs:
 a `LifecycleClient` with create/get/list/pause/resume/delete and snapshots
 [OBSERVED] (`opensandbox:sdks/sandbox/go/lifecycle.go:93`), an `ExecdClient`
 with sessions, foreground/background commands, file operations and metrics
@@ -266,7 +270,7 @@ inside the sandbox [OBSERVED]
 the same, including JSONL parsing and session resume [OBSERVED]
 (`opensandbox:examples/codex-cli/main.py:79-94`)
 (`opensandbox:examples/codex-cli/main.py:102-118`); the claude-code example
-mirrors them with `-p --output-format json` and `--resume [OBSERVED]
+mirrors them with `-p --output-format json` and `--resume` [OBSERVED]
 (`opensandbox:examples/claude-code/main.py:77-86`)
 (`opensandbox:examples/claude-code/main.py:98-111`). All three default to the
 same image, `code-interpreter:v1.1.0` from the Aliyun registry [OBSERVED]
@@ -303,9 +307,8 @@ is `network_mode = "host"` [OBSERVED]
 (`opensandbox:server/configuration.md:119`); the example deployment overrides
 it to `bridge` with a host-IP rewrite and a 20,000-port allocation range
 [OBSERVED] (`opensandbox:server/docker-compose.example.yaml:22-28`). Egress
-policy — the feature that would contain a network-capable agent — requires
-`bridge` and is rejected otherwise [OBSERVED]
-(`opensandbox:server/configuration.md:231-243`). So containment-correct
+policy — the feature that would contain a network-capable agent — requires `bridge` [OBSERVED]
+(`opensandbox:server/configuration.md:119`). So containment-correct
 networking is available but is three configuration decisions away from the
 default, and the egress image itself is a separate container version to track
 [OBSERVED] (`opensandbox:server/docker-compose.example.yaml:22-28`).
@@ -328,9 +331,9 @@ empty the server skips API-key checks and instead demands an explicit
 insecurity acknowledgement at startup (`OPENSANDBOX_INSECURE_SERVER=YES` or an
 interactive confirmation) [OBSERVED]
 (`opensandbox:server/configuration.md:69`). A local-first tool whose operator
-is also the threat boundary would have to get this right right away — an
-unauthenticated lifecycle API on `0.0.0.0:8080` is a container-spawning
-service open to the LAN.
+is also the threat boundary would have to get this right right away — an unauthenticated lifecycle API on `0.0.0.0:8080` — the default bind address and
+port [OBSERVED] (`opensandbox:server/configuration.md:67-68`) — is a
+container-spawning service open to the LAN.
 
 And much of the project is machinery the brief excludes. Kubernetes is an
 explicit non-goal of aidev, alongside schedulers, dashboards, auth systems,
@@ -341,9 +344,8 @@ one operator [OBSERVED] (`aidev:docs/architecture.md:524`). OpenSandbox's
 Kubernetes runtime (BatchSandbox vs agent-sandbox providers, pod templates,
 RuntimeClasses, snapshot controllers) would be carried as dead weight, while
 its Docker runtime still requires the socket, the bridge networking, and the
-registries above. The server's own dependency closure (Postgres and Redis
-client libraries) and its `[store]` persistence backend are further services
-to operate [OBSERVED] (`opensandbox:server/pyproject.toml:44-50`).
+registries above. The server's own dependency closure (Postgres and Redis client libraries) and its `[store]` persistence backend are further services to operate [OBSERVED]
+(`opensandbox:server/pyproject.toml:55-56`).
 [UNRESOLVED] how much of that persistence is mandatory for a minimal
 single-operator deployment — the example compose starts only the server, and
 nothing was run to find out what breaks without the rest.
@@ -359,7 +361,9 @@ nothing was run to find out what breaks without the rest.
 
 ## What was run and what was not
 
-Nothing was run. No containers were started, no images were pulled, no
+Nothing was run by the author. During review one command was run:
+`go list -m -versions` against proxy.golang.org, to confirm the Go SDK's module
+paths resolve. No containers were started, no images were pulled, no
 packages were installed, and the network was not used — per the task
 constraints, and because nothing in the assessment needs them. Every claim
 above comes from reading files: the OpenSandbox clone at
