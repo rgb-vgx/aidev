@@ -631,6 +631,84 @@ which is the measurement that ruled out a per-project initialisation cost (§2.9
 function". A handful of data points on trivial tasks do not generalise, and no claim is made
 that they do.
 
+## 7d. Codex CLI: a second agent backend **[OBSERVED]**
+
+Measured against `codex-cli 0.154.0` at `~/.local/bin/codex`, the same way OpenCode was
+measured: by running it, not by reading about it.
+
+### The invocation
+
+```
+codex exec --profile <name> --json --skip-git-repo-check \
+  --sandbox workspace-write -C <worktree> -o <file> -- <prompt>
+```
+
+| Flag | Purpose | OpenCode's equivalent |
+|---|---|---|
+| `exec` | non-interactive subcommand | `run` |
+| `-C, --cd <DIR>` | working directory — the isolation hook | `--dir` |
+| `--json` | JSONL events on stdout | `--format json` |
+| `-o, --output-last-message <FILE>` | final message written to a file | *(none: parsed from the stream)* |
+| `-p, --profile <name>` | config profile from `$CODEX_HOME/<name>.config.toml` | *(none)* |
+| `-m, --model` | model | `-m` |
+| `-s, --sandbox` | `read-only`, `workspace-write`, `danger-full-access` | *(none)* |
+| `--skip-git-repo-check` | allow running outside a git repository | *(none)* |
+| `--` | separator before the prompt | `--` |
+
+Both `--` before the prompt and passing the prompt on stdin were confirmed to work.
+
+### Four behaviours that differ from OpenCode
+
+**It blocks on stdin.** The first probe timed out after four minutes with no output and
+`Reading additional input from stdin...` on stderr, even though the prompt was passed as
+an argument. Closing stdin fixes it, which aidev's process runner already does
+(`cmd.Stdin = nil`), but a human reproducing this by hand must add `< /dev/null`.
+
+**`--sandbox` and `--approve-for-me` are mutually exclusive.** Passing both exits 2 with a
+usage error before anything runs. `--sandbox workspace-write` alone allows the agent to
+write in its working directory without prompting, which is what aidev needs.
+
+**It has a sandbox of its own.** OpenCode has none: Phase 0 found it writes files with no
+permission gate, which is why the worktree is the only boundary (§2.6). Codex adds a second
+layer under aidev's. That does not change aidev's design — the worktree is still the
+boundary it relies on — but it is strictly more containment, not less.
+
+**An `error` item is not a failure.** A successful run emitted:
+
+```json
+{"type":"item.completed","item":{"id":"item_0","type":"error",
+ "message":"Model metadata for `...` not found. Defaulting to fallback metadata..."}}
+```
+
+and still exited 0 with the work done. Treating an `error` item as fatal would fail every
+run on this configuration. This is the same shape of trap as OpenCode's silent agent
+fallback (§2.5), arriving from the opposite direction: there, a success code hid a failure;
+here, a failure-looking event accompanies a success.
+
+### Event stream
+
+JSONL, one event per line:
+
+| `type` | Payload | Use |
+|---|---|---|
+| `thread.started` | `thread_id` | the session id, for a future resume |
+| `turn.started` | *(none)* | |
+| `item.completed` | `item.type` = `agent_message` (`text`), `command_execution` (`command`), `error` (`message`) | the last `agent_message` is the summary; `command_execution` counts as a tool call |
+| `turn.completed` | `usage`: `input_tokens`, `cached_input_tokens`, `cache_write_input_tokens`, `output_tokens`, `reasoning_output_tokens` | usage and cost accounting |
+| `turn.failed` | *(not observed)* | declared by the CLI; treated as a failure when seen |
+
+### Timings and noise
+
+A trivial prompt took 8.6s; creating one file took 15.3s. Both exited 0.
+
+stderr carries a large, harmless model-catalogue error on every run with this profile
+(`failed to refresh available models: ... missing field 'models'`), because the router at
+`web9router` returns a list shape Codex does not expect. It has no effect on the outcome,
+so stderr text must not be used to classify a Codex run.
+
+**[UNRESOLVED]** Whether `codex exec resume` can continue a session by `thread_id` the way
+OpenCode's `-s` does. The id is recorded now so that retry-with-context stays possible.
+
 ## 8. Reproducing this research
 
 Probes ran in a gitignored `.probe/` directory inside the repository (scratch repo, worktrees,
