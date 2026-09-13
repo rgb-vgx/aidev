@@ -483,6 +483,16 @@ aidev worktree remove TASK-000001          # refused if work is uncommitted
 aidev worktree remove TASK-000001 --force  # discard it deliberately
 ```
 
+**There are Docker volumes named after tasks.** An agent ran `docker compose` inside
+its worktree, where a copy of `docker-compose.yml` exists, and Compose named the
+project after the directory. They are empty litter rather than data:
+`docker volume prune` removes them. The project name is left unpinned on purpose —
+see [the reasoning](docs/architecture.md#postgresql-data-and-why-the-compose-project-name-is-not-pinned).
+
+**Is the database persistent?** Yes: a named volume, `aidev-pgdata`. `make db-down`
+keeps it and only `make db-reset` destroys it. There is no PersistentVolumeClaim
+because there is no Kubernetes.
+
 **A task failed and you want to know why.**
 
 ```bash

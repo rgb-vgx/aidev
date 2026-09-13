@@ -400,6 +400,30 @@ rule a future change is most likely to break by accident.
 
 ## Operating it
 
+### PostgreSQL data, and why the compose project name is not pinned
+
+There is no PersistentVolumeClaim, because there is no Kubernetes — that is an
+explicit non-goal. The equivalent is a named Docker volume, `aidev-pgdata`, mounted
+at `/var/lib/postgresql/data`. `make db-down` removes the container and keeps it;
+`make db-reset` is the only thing that destroys data, and it says so. Verified by
+stopping the stack and confirming every task survived the restart.
+
+The compose project name is deliberately **not** pinned with a `name:` field, even
+though leaving it unpinned has a visible cost: a `docker-compose.yml` exists in every
+task worktree, so an agent that runs `docker compose up` there creates a second stack
+named after the worktree directory and leaves an orphan volume behind
+(`task-000013-a1_aidev-pgdata` was found this way, 0 bytes).
+
+Pinning the name would stop the litter and introduce something far worse. An agent
+runs shell commands inside its worktree; with a pinned project name, a
+`docker compose down -v` in that worktree would target the operator's real database
+and destroy it. The directory-derived name is accidental isolation, and accidental
+isolation worth keeping is still worth keeping.
+
+The litter is cleaned with `docker volume prune`, or by removing the named volume
+directly. This is written down because the orphan looks like an oversight, and the
+obvious fix for it is a hazard.
+
 ### When a run is interrupted
 
 If aidev is killed mid-run — `kill -9`, a closed laptop, a container stopped — the
