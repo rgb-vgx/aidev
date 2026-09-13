@@ -104,13 +104,20 @@ type emptyFS struct{}
 
 func (emptyFS) Open(string) (fs.File, error) { return nil, fs.ErrNotExist }
 
+// readSchema returns every migration in apply order, so that a constraint a later
+// migration widens is read as it stands once all of them have run.
 func readSchema(t *testing.T) string {
 	t.Helper()
-	body, err := fs.ReadFile(migrations.FS, "0001_init.sql")
+	loaded, err := LoadMigrations(migrations.FS)
 	if err != nil {
-		t.Fatalf("read initial migration: %v", err)
+		t.Fatalf("LoadMigrations: %v", err)
 	}
-	return string(body)
+	var schema strings.Builder
+	for _, m := range loaded {
+		schema.WriteString(m.SQL)
+		schema.WriteString("\n")
+	}
+	return schema.String()
 }
 
 var quoted = regexp.MustCompile(`'([^']*)'`)
@@ -118,12 +125,14 @@ var quoted = regexp.MustCompile(`'([^']*)'`)
 // constraintValues extracts the quoted literals belonging to one named
 // constraint. Constraints are separated by the CONSTRAINT keyword, so the slice
 // between this constraint's name and the next one contains exactly its literals.
+// The last definition is the one that holds: migrations widen a constraint by
+// dropping and re-adding it under the same name.
 func constraintValues(t *testing.T, schema, name string) []string {
 	t.Helper()
 
-	start := strings.Index(schema, "CONSTRAINT "+name)
+	start := strings.LastIndex(schema, "CONSTRAINT "+name)
 	if start < 0 {
-		t.Fatalf("constraint %s not found in the migration", name)
+		t.Fatalf("constraint %s not found in the migrations", name)
 	}
 	rest := schema[start+len("CONSTRAINT "+name):]
 	if next := strings.Index(rest, "CONSTRAINT "); next >= 0 {
@@ -174,4 +183,23 @@ func difference(a, b []string) []string {
 		}
 	}
 	return out
+}
+
+// A constraint a later migration redefines is what the schema is after both run.
+// Reading only the first definition would report correct Go as drift and push
+// someone to edit an applied migration instead — which the migrator's checksum
+// then rejects on every database that already ran it.
+func TestConstraintValuesReadsTheLatestDefinition(t *testing.T) {
+	schema := `CREATE TABLE x (
+    s TEXT,
+    CONSTRAINT x_s_valid CHECK (s IN ('a', 'b')),
+    CONSTRAINT x_other CHECK (true)
+);
+ALTER TABLE x DROP CONSTRAINT x_s_valid;
+ALTER TABLE x ADD CONSTRAINT x_s_valid CHECK (s IN ('a', 'b', 'c'));
+`
+	got := constraintValues(t, schema, "x_s_valid")
+	if want := []string{"a", "b", "c"}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("constraintValues = %v, want %v from the latest definition", got, want)
+	}
 }
