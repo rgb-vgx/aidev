@@ -47,7 +47,7 @@ func spansByName(recorder *tracetest.SpanRecorder) map[string][]sdktrace.ReadOnl
 func attr(span sdktrace.ReadOnlySpan, key string) (string, bool) {
 	for _, kv := range span.Attributes() {
 		if string(kv.Key) == key {
-			return kv.Value.Emit(), true
+			return kv.Value.String(), true
 		}
 	}
 	return "", false
