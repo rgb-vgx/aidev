@@ -98,10 +98,15 @@ AIDEV_DB_PORT=5440 make db-up
 Then configure aidev and apply the schema:
 
 ```bash
-cp .env.example .env          # then edit if you changed the port
-export DATABASE_URL='postgres://aidev:aidev@127.0.0.1:5434/aidev?sslmode=disable'
-make migrate
+make install                                     # puts aidev on your PATH
+mkdir -p ~/.config/aidev
+cp .env.example ~/.config/aidev/config.env       # then edit if you changed the port
+aidev migrate
 ```
+
+That configuration file is read by every `aidev` command, in every new terminal, so
+this is a one-time setup. `aidev config` prints which file it used. An exported
+environment variable still overrides the file when you want one command to differ.
 
 `make migrate` is idempotent — run it as often as you like. Migrations are embedded
 in the binary; there is no separate migration tool to install.
@@ -110,6 +115,10 @@ in the binary; there is no separate migration tool to install.
 
 aidev reads its configuration from the environment. `DATABASE_URL` is the only
 required variable; everything else has a default.
+
+aidev reads them from `~/.config/aidev/config.env` (or `$XDG_CONFIG_HOME/aidev/config.env`,
+or the file named by `AIDEV_CONFIG`), and anything exported in your shell overrides
+that file.
 
 | Variable | Default | Purpose |
 |---|---|---|
