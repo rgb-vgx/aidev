@@ -498,6 +498,7 @@ seconds of aidev's own work against 9 to 656 seconds of agent time. Check
 
 | | |
 |---|---|
+| **[docs/guide/index.html](docs/guide/index.html)** | **Start here if you are new.** A four-page guide written for a first week: what aidev is, getting started, debugging, and a full reference. Open it in a browser |
 | [docs/research.md](docs/research.md) | What the installed Claude Code, OpenCode, git and PostgreSQL actually do — measured, with assumptions and open questions marked |
 | [docs/architecture.md](docs/architecture.md) | Package layout, design decisions and their costs, extension seams |
 | [docs/database.md](docs/database.md) | Schema, constraints, lifecycle, concurrency, migrations |
