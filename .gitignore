@@ -10,6 +10,9 @@
 .env
 .env.local
 
+# generated Langfuse secrets
+/deployments/langfuse/.env
+
 # editor / OS
 .DS_Store
 *.swp
