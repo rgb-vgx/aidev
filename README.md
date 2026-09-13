@@ -424,6 +424,44 @@ Several of these were confirmed by deliberately breaking the implementation and
 checking that the test failed, rather than by assuming a green test meant a real
 guarantee.
 
+## Seeing what a task did (optional)
+
+aidev exports OpenTelemetry traces when an OTLP endpoint is configured, and nothing
+at all when one is not. One trace per task run, with the agent invocation carrying
+its token usage.
+
+```bash
+make jaeger-up && eval "$(make jaeger-env)"   # one container, UI on :16686
+aidev task run TASK-000001
+```
+
+For an LLM-oriented view with cost, self-hosted Langfuse works too — six services,
+so it is started separately:
+
+```bash
+make langfuse-up && eval "$(make langfuse-env)"
+make langfuse-credentials   # the bootstrapped UI login, on :3000
+```
+
+A real run looks like this:
+
+```text
+aidev.task.run            10.97s
+  aidev.worktree.create    0.02s
+  aidev.agent.run         10.86s   usage {input: 9580, output: 457}
+  aidev.verification       0.08s
+    aidev.verification.step   0s   go test ./... → exit 0
+```
+
+Which also shows where the time goes: the agent was 10.86 of 10.97 seconds.
+
+Two notes from getting this working. Langfuse v4 removed
+`GET /api/public/traces` — use `GET /api/public/v2/observations`, and check the HTTP
+status rather than reading an empty `data` field out of an error body. And aidev
+deliberately does **not** pass its OTLP configuration to the agent: OpenCode is
+instrumented too, and one run otherwise filed 1536 spans of its own internals into
+your backend under aidev's name.
+
 ## When something goes wrong
 
 **aidev was killed while a task was running.** The task is stuck in `RUNNING`, and

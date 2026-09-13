@@ -461,24 +461,29 @@ make langfuse-up && eval "$(make langfuse-env)"  # six services, UI on :3000
 AIDEV_TEST_OTLP=1 go test ./internal/tracing/ -run TestExport -count=1
 ```
 
-### What has been verified, and what has not
+### What has been verified
 
-**Verified against Jaeger.** A span from aidev's own code arrives with every
-attribute intact, including the `gen_ai.usage.*` fields a backend needs for an LLM
-view. `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318` resolves to
-`/v1/traces` as the specification requires.
+**Against Jaeger and against self-hosted Langfuse.** A real task run produces one
+trace: `aidev.task.run` over `aidev.worktree.create`, `aidev.agent.run` carrying the
+agent's token usage as `gen_ai.usage.*`, and `aidev.verification` with a span per
+step and its exit code. Langfuse maps the agent span to a generation and shows its
+usage.
 
-**Not working against self-hosted Langfuse.** It accepts the batch with HTTP 200 and
-then never surfaces the trace: its `otel-ingestion-queue` in Redis is never fed, and
-ClickHouse stays empty. A `200` from that endpoint proves little — an empty body gets
-one too — so the export test's claim is deliberately limited to "the backend accepted
-it", which catches a wrong path, host or credential and nothing more.
+### Two things that made this look broken, recorded because both are easy to repeat
 
-**Not implemented.** Nothing instruments a task run yet. There are no spans for
-worktree creation, the agent invocation, or verification, so there is no trace to
-look at for real work — only the export path is proven. Wiring that up is the next
-piece, and it should be written against a test that asserts the resulting span shape,
-not merely that the code compiles.
+**Querying a removed endpoint.** Langfuse v4 in `events_only` mode has no
+`GET /api/public/traces`; it answers **404** with a message saying so. The v4 read
+path is `GET /api/public/v2/observations`. Worse than the wrong URL was the wrong
+probe: a script that did `json.get("data", [])` turned that 404 body into "0 traces"
+and produced a confident, false conclusion that ingestion was broken. Check the
+status code.
+
+**Leaking aidev's exporter configuration into the agent.** `procexec` inherited the
+environment, so OpenCode — itself instrumented — received aidev's OTLP endpoint,
+credentials and service name, and published its own internals to the operator's
+backend as if they were aidev's. One run produced 1536 foreign spans against 8 of
+aidev's. `OTEL_*` is now stripped from subprocess environments; `ExtraEnv` remains
+the deliberate way to configure a child.
 
 ## What the MVP does not do
 
