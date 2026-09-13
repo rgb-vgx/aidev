@@ -1,5 +1,7 @@
 # Can OpenSandbox sandbox aidev?
 
+*Vietnamese version: [opensandbox.vi.md](opensandbox.vi.md).*
+
 Question: whether OpenSandbox (https://github.com/opensandbox-group/OpenSandbox)
 can be applied to aidev — to isolate the coding agent, the verification step, or
 both. This note answers it from source code only, at OpenSandbox commit

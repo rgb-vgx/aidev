@@ -211,3 +211,70 @@ func TestOpenSandboxCitationsExistAtThePinnedCommit(t *testing.T) {
 		checkLines(t, c, string(content))
 	}
 }
+
+const assessmentPathVietnamese = "../../docs/opensandbox.vi.md"
+
+// The Vietnamese version carries the same evidence as the original. A
+// translation that drops a citation, or points one at different lines, is a
+// different argument wearing the same title, so the citations must match the
+// English file exactly. Prose and headings are translated; commands, paths,
+// configuration keys and citations are not.
+func TestOpenSandboxVietnameseCarriesTheSameEvidence(t *testing.T) {
+	english := readAssessment(t)
+	body, err := os.ReadFile(assessmentPathVietnamese)
+	if err != nil {
+		t.Fatalf("docs/opensandbox.vi.md is missing: %v", err)
+	}
+	vi := string(body)
+
+	if !strings.Contains(vi, openSandboxCommit) {
+		t.Errorf("the Vietnamese version does not name the OpenSandbox commit %s", openSandboxCommit)
+	}
+	for _, heading := range []string{
+		"## OpenSandbox là gì",
+		"## aidev hiện cô lập công việc như thế nào",
+		"## OpenSandbox có thể lắp vào đâu",
+		"## Cái giá phải trả",
+		"## Đã chạy gì và chưa chạy gì",
+		"## Khuyến nghị",
+	} {
+		if !strings.Contains(vi, "\n"+heading) {
+			t.Errorf("no %q section", heading)
+		}
+	}
+	for _, fact := range []string{"allowed_host_paths", "docker.sock", "ExitCode", "network_mode"} {
+		if !strings.Contains(vi, fact) {
+			t.Errorf("the Vietnamese version never addresses %q", fact)
+		}
+	}
+
+	// An English file saved under a Vietnamese name would pass every check above.
+	if n := countVietnameseRunes(vi); n < 1500 {
+		t.Errorf("%d Vietnamese characters, want at least 1500: this does not read as a translation", n)
+	}
+
+	tally := func(body string) map[string]int {
+		m := map[string]int{}
+		for _, c := range citations(body) {
+			m[c.raw]++
+		}
+		return m
+	}
+	en, got := tally(english), tally(vi)
+	for raw, n := range en {
+		if got[raw] != n {
+			t.Errorf("%s appears %d time(s) in English and %d in Vietnamese", raw, n, got[raw])
+		}
+	}
+	for raw, n := range got {
+		if en[raw] == 0 {
+			t.Errorf("%s appears %d time(s) in Vietnamese but not in English", raw, n)
+		}
+	}
+
+	for i, line := range strings.Split(vi, "\n") {
+		if strings.Count(line, "`")%2 == 1 {
+			t.Errorf("line %d has an unbalanced backtick, which breaks the markdown after it", i+1)
+		}
+	}
+}
