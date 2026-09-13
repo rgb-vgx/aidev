@@ -99,10 +99,16 @@ $(LANGFUSE_ENV):
 		echo "LANGFUSE_DB_PASSWORD=$$(openssl rand -hex 16)"; \
 		echo "CLICKHOUSE_PASSWORD=$$(openssl rand -hex 16)"; \
 		echo "REDIS_AUTH=$$(openssl rand -hex 16)"; \
-		echo "MINIO_ROOT_PASSWORD=$$(openssl rand -hex 16)"; \
-		echo "LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY=$$(openssl rand -hex 16)"; \
-		echo "LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY=$$(openssl rand -hex 16)"; \
-		echo "LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY=$$(openssl rand -hex 16)"; \
+		echo ""; \
+		echo "# One secret, four variables. Upstream gives all four the same default"; \
+		echo "# (miniosecret) because Langfuse authenticates to MinIO with these keys:"; \
+		echo "# the shared default encodes a relationship, and generating them"; \
+		echo "# independently breaks S3 uploads with a 500 that says nothing useful."; \
+		minio_secret=$$(openssl rand -hex 16); \
+		echo "MINIO_ROOT_PASSWORD=$$minio_secret"; \
+		echo "LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY=$$minio_secret"; \
+		echo "LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY=$$minio_secret"; \
+		echo "LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY=$$minio_secret"; \
 		echo ""; \
 		echo "# Headless bootstrap: Langfuse creates this org, project, user and"; \
 		echo "# API key pair on first start, so no clicking through the UI is needed."; \
