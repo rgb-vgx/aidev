@@ -302,6 +302,119 @@ place a listed future feature plugs in without a rewrite.
 Deliberately **not** present: a scheduler, a DAG executor, automatic merge, a web
 dashboard, authentication, Redis, Kafka, Kubernetes, or an LLM inside aidev.
 
+## Security model
+
+### What aidev assumes about the agent
+
+The agent is not trusted to be correct, and it is not contained. Phase 0 measured
+OpenCode writing files in non-interactive mode with no permission prompt, and
+OpenCode's own configuration lists the default agent's permission as
+`{"permission": "*", "action": "allow"}` (docs/research.md §2.6, §7b). It runs with
+the privileges of whoever started aidev.
+
+The consequence is stated plainly because it decides everything else: **the git
+worktree is the only boundary.** It is enforced by two checks before git is ever
+invoked — the path must resolve inside `WORKSPACE_ROOT`, and it must lie outside the
+repository — both comparing physically resolved paths so a planted symlink cannot
+satisfy a textual prefix. Worktree names are an allowlist of `[A-Za-z0-9._-]` rather
+than a blocklist, because a name arrives from user input and an allowlist cannot be
+defeated by an escape nobody anticipated.
+
+### Verification commands are arbitrary code, deliberately
+
+A task defines the commands aidev runs to verify it, and aidev runs them. That is
+the design: the whole product rests on aidev executing real checks rather than
+reading an agent's report.
+
+It follows that **anyone who can create a task can run a command on this machine**,
+including through MCP. That is not a loophole, it is the feature, and it bounds who
+should be given access: aidev is a local-first tool for an operator working on their
+own machine, and exposing its MCP server or its database to anyone you would not
+give a shell to would be a mistake.
+
+What is *not* available:
+
+- **No shell.** Commands are argv, executed directly. `|`, `>`, `&&`, backticks and
+  `$` are rejected at parse time with an explanation. This is not injection defence —
+  there is no shell to inject into — but it removes a class of surprise where a
+  pipe silently becomes a literal argument.
+- **No command endpoint.** There is no tool or flag that takes a command and runs
+  it. Commands exist only as part of a task, recorded with it and visible in its
+  history.
+- **No privilege of aidev's own.** A verification command can do nothing the person
+  who started aidev could not already do.
+
+### Every external process
+
+`internal/procexec` is the only place a subprocess is created, and it gives all of
+them the same guarantees: a required deadline, cancellation that signals the process
+group rather than the pid, output bounded per stream with a truncation flag, and a
+classified outcome that distinguishes "exited non-zero" from "we killed it at the
+deadline" from "it never started".
+
+A verification pass is bounded per step rather than in total, so its worst case is
+`MaxVerificationSteps` (20) × the step timeout. A task that needs a tighter bound
+should set per-step `timeout_seconds`.
+
+### Secrets
+
+The connection string is redacted wherever configuration is printed or logged
+(`config.RedactURL`), and a test asserts a password does not survive it. The
+environment handed to a subprocess is inherited — OpenCode needs `HOME` for its
+credentials — and is never recorded: `worker_runs` stores the argv, which is
+task-defined, and not the environment.
+
+### MCP transport
+
+stdio means stdout is the JSON-RPC channel. The logger has no stdout option at all,
+and a test redirects `os.Stdout` to assert nothing reaches it, because this is the
+rule a future change is most likely to break by accident.
+
+## Operating it
+
+### When a run is interrupted
+
+If aidev is killed mid-run — `kill -9`, a closed laptop, a container stopped — the
+task is left `RUNNING` with an open attempt and a worktree on disk. Nothing will
+pick it up again: a running task is not runnable, and aidev cannot know whether
+another process is still working on it.
+
+The way back is to cancel it:
+
+```bash
+aidev task list --status RUNNING,VERIFYING   # find them
+aidev task cancel TASK-000001 --reason "aidev was killed mid-run"
+aidev worktree list                          # the work is retained
+aidev worktree remove TASK-000001 --force    # once you are done with it
+```
+
+Cancelling closes every open attempt and retains every active worktree, so the
+partial work survives and the task's history stays coherent.
+`TestRecoveryFromAnInterruptedRun` executes exactly this sequence.
+
+aidev does **not** time out a stale `RUNNING` task on its own. A timeout that
+declared a task dead while another process was still driving it would be worse than
+a task an operator has to cancel deliberately, and there is no reliable way to tell
+those apart without a lease mechanism — which the MVP does not have and which
+concurrent workers will need.
+
+### Reclaiming disk
+
+`aidev worktree list` reports each worktree with its task, its status and its size,
+and flags a record whose directory has disappeared. Removal goes through git without
+`--force`, so uncommitted work is refused rather than discarded; forcing it is
+recorded in the task's history as an operator's decision.
+
+### A successful task's output
+
+The work is a commit on `aidev/<ref>`. Nothing merges it, and nothing ever will
+without a person asking:
+
+```bash
+git log --oneline aidev/TASK-000001
+git diff main..aidev/TASK-000001
+```
+
 ## Failure classification
 
 `task.FailureKind` is the shared vocabulary for why something failed. The values

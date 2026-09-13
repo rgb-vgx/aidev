@@ -424,6 +424,38 @@ Several of these were confirmed by deliberately breaking the implementation and
 checking that the test failed, rather than by assuming a green test meant a real
 guarantee.
 
+## When something goes wrong
+
+**aidev was killed while a task was running.** The task is stuck in `RUNNING`, and
+nothing will pick it up again. Cancel it:
+
+```bash
+aidev task list --status RUNNING,VERIFYING
+aidev task cancel TASK-000001 --reason "aidev was killed mid-run"
+```
+
+The partial work is kept. aidev deliberately does not expire a stale `RUNNING` task
+by itself — see [the reasoning](docs/architecture.md#when-a-run-is-interrupted).
+
+**The workspace is filling up.** Failed tasks keep their worktrees on purpose:
+
+```bash
+aidev worktree list                        # with tasks, statuses and sizes
+aidev worktree remove TASK-000001          # refused if work is uncommitted
+aidev worktree remove TASK-000001 --force  # discard it deliberately
+```
+
+**A task failed and you want to know why.**
+
+```bash
+aidev task result TASK-000001 --logs   # verification output, agent transcript, diff
+aidev task events TASK-000001          # what happened, in order
+```
+
+**A task is slow.** Almost all of that is the model, not aidev — measured at 0.2
+seconds of aidev's own work against 9 to 656 seconds of agent time. Check
+`aidev task events` to see which stage it is in, and consider a faster model.
+
 ## Documentation
 
 | | |
