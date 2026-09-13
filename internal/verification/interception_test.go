@@ -107,6 +107,38 @@ func TestInterceptions(t *testing.T) {
 			step("bash", "-e", "scripts/ci.sh"), []string{"scripts/ci.sh"}, []string{"scripts/ci.sh"}},
 		{"bash option that takes a value",
 			step("bash", "-o", "pipefail", "ci.sh"), []string{"ci.sh", "pipefail"}, []string{"ci.sh"}},
+
+		// A relative interpreter is itself a file in the worktree: an agent that
+		// created .venv/ wrote the python that would judge it. Found in review of
+		// TASK-000027, where only the interpreter's arguments were checked.
+		{"relative python interpreter inside a changed directory",
+			step("./.venv/bin/python", "-m", "pytest"), []string{".venv/"}, []string{".venv/"}},
+		{"relative interpreter and a shadowed module are both reported",
+			step(".venv/bin/python3", "-m", "pytest"), []string{".venv/bin/python3", "pytest.py"}, []string{".venv/bin/python3", "pytest.py"}},
+		{"relative interpreter left alone still has its module checked",
+			step("./.venv/bin/python", "-m", "pytest"), []string{"pytest.py"}, []string{"pytest.py"}},
+		{"relative shell interpreter",
+			step("tools/bash", "ci.sh"), []string{"tools/bash"}, []string{"tools/bash"}},
+		{"a node_modules binary the agent installed",
+			step("node_modules/.bin/jest"), []string{"node_modules/"}, []string{"node_modules/"}},
+
+		// Python parses short flags as clusters, and an option that takes a value
+		// can end one (measured: -Bm, -Bmunittest and -sm are shadowed; -IBm and
+		// -BIm are not).
+		{"-m at the end of a flag cluster",
+			step("python3", "-Bm", "pytest"), []string{"pytest.py"}, []string{"pytest.py"}},
+		{"module joined to a flag cluster",
+			step("python3", "-Bmpytest"), []string{"pytest.py"}, []string{"pytest.py"}},
+		{"another cluster ending in m",
+			step("python3", "-sm", "pytest"), []string{"pytest.py"}, []string{"pytest.py"}},
+		{"-I first in the cluster isolates",
+			step("python3", "-IBm", "pytest"), []string{"pytest.py"}, nil},
+		{"-I later in the cluster isolates",
+			step("python3", "-BIm", "pytest"), []string{"pytest.py"}, nil},
+		{"-W at the end of a cluster takes the next argument",
+			step("python3", "-BW", "error", "-m", "pytest"), []string{"error", "pytest.py"}, []string{"pytest.py"}},
+		{"bash +o takes a value, like -o",
+			step("bash", "+o", "posix", "ci.sh"), []string{"ci.sh", "posix"}, []string{"ci.sh"}},
 	}
 
 	for _, tc := range cases {

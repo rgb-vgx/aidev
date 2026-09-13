@@ -778,12 +778,14 @@ func interceptionPayload(ins []verification.Interception) []map[string]any {
 }
 
 // interceptionError names every step and path, so the failure reason tells a
-// reviewer what was replaced without opening the audit log.
+// reviewer what was replaced without opening the audit log. Steps are numbered
+// from 1 here because a person reads this; the event payload keeps the stored
+// index, which matches verification_runs.step_index.
 func interceptionError(ins []verification.Interception) error {
 	parts := make([]string, 0, len(ins))
 	for _, in := range ins {
 		parts = append(parts, fmt.Sprintf("step %d `%s` would run %s, which changed during this attempt",
-			in.StepIndex, in.Step, in.Path))
+			in.StepIndex+1, in.Step, in.Path))
 	}
 	return fmt.Errorf("verification not run: %s", strings.Join(parts, "; "))
 }

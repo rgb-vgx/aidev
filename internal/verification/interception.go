@@ -37,30 +37,35 @@ func Interceptions(steps []task.VerificationStep, changed []string) []Intercepti
 }
 
 func matchesForStep(step task.VerificationStep, changed []string) []string {
-	base := path.Base(step.Command)
-	if isPython(base) {
-		return pythonMatches(step, changed)
+	var out []string
+
+	// A command given as a relative path is a file in the worktree whatever it
+	// is — a script, or an interpreter such as ./.venv/bin/python. A fresh
+	// worktree has no virtualenv, so one that exists was made during the attempt.
+	if runner, ok := relativeCommand(step.Command); ok {
+		out = append(out, matchRunner(runner, changed)...)
 	}
-	if isShell(base) {
-		runner, ok := shellScript(step.Args)
-		if !ok {
-			return nil
+
+	base := path.Base(filepath.ToSlash(step.Command))
+	switch {
+	case isPython(base):
+		out = append(out, pythonMatches(step.Args, changed)...)
+	case isShell(base):
+		if script, ok := shellScript(step.Args); ok {
+			out = append(out, matchRunner(script, changed)...)
 		}
-		return matchRunner(runner, changed)
 	}
-	// A bare name is looked up in PATH only, and an absolute path is resolved
-	// outside the worktree; neither can load the agent's files.
-	if !strings.Contains(step.Command, "/") {
-		return nil
+	return uniqueSorted(out)
+}
+
+// relativeCommand returns the worktree path of a command given as a relative
+// path. A bare name is looked up in PATH only, and an absolute path is resolved
+// outside the worktree; neither can load the agent's files.
+func relativeCommand(command string) (string, bool) {
+	if !strings.Contains(command, "/") {
+		return "", false
 	}
-	if filepath.IsAbs(step.Command) || path.IsAbs(step.Command) {
-		return nil
-	}
-	runner, ok := cleanRunner(step.Command)
-	if !ok {
-		return nil
-	}
-	return matchRunner(runner, changed)
+	return cleanRunner(command)
 }
 
 // matchRunner returns the changed entries the runner loads: an exact entry, or
@@ -68,31 +73,39 @@ func matchesForStep(step task.VerificationStep, changed []string) []string {
 func matchRunner(runner string, changed []string) []string {
 	var out []string
 	for _, c := range changed {
-		if c == runner {
-			out = append(out, c)
-		} else if strings.HasSuffix(c, "/") && strings.HasPrefix(runner, c) {
+		if c == runner || (strings.HasSuffix(c, "/") && strings.HasPrefix(runner, c)) {
 			out = append(out, c)
 		}
 	}
-	sort.Strings(out)
 	return out
 }
 
 func cleanRunner(p string) (string, bool) {
-	if p == "" {
+	if p == "" || p == "-" {
 		return "", false
 	}
 	if filepath.IsAbs(p) || path.IsAbs(p) {
 		return "", false
 	}
 	cleaned := filepath.ToSlash(filepath.Clean(p))
-	if cleaned == "." || cleaned == "" {
-		return "", false
-	}
-	if cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
 		return "", false
 	}
 	return cleaned, true
+}
+
+func uniqueSorted(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	sort.Strings(in)
+	out := in[:1]
+	for _, s := range in[1:] {
+		if s != out[len(out)-1] {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func isShell(base string) bool {
@@ -107,11 +120,8 @@ func isPython(base string) bool {
 	if base == "python" || base == "python3" {
 		return true
 	}
-	if !strings.HasPrefix(base, "python3.") {
-		return false
-	}
-	rest := strings.TrimPrefix(base, "python3.")
-	if rest == "" {
+	rest, ok := strings.CutPrefix(base, "python3.")
+	if !ok || rest == "" {
 		return false
 	}
 	for _, part := range strings.Split(rest, ".") {
@@ -127,92 +137,94 @@ func isPython(base string) bool {
 	return true
 }
 
-// shellScript returns the script a shell interpreter is handed: the first
-// positional argument. Flags are skipped; -o takes a value; after -c there is
-// a command string, not a file.
+// shellScript returns the script a shell is handed: its first operand. Options
+// come in clusters (-ex); -o and +o take the next argument; a cluster containing
+// c means the operand is a command string, not a file.
 func shellScript(args []string) (string, bool) {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
-		if a == "--" {
-			if i+1 >= len(args) {
-				return "", false
+		switch {
+		case a == "--":
+			if i+1 < len(args) {
+				return cleanRunner(args[i+1])
 			}
-			return cleanRunner(args[i+1])
-		}
-		if a == "-c" {
 			return "", false
-		}
-		if a == "-o" {
-			i++
+		case strings.HasPrefix(a, "--"):
 			continue
+		case len(a) > 1 && (a[0] == '-' || a[0] == '+'):
+			for j := 1; j < len(a); j++ {
+				switch a[j] {
+				case 'c':
+					return "", false
+				case 'o':
+					if j == len(a)-1 {
+						i++
+					}
+				}
+			}
+		default:
+			return cleanRunner(a)
 		}
-		if strings.HasPrefix(a, "-") && a != "-" {
-			continue
-		}
-		return cleanRunner(a)
 	}
 	return "", false
 }
 
-func pythonMatches(step task.VerificationStep, changed []string) []string {
-	args := step.Args
-	// Whether -P or -I appeared among python's own flags, before -m. Either
-	// keeps the working directory off sys.path, so the worktree cannot shadow
-	// the module (docs/research.md 7e).
-	sawIsolated := false
+// pythonMatches follows python's own option parsing far enough to find what it
+// loads from the working directory: the module of -m, or the script operand.
+// Short options come in clusters, and m, c, W and X take a value — the rest of
+// the cluster, or the next argument (measured: -Bm and -BW error are parsed
+// that way; docs/research.md 7e).
+func pythonMatches(args []string, changed []string) []string {
+	isolated := false
 	for i := 0; i < len(args); i++ {
 		a := args[i]
-		if a == "--" {
-			if i+1 >= len(args) {
-				return nil
+		switch {
+		case a == "--":
+			if i+1 < len(args) {
+				if script, ok := cleanRunner(args[i+1]); ok {
+					return matchRunner(script, changed)
+				}
 			}
-			runner, ok := cleanRunner(args[i+1])
-			if !ok {
-				return nil
+			return nil
+		case strings.HasPrefix(a, "--"):
+			// No long option names a module or a script.
+			continue
+		case len(a) > 1 && a[0] == '-':
+			cluster := a[1:]
+			for j := 0; j < len(cluster); j++ {
+				switch cluster[j] {
+				case 'I', 'P':
+					// Either keeps the working directory off sys.path.
+					isolated = true
+				case 'c':
+					// Code from the command line: there is no file to load, and
+					// its imports cannot be seen from here.
+					return nil
+				case 'm':
+					module := cluster[j+1:]
+					if module == "" {
+						if i+1 >= len(args) {
+							return nil
+						}
+						module = args[i+1]
+					}
+					if isolated {
+						return nil
+					}
+					return matchModule(module, changed)
+				case 'W', 'X':
+					if j == len(cluster)-1 {
+						i++
+					}
+					j = len(cluster)
+				}
 			}
-			return matchRunner(runner, changed)
-		}
-		if a == "-c" || (len(a) > 2 && strings.HasPrefix(a, "-c")) {
+		default:
+			if script, ok := cleanRunner(a); ok {
+				return matchRunner(script, changed)
+			}
 			return nil
 		}
-		if a == "-m" {
-			if i+1 >= len(args) {
-				return nil
-			}
-			if sawIsolated {
-				return nil
-			}
-			return matchModule(args[i+1], changed)
-		}
-		if len(a) > 2 && strings.HasPrefix(a, "-m") && !strings.HasPrefix(a, "--") {
-			if sawIsolated {
-				return nil
-			}
-			return matchModule(a[2:], changed)
-		}
-		if a == "-W" || a == "-X" {
-			i++
-			continue
-		}
-		if (strings.HasPrefix(a, "-W") || strings.HasPrefix(a, "-X")) && len(a) > 2 && !strings.HasPrefix(a, "--") {
-			continue
-		}
-		if strings.HasPrefix(a, "-") && a != "-" && !strings.HasPrefix(a, "--") {
-			if strings.Contains(a[1:], "I") || strings.Contains(a[1:], "P") {
-				sawIsolated = true
-			}
-			continue
-		}
-		if strings.HasPrefix(a, "--") {
-			// Long options take no module meaning here; --isolated is not a
-			// spelling the measured rule covers.
-			continue
-		}
-		runner, ok := cleanRunner(a)
-		if !ok {
-			return nil
-		}
-		return matchRunner(runner, changed)
 	}
 	return nil
 }
@@ -223,26 +235,16 @@ func pythonMatches(step task.VerificationStep, changed []string) []string {
 // T covers a package directory; one starting with "T." covers a source,
 // sourceless or extension module.
 func matchModule(module string, changed []string) []string {
-	if module == "" {
-		return nil
-	}
-	top := module
-	if i := strings.IndexByte(top, '.'); i >= 0 {
-		top = top[:i]
-	}
+	top, _, _ := strings.Cut(module, ".")
 	if top == "" {
 		return nil
 	}
 	var out []string
 	for _, c := range changed {
-		first := c
-		if i := strings.IndexByte(c, '/'); i >= 0 {
-			first = c[:i]
-		}
+		first, _, _ := strings.Cut(c, "/")
 		if first == top || strings.HasPrefix(first, top+".") {
 			out = append(out, c)
 		}
 	}
-	sort.Strings(out)
 	return out
 }

@@ -745,6 +745,8 @@ aidev.
 | `exec.Command("mytool")` with `Dir` holding an executable `./mytool` | `executable file not found in $PATH` — bare names are never taken from the working directory |
 | `python3 -m unittest` with `./unittest.py` | shadowed |
 | `python3 -munittest` | shadowed |
+| `python3 -Bm unittest`, `-Bmunittest`, `-sm unittest` | shadowed: short flags are parsed as a cluster, and `m` may end one |
+| `python3 -IBm unittest`, `-BIm unittest` | not shadowed |
 | `python3 -P -m unittest`, `-I`, `-IP` | not shadowed |
 | `python3 -m shadowmod` with only `./shadowmod.pyc` | shadowed (sourceless import) |
 | `python3 -m notinstalled` with `./notinstalled/__main__.py`, no `__init__.py` | shadowed |
@@ -767,6 +769,17 @@ including committed and ignored ones — and refuses to run a step whose runner 
 loaded from one of them: a command given as a relative path, the script an interpreter
 (`sh`, `bash`, `python`) is handed, or the top-level module of `python -m`. The attempt
 fails as `VERIFICATION` without running anything, and the worktree is kept.
+
+Review of TASK-000027 found the first implementation checked an interpreter's arguments but
+not the interpreter: `./.venv/bin/python -m pytest` was never matched against `.venv/`, though
+a fresh worktree has no virtualenv, so any `.venv/` there was created during the attempt and
+its python is the agent's. The same holds for `node_modules/.bin/`. A relative command is now
+checked whatever it names.
+
+One trade-off is accepted deliberately. `python -m mypkg`, where `mypkg` is the project's own
+code, is refused when the agent changed `mypkg`: aidev cannot tell a project module from a
+shadowing one by name. The refusal is loud and names the path, so the planner can choose a
+runner the agent does not write (`python -m pytest`). A silent pass would not be visible at all.
 
 This guards the judge, not the exam. Tests, a `Makefile`, `conftest.py`, and project code
 are the work under review; changing them is what tasks are for, and whether the tests still

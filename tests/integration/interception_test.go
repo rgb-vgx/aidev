@@ -131,7 +131,7 @@ func TestReplacingTheVerificationScriptFailsEvenWhenTheWorkIsDone(t *testing.T) 
 	if err != nil {
 		t.Fatalf("RunTask: %v", err)
 	}
-	assertIntercepted(t, h, created, outcome, "./check.sh", "check.sh")
+	assertIntercepted(t, h, created, outcome, "step 1 `./check.sh`", "check.sh")
 }
 
 // Committing inside the worktree makes `git status` clean and a diff against the
