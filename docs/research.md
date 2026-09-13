@@ -205,25 +205,33 @@ one repository share a project identity** (see §2.9).
 The `AgentBackend` interface keeps this reversible: an `OpenCodeServerBackend` can be added
 later without touching orchestration. Recorded as a future option, not a limitation.
 
-### 2.9 Cold start: a real timeout hazard **[OBSERVED]**
+### 2.9 Slow first runs: a real timeout hazard, with a revised cause **[OBSERVED]**
 
 The very first `opencode run` against a brand-new project **did not complete within 240s**,
 producing zero stdout and stopping after logging `message=init`. A second attempt at 90s also
 hung at `init`. Afterwards — once `opencode serve` had run once against the same directory —
 every invocation completed in **5–16s**, including plain `opencode run` with no server present.
 
-- **[OBSERVED]** first-ever invocation for an unseen project can exceed 4 minutes; subsequent
-  invocations take seconds.
-- **[OBSERVED]** worktrees of an already-known repository are *not* cold: the 16s worktree run
-  was the first ever in that worktree directory, and it was fast — consistent with project
-  identity being the git root commit (§2.8).
-- **[ASSUMPTION]** the cold cost is one-time per *project* (repository), not per directory.
-- **[UNRESOLVED]** exactly what `init` does. Candidates: SQLite schema/migration work on the
-  293MB `~/.local/share/opencode/opencode.db` (+33MB WAL observed), or first-time index build.
+- **[OBSERVED]** the first invocations against an unseen project exceeded 240s and 90s
+  producing no output; later invocations against the same project took 5–16s.
 
-**Implication for aidev:** the default agent timeout must be generous and configurable
-(`DEFAULT_TASK_TIMEOUT`), and documentation must tell a fresh developer to warm OpenCode once
-against the target repository before relying on short timeouts.
+This was originally attributed to a one-time per-project initialisation, and that attribution
+turned out to be **wrong, or at least unproven**. A later measurement (§7c) found the same
+model taking 3.9s, 66.6s and 100.5s for an identical trivial prompt on an already-warm
+repository. Free-tier latency alone can therefore account for the slow first runs, and "no
+output for 240s" is equally consistent with waiting on a provider, since nothing is printed
+until the model replies.
+
+- **[UNRESOLVED]** whether a per-project initialisation cost exists at all. It may; the
+  evidence that was thought to show it does not separate it from provider latency.
+- **[OBSERVED]** `init` is the last log line before the wait, which is suggestive but not
+  conclusive.
+
+**Implication for aidev, unchanged but for a different reason:** the default agent timeout
+must be generous and configurable (`DEFAULT_TASK_TIMEOUT`). The advice that followed from the
+old explanation — "warm OpenCode against the repository first" — is **not supported** and has
+been removed from the documentation. The useful advice is to choose a model whose latency is
+predictable (§7c).
 
 ### 2.10 Model availability without credentials **[OBSERVED]**
 
@@ -569,6 +577,49 @@ Incidental but confirming: the `build` agent's own permission list begins with
 `{"permission": "*", "action": "allow", "pattern": "*"}`. That is OpenCode stating
 in its configuration what §2.6 observed in behaviour — the default agent is allowed
 everything, so the worktree really is the only boundary.
+
+## 7c. Free model latency: measured, and highly variable **[OBSERVED]**
+
+Measured while investigating why one task took 11 minutes. Same repository (already used by
+several runs), same trivial prompt, no tools, `opencode run --dir <repo> --format json -m <model>
+-- "Reply with exactly OK."`, wall clock around the whole process:
+
+| Model | Run 1 | Run 2 | Run 3 |
+|---|---|---|---|
+| `opencode/muse-spark-1.3-contributor-free` | 3.2s | 3.2s | 3.9s |
+| `opencode/nemotron-3.5-lightning-free` | 66.6s | 100.5s | 3.9s |
+
+`muse-spark-1.3` is consistent. `nemotron-3.5-lightning` varies by a factor of 25 for identical
+work, which is free-tier queueing rather than anything aidev or the prompt controls.
+
+### What this explains
+
+Two real tasks, recorded in aidev's own database:
+
+| Task | Model | Agent time | aidev's own time | Steps | Input tokens |
+|---|---|---|---|---|---|
+| `TASK-000001` Add a Greet function | nemotron-3.5 | **656s** | **0.2s** | 6 | 48,266 |
+| `TASK-000005` Add a Farewell function | muse-1.3 | **9s** | **0.2s** | 5 | 9,565 |
+
+Both produced correct code that passed `go test ./...` and `go vet ./...`.
+
+- **aidev's own contribution is 0.2s.** Worktree creation, diff collection, verification and
+  every database write together are negligible. Any wait a user experiences is the agent.
+- 656s over 6 steps is ~109s per step, which is consistent with the per-call latency measured
+  above. The model accounts for the whole duration without needing a cold-start explanation.
+- The slow run's closing summary was incoherent text mixing several scripts, while the code it
+  wrote was correct. The fast run's summary was accurate English. Summary quality and work
+  quality are independent, which is the clearest available argument for aidev verifying rather
+  than reading the agent's report.
+
+### Consequence
+
+`opencode/muse-spark-1.3-contributor-free` is what the documentation now suggests for a free
+setup: fast, consistent, and correct on these tasks. `OPENCODE_MODEL` remains configurable and
+empty still means "let OpenCode choose".
+
+**[UNRESOLVED]** How either model behaves on tasks substantially larger than "write one small
+function". Two data points on trivial tasks do not generalise, and no claim is made that they do.
 
 ## 8. Reproducing this research
 
