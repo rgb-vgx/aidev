@@ -45,11 +45,12 @@ touch the orchestration layer.
 | 2 | Git worktrees, `AgentBackend`, OpenCode backend, verification, execution | done |
 | 3 | Task CLI | done |
 | 4 | MCP server | done |
-| 5 | Hardening, E2E, docs | not started |
+| 5 | Hardening, E2E, docs | done |
 
-Sections below describing Phase 5 state intent, not implementation. Anything not
-yet built says so. Both surfaces exist: the CLI and the MCP server, which has been
-registered with and connected to the installed Claude Code.
+All five phases are implemented. Both surfaces exist — the CLI, and the MCP server,
+which has been registered with and connected to the installed Claude Code and used
+by it to create and run a task. Everything described below is built; the limitations
+are listed at the end rather than implied.
 
 ## Package layout
 
@@ -441,6 +442,32 @@ without a person asking:
 git log --oneline aidev/TASK-000001
 git diff main..aidev/TASK-000001
 ```
+
+## What the MVP does not do
+
+Stated plainly so that nobody has to infer it from absence.
+
+| Not implemented | Where the seam is |
+|---|---|
+| Automatic retry | attempts are numbered and appended, `max_retries` is stored, the agent session id is recorded, and branch and worktree names already carry the attempt number. Only the `FAILED → READY` edge and a policy are missing. |
+| Concurrent workers | status changes are compare-and-set and `tasks_ready_claim_idx` matches a `FOR UPDATE SKIP LOCKED` claim. A lease would also be needed, so that a crashed worker's task could be reclaimed without a human cancelling it. |
+| Dependency graphs | `PENDING` exists as "not yet eligible"; the eligibility check in `becomeReady` is the hook. |
+| Merging | a successful task leaves a reviewable commit on its own branch. Nothing merges it, by design. |
+| Expiring a stale `RUNNING` task | deliberate, see [Operating it](#when-a-run-is-interrupted). |
+| A second agent backend | `agent.Backend`, plus a server-mode OpenCode option evaluated and documented in docs/research.md §2.8. |
+| A web surface, auth, multi-tenancy | explicit non-goals. aidev is a local-first tool for one operator. |
+
+Known limitations that are not missing features:
+
+- **Behaviour under concurrent `opencode run` invocations against worktrees of the
+  same repository is unverified** (docs/research.md §5 of the unresolved list). The
+  MVP is single-flight per task and does not depend on it; it must be settled before
+  concurrent workers.
+- **A verification pass is bounded per step, not in total.** Worst case is 20 steps ×
+  the step timeout.
+- **Migrations are forward-only.** There are no down migrations.
+- **`aidev_run_task`'s default 120-second wait is a judgement, not a measurement.**
+  The MCP client's own tool timeout was never measured.
 
 ## Failure classification
 
