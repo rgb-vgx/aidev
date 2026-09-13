@@ -35,11 +35,19 @@ test: ## run unit tests (integration tests skip without a database)
 test-integration: ## run every test, including those needing PostgreSQL
 	TEST_DATABASE_URL="$(TEST_DB_URL)" $(GO) test ./... -count=1
 
+# Only the repository's own files. `gofmt -l .` walks ignored directories too,
+# so a cloned upstream repo under .probe/ made `make check` fail on code aidev
+# does not own and must not reformat. --others is needed as well as --cached: an
+# agent's brand-new file is untracked when verification runs, and a gate that
+# skips exactly the files under review is no gate.
+GOFILES = git ls-files -z --cached --others --exclude-standard '*.go'
+
 fmt: ## format all Go code
-	gofmt -w .
+	@$(GOFILES) | xargs -0 --no-run-if-empty gofmt -w
 
 fmt-check: ## fail if any file needs formatting
-	@out=$$(gofmt -l .); if [ -n "$$out" ]; then echo "needs gofmt:"; echo "$$out"; exit 1; fi
+	@out=$$($(GOFILES) | xargs -0 --no-run-if-empty gofmt -l); \
+	if [ -n "$$out" ]; then echo "needs gofmt:"; echo "$$out"; exit 1; fi
 
 vet: ## run go vet
 	$(GO) vet ./...
