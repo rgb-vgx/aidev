@@ -75,6 +75,82 @@ func TestFromEnvRejectsOutOfRangeSampleRatio(t *testing.T) {
 	}
 }
 
+// The base endpoint carries no signal path per the OpenTelemetry specification,
+// so FromEnv must append /v1/traces; the signal-specific variable is already
+// complete and wins verbatim.
+func TestFromEnvResolvesTracesEndpoint(t *testing.T) {
+	tests := []struct {
+		name          string
+		env           map[string]string
+		wantEnabled   bool
+		wantEndpoint  string
+		wantTracesURL string
+	}{
+		{
+			name:          "base with path gains signal path",
+			env:           map[string]string{"OTEL_EXPORTER_OTLP_ENDPOINT": "http://host:3000/api/public/otel"},
+			wantEnabled:   true,
+			wantEndpoint:  "http://host:3000/api/public/otel",
+			wantTracesURL: "http://host:3000/api/public/otel/v1/traces",
+		},
+		{
+			name:          "base with trailing slash avoids double slash",
+			env:           map[string]string{"OTEL_EXPORTER_OTLP_ENDPOINT": "http://host:3000/api/public/otel/"},
+			wantEnabled:   true,
+			wantEndpoint:  "http://host:3000/api/public/otel/",
+			wantTracesURL: "http://host:3000/api/public/otel/v1/traces",
+		},
+		{
+			name:          "base without path gains signal path",
+			env:           map[string]string{"OTEL_EXPORTER_OTLP_ENDPOINT": "http://host:4318"},
+			wantEnabled:   true,
+			wantEndpoint:  "http://host:4318",
+			wantTracesURL: "http://host:4318/v1/traces",
+		},
+		{
+			name: "signal-specific endpoint wins verbatim",
+			env: map[string]string{
+				"OTEL_EXPORTER_OTLP_ENDPOINT":        "http://host:3000/api/public/otel",
+				"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://other:4318/custom/path",
+			},
+			wantEnabled:   true,
+			wantEndpoint:  "http://host:3000/api/public/otel",
+			wantTracesURL: "http://other:4318/custom/path",
+		},
+		{
+			name:          "signal-specific endpoint alone enables tracing",
+			env:           map[string]string{"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://other:4318/v1/traces"},
+			wantEnabled:   true,
+			wantEndpoint:  "",
+			wantTracesURL: "http://other:4318/v1/traces",
+		},
+		{
+			name:          "base query and fragment are preserved",
+			env:           map[string]string{"OTEL_EXPORTER_OTLP_ENDPOINT": "http://host:3000/api/public/otel?key=1#frag"},
+			wantEnabled:   true,
+			wantEndpoint:  "http://host:3000/api/public/otel?key=1#frag",
+			wantTracesURL: "http://host:3000/api/public/otel/v1/traces?key=1#frag",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := FromEnv(lookupFor(tt.env))
+			if err != nil {
+				t.Fatalf("FromEnv: %v", err)
+			}
+			if cfg.Enabled != tt.wantEnabled {
+				t.Fatalf("Enabled = %v, want %v", cfg.Enabled, tt.wantEnabled)
+			}
+			if cfg.Endpoint != tt.wantEndpoint {
+				t.Fatalf("Endpoint = %q, want %q", cfg.Endpoint, tt.wantEndpoint)
+			}
+			if cfg.TracesEndpoint != tt.wantTracesURL {
+				t.Fatalf("TracesEndpoint = %q, want %q", cfg.TracesEndpoint, tt.wantTracesURL)
+			}
+		})
+	}
+}
+
 // A disabled tracer must still produce usable spans so call sites need no
 // enabled-check before instrumenting.
 func TestStartDisabledReturnsNoopTracer(t *testing.T) {
