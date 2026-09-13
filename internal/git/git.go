@@ -282,7 +282,17 @@ func (w *Worktree) Diff(ctx context.Context) (Diff, error) {
 		return Diff{}, fmt.Errorf("stage intent-to-add in %s: %s", w.Path, firstLine(res.Stderr))
 	}
 
-	patchRes, err := w.m.run(ctx, w.Path, env, "diff", "--no-color")
+	// A diff against the index loses work the agent committed, when the index
+	// matches the files. Comparing against the base commit keeps it in the
+	// record (docs/research.md 7e).
+	patchArgs := []string{"diff", "--no-color"}
+	statArgs := []string{"diff", "--numstat"}
+	if strings.TrimSpace(w.BaseCommit) != "" {
+		patchArgs = append(patchArgs, w.BaseCommit)
+		statArgs = append(statArgs, w.BaseCommit)
+	}
+
+	patchRes, err := w.m.run(ctx, w.Path, env, patchArgs...)
 	if err != nil {
 		return Diff{}, err
 	}
@@ -290,7 +300,7 @@ func (w *Worktree) Diff(ctx context.Context) (Diff, error) {
 		return Diff{}, fmt.Errorf("git diff in %s: %s", w.Path, firstLine(patchRes.Stderr))
 	}
 
-	statRes, err := w.m.run(ctx, w.Path, env, "diff", "--numstat")
+	statRes, err := w.m.run(ctx, w.Path, env, statArgs...)
 	if err != nil {
 		return Diff{}, err
 	}
