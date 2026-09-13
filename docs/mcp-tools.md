@@ -16,21 +16,23 @@ launches the server itself, so they must be given to the registration rather tha
 exported in your shell:
 
 ```bash
-make build
-
-claude mcp add --scope local aidev \
-  -e DATABASE_URL='postgres://aidev:aidev@127.0.0.1:5434/aidev?sslmode=disable' \
-  -e WORKSPACE_ROOT="$HOME/.local/share/aidev/worktrees" \
-  -- "$PWD/bin/aidev" mcp
+make install                                          # aidev on your PATH
+claude mcp add --scope user aidev -- "$(go env GOPATH)/bin/aidev" mcp
 
 claude mcp list
-# aidev: /path/to/bin/aidev mcp - ✔ Connected
+# aidev: /home/you/go/bin/aidev mcp - ✔ Connected
 ```
 
-`--scope local` keeps the registration private to you in this project, in
-`~/.claude.json`. Use `--scope project` to write a shareable `.mcp.json` in the
-repository root instead; a project-scoped server needs a one-time approval in the
+**`--scope user` is the one to use.** It registers aidev for every project, which
+is how it is meant to be used: open Claude Code in whatever repository you are
+working on, and delegate from there. `--scope local` confines the registration to
+one project directory — useful only for trying it out. `--scope project` writes a
+shareable `.mcp.json` in a repository root, and needs a one-time approval in the
 Claude Code UI before it is connected to.
+
+Nothing secret goes on the registration. aidev reads its own configuration from
+`~/.config/aidev/config.env`, so `~/.claude.json` holds no connection string and the
+registration is the same on every machine.
 
 The `.mcp.json` form, if you prefer to write it by hand:
 

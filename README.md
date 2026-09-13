@@ -322,19 +322,21 @@ This is what aidev is for: Claude Code plans and reviews, aidev isolates, runs a
 verifies.
 
 ```bash
-make build
-
-claude mcp add --scope local aidev \
-  -e DATABASE_URL='postgres://aidev:aidev@127.0.0.1:5434/aidev?sslmode=disable' \
-  -e WORKSPACE_ROOT="$HOME/.local/share/aidev/worktrees" \
-  -- "$PWD/bin/aidev" mcp
+make install                                          # aidev on your PATH
+claude mcp add --scope user aidev -- "$(go env GOPATH)/bin/aidev" mcp
 
 claude mcp list
-# aidev: /path/to/bin/aidev mcp - ✔ Connected
+# aidev: /home/you/go/bin/aidev mcp - ✔ Connected
 ```
 
-Claude Code launches the server itself, so the environment goes on the
-registration rather than in your shell. Eight tools become available:
+**Use `--scope user`.** It registers aidev for every project, which is the point:
+you open Claude Code in whatever repository you are working on and delegate from
+there. `--scope local` would confine it to one project directory, and `--scope
+project` writes a shareable `.mcp.json` that each person must approve once.
+
+No credentials go on the registration. aidev reads
+`~/.config/aidev/config.env` itself, so `~/.claude.json` holds no connection
+string. Eight tools become available:
 
 | Tool | Purpose |
 |---|---|
@@ -350,6 +352,18 @@ A run takes minutes, so `aidev_run_task` waits a bounded time and then returns w
 `still_running: true` while the task continues; the planner polls
 `aidev_get_task_result`. The field to read is `succeeded`, which is true only when
 aidev's own verification passed.
+
+Two things to know before delegating work in a real repository.
+
+**Tell the agent which verification command fits.** In a monorepo, `go test ./...`
+from the root is rarely the right check. Name the one that actually covers the
+change: `--verify 'go test ./backend/...'`, or a service's own test command.
+
+**The worktree is a clean checkout: only tracked files.** Dependencies that live
+outside git are not there. `go test` is fine, because the module cache is shared,
+but `npm test` or `pytest` will fail in a fresh worktree unless the task's
+verification installs what it needs first — for example
+`--verify 'npm --prefix web ci'` before `--verify 'npm --prefix web test'`.
 
 Full schemas, errors and side effects: **[docs/mcp-tools.md](docs/mcp-tools.md)**.
 
