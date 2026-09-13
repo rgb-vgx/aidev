@@ -64,6 +64,11 @@ func Run(ctx context.Context, version string, args []string, stdout, stderr io.W
 			summary: "create, inspect and run tasks",
 			run:     runTask,
 		},
+		"mcp": {
+			name:    "mcp",
+			summary: "run the MCP server on stdio, for Claude Code",
+			run:     runMCPServer,
+		},
 	}
 
 	if len(args) == 0 {
