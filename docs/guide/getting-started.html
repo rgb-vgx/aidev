@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Getting started with aidev: from nothing to a finished task</title>
+<link rel="stylesheet" href="guide.css">
+</head>
+<body>
+<nav class="breadcrumb"><a href="index.html">Guide</a> · <a href="getting-started.html">Getting started</a> · <a href="debugging.html">Debugging</a> · <a href="reference.html">Reference</a></nav>
+<main>
+<h1>Getting started: from nothing to a finished task</h1>
+
+<p>This page takes you from an empty machine to a finished task. Follow it in order. Each step shows the full command, what success looks like, and what to do when it fails.</p>
+
+<div class="notice"><strong>Keep the one rule in view:</strong> aidev runs the agent in an isolated git worktree, then runs the task's own verification commands itself, and only those commands can move a task to SUCCEEDED. The agent saying the work is done changes nothing. Everything you do below is preparation for that moment of verification.</div>
+
+<section id="prerequisites">
+<h2>Prerequisites: what you need, and how to check each one</h2>
+
+<p>A <strong>prerequisite</strong> is something that must already be installed before you begin. Here each one comes with a check command. Run the check. If the check fails, fix that item before moving on. Do not skip checks: almost every confusing failure later is really a missing prerequisite.</p>
+
+<table>
+<tr><th>You need</th><th>Why</th><th>How to check</th><th>If it fails</th></tr>
+<tr><td>Go, version 1.25 or newer</td><td>aidev is written in Go, and the MCP library requires a recent Go.</td><td><code>go version</code></td><td>Install Go from your system package manager or the Go website. With Go 1.24 the toolchain downloads a newer one automatically, but that needs network access.</td></tr>
+<tr><td>git, version 2.23 or newer</td><td>Every task runs in a git worktree, which is a git feature.</td><td><code>git --version</code></td><td>Install git with your package manager, then run the check again.</td></tr>
+<tr><td>Docker with Compose</td><td>PostgreSQL runs in a container for local development.</td><td><code>docker compose version</code></td><td>Install Docker Desktop or the Docker engine plus the compose plugin, then make sure the Docker service is running.</td></tr>
+<tr><td>OpenCode, version 1.18 or newer</td><td>OpenCode is the agent that writes the code. You need it to run real tasks.</td><td><code>opencode --version</code></td><td>Install OpenCode and make sure the <code>opencode</code> program is on your <code>PATH</code>, or set <code>OPENCODE_COMMAND</code> to its location. No API key is needed for the public <code>opencode/*</code> models.</td></tr>
+</table>
+
+<p>Run all four checks now, in full:</p>
+
+<pre><code>go version
+# want: go1.25 or newer, for example: go version go1.26.8 linux/amd64
+
+git --version
+# want: git version 2.43.0 or similar (anything 2.23 or newer)
+
+docker compose version
+# want: Docker Compose version v5.5.1 or similar
+
+opencode --version
+# want: 1.18.30 or similar (anything 1.18 or newer)</code></pre>
+
+<p>A note on words: <code>PATH</code> is the list of directories your shell searches when you type a program name. If a program is "on your PATH", you can run it by name from anywhere. <code>HOME</code> is your home directory. A <strong>container</strong> is a lightweight isolated process managed by Docker; here it just means "PostgreSQL runs inside Docker so you do not have to install it".</p>
+</section>
+
+<section id="install">
+<h2>Install: building aidev</h2>
+
+<p><strong>Building</strong> means turning the source code into a runnable program. Get the repository first, then build it.</p>
+
+<pre><code>git clone &lt;this repository&gt; aidev
+cd aidev
+make build
+# produces bin/aidev</code></pre>
+
+<p>What success looks like: the last command finishes with no error, and <code>bin/aidev</code> exists. Check with:</p>
+
+<pre><code>ls bin/aidev
+./bin/aidev version
+# want: aidev &lt;version&gt;, for example: aidev dev</code></pre>
+
+<p>If <code>make build</code> fails, read the error. A missing Go installation says <code>go: command not found</code>. A network problem during the toolchain download says something about fetching the toolchain. Fix the named problem and run <code>make build</code> again. It is safe to repeat.</p>
+
+<p>If you prefer the program on your PATH so you can type <code>aidev</code> from any directory:</p>
+
+<pre><code>make install
+# runs: go install ./cmd/aidev</code></pre>
+
+<p>This guide uses <code>aidev</code> from here on. If you did not install it, type <code>./bin/aidev</code> wherever you see <code>aidev</code>.</p>
+</section>
+
+<section id="database">
+<h2>Database: starting PostgreSQL and applying migrations</h2>
+
+<p><strong>PostgreSQL</strong> is the database where aidev keeps everything. A <strong>migration</strong> is a versioned SQL file that creates or changes the database tables. Applying migrations means running those files in order so the database schema matches what the program expects. Migrations are embedded in the aidev program itself, so there is no separate migration tool to install.</p>
+
+<p>Start PostgreSQL:</p>
+
+<pre><code>make db-up
+# starts PostgreSQL and waits until it is healthy</code></pre>
+
+<p>What success looks like: the command waits a few seconds and reports a healthy container. What the command does: it starts a PostgreSQL container that listens on your machine at <code>127.0.0.1:5434</code>. That address means "this computer, port 5434". The port is 5434 rather than the usual 5432 because 5432 and 5433 were already taken on the machine where aidev was developed. If 5434 is taken on your machine too, override it:</p>
+
+<pre><code>AIDEV_DB_PORT=5440 make db-up</code></pre>
+
+<p>If <code>make db-up</code> fails, the usual causes are: Docker is not running (start it and try again), or the port is already in use (pick another port as shown above). The error names the cause. Fix it and repeat the command. It is safe to repeat.</p>
+
+<p>Next, configure the connection and apply the schema. A <strong>connection string</strong> is a single line of text that tells a program how to reach a database: who to log in as, where, and with what options.</p>
+
+<pre><code>cp .env.example .env
+export DATABASE_URL='postgres://aidev:aidev@127.0.0.1:5434/aidev?sslmode=disable'
+aidev migrate
+# want: "database is up to date (N migrations)" or a list of "applied ..." lines</code></pre>
+
+<p>Why each line matters. The first copies the example environment file. Edit <code>.env</code> if you changed the port. The second sets <code>DATABASE_URL</code> in your current shell. The third applies pending migrations. <code>aidev migrate</code> is idempotent, which means running it twice is harmless: the second run finds nothing to do and says the database is up to date.</p>
+
+<p>If <code>aidev migrate</code> says the configuration is invalid, it names the variable. If it cannot connect, check that <code>make db-up</code> is still running and that the port in <code>DATABASE_URL</code> matches the port the database actually listens on. If you edited a migration file that was already applied, the migrator refuses to start and tells you: never edit an applied migration; add a new one instead.</p>
+</section>
+
+<section id="configuration">
+<h2>Configuration: the environment variables that matter</h2>
+
+<p>aidev reads its configuration from <strong>environment variables</strong>. An environment variable is a named value attached to your shell session, like <code>DATABASE_URL</code> above. Only one part of aidev reads them, and it validates everything at startup and reports every problem at once, instead of failing halfway through a task.</p>
+
+<table>
+<tr><th>Variable</th><th>Default</th><th>What it does</th><th>What happens if it is wrong</th></tr>
+<tr><td><code>DATABASE_URL</code></td><td>none: required</td><td>How aidev reaches PostgreSQL.</td><td>Every command that touches the database fails at startup with a message naming <code>DATABASE_URL</code>. Nothing runs.</td></tr>
+<tr><td><code>WORKSPACE_ROOT</code></td><td><code>$XDG_DATA_HOME/aidev/worktrees</code> or <code>~/.local/share/aidev/worktrees</code></td><td>The directory under which every task worktree is created. Every worktree must resolve inside it.</td><td>Task runs fail because the isolation directory cannot be prepared. The error names the path.</td></tr>
+<tr><td><code>DEFAULT_TASK_TIMEOUT</code></td><td><code>30m</code></td><td>How long one agent run may take before aidev stops it.</td><td>Too short and slow models get killed mid-work. The default is generous on purpose: a first run against a new repository was measured taking over four minutes before producing output.</td></tr>
+<tr><td><code>OPENCODE_MODEL</code></td><td><code>opencode/muse-spark-1.3-contributor-free</code></td><td>Which model OpenCode uses. Set it to an empty string to let OpenCode choose.</td><td>An unknown model makes the agent fail, which fails the task. The public default needs no credentials.</td></tr>
+<tr><td><code>LOG_LEVEL</code></td><td><code>info</code></td><td>How much log detail aidev emits: <code>debug</code>, <code>info</code>, <code>warn</code>, or <code>error</code>.</td><td>An unknown value fails startup. Too quiet and you lose diagnosis; too loud and the signal drowns.</td></tr>
+</table>
+
+<p>The full list, with every default, is on the <a href="reference.html#environment">reference page</a>. To see exactly what aidev resolved, with the database password redacted:</p>
+
+<pre><code>aidev config
+aidev config --json</code></pre>
+
+<p>What success looks like: a table of settings with your values. The database password shows as redacted. If <code>aidev config</code> reports an error, it lists every problem. Fix them all, then run it again. A misconfiguration fails here, at startup, rather than surfacing halfway through a task, which is the point of the command.</p>
+</section>
+
+<section id="first-task">
+<h2>First task: a worked example on a throwaway repository</h2>
+
+<p>Now the real thing. You will make a small practice repository whose test fails until the work is done, then ask aidev to do the work. A <strong>throwaway repository</strong> is a scratch project you can delete afterwards. Using one keeps your first run away from real code.</p>
+
+<p>Why this shape of example: a task needs a verification command that fails before the work and passes after it. That is what proves verification is doing the deciding. A failing test is the honest starting point.</p>
+
+<p>Step 1. Make the throwaway repository. A <strong>module</strong> here just means a small Go project. These commands create a directory, start a git repository in it, and add a test that cannot pass yet because the function it tests does not exist.</p>
+
+<pre><code>mkdir -p /tmp/aidev-demo
+cd /tmp/aidev-demo
+git init -b main
+go mod init demo
+cat &gt; greet_test.go &lt;&lt;EOF
+package main
+
+import "testing"
+
+func TestGreet(t *testing.T) {
+    if Greet("Ada") != "Hello, Ada" {
+        t.Fatalf("Greet returned the wrong string")
+    }
+}
+EOF
+go test ./...
+# want: FAIL, something like: undefined: Greet
+# that failure is the point: the test fails until the work is done</code></pre>
+
+<p>If <code>go test ./...</code> passes here, something is off: you may already have a <code>greet.go</code> file in the directory. Remove it and run the test again. You want a failing test.</p>
+
+<p>Step 2. Create the task. The <code>--verify</code> flag gives one verification command. Repeat it for more than one. At least one is required: a task aidev cannot check is a task aidev will not accept.</p>
+
+<pre><code>cd /tmp/aidev-demo
+aidev task create \
+  --title "Add a Greet function" \
+  --description "Create greet.go with Greet(name string) string returning Hello plus name" \
+  --verify 'go test ./...' \
+  --verify 'go vet ./...'
+# want: created TASK-000001  Add a Greet function
+#           run it with: aidev task run TASK-000001</code></pre>
+
+<p>What the flags mean: <code>--title</code> is one short line stating what to do. <code>--description</code> is the full instruction the agent will read. Each <code>--verify</code> is one command aidev will run itself, without a shell, to decide the outcome. The reference you get back, like <code>TASK-000001</code>, is how you name the task from now on.</p>
+
+<p>If creation fails with a message about verification, you forgot <code>--verify</code>. If it complains the path is not a git repository, check you are inside <code>/tmp/aidev-demo</code> and that <code>git status</code> works there.</p>
+
+<p>Step 3. Run it:</p>
+
+<pre><code>aidev task run TASK-000001</code></pre>
+
+<p>How long this takes: minutes, not seconds. Most of the wait is the model thinking, not aidev. aidev's own share of a run, worktree plus diff plus verification plus every database write, was measured at about 0.2 seconds against agent times of 9 to 656 seconds. The default model is the fast and consistent one, but free-tier latency varies. If it takes ten minutes, that is the model, not a bug. While it runs, you can watch the event log from another terminal, as described on the <a href="debugging.html#events">debugging page</a>.</p>
+
+<p>If the command is interrupted with Ctrl-C, the task is cancelled and the worktree is kept. That is safe. See <a href="debugging.html#recovery">recovery</a> for what to do next.</p>
+</section>
+
+<section id="reading-the-result">
+<h2>Reading the result</h2>
+
+<p>When the run finishes, it tells you the outcome. A success looks like this:</p>
+
+<pre><code>TASK-000001 succeeded: 2/2 verification steps passed, work committed on aidev/TASK-000001
+
+agent (opencode)
+  outcome       SUCCEEDED
+  changed files 1
+  took          10m56s
+
+verification (run by aidev)
+  PASSED    go test ./...
+  PASSED    go vet ./...</code></pre>
+
+<p>Read it in two halves. The agent half says what the agent did and what it claimed. The verification half says what aidev established itself. Only the second half decides. <code>aidev task run</code> exits with status zero on success and non-zero when the task did not succeed, so <code>aidev task run TASK-000001 &amp;&amp; ./deploy.sh</code> behaves the way a shell user expects: the second command runs only if the task succeeded.</p>
+
+<p>A failure looks like this instead:</p>
+
+<pre><code>TASK-000002 FAILED (VERIFICATION): verification did not pass: 0/1 steps passed
+
+agent (opencode)
+  outcome       SUCCEEDED
+  changed files 0
+  says          Done! I implemented the function and all tests pass.
+
+verification (run by aidev)
+  FAILED    go test ./...  (exit 1)
+
+the work was kept for inspection</code></pre>
+
+<p>Notice the agent half: it claims success. Notice the verification half: the check failed. The task is FAILED, because only verification decides. This is the one rule in action. The agent's words are recorded because they help diagnosis. They are never evidence.</p>
+
+<p>Two commands show you more whenever you need it:</p>
+
+<pre><code>aidev task result TASK-000001
+aidev task result TASK-000001 --logs</code></pre>
+
+<p>The first shows the outcome of the latest attempt: status, timing, per-step verification results, and where the work is. The second adds the agent transcript, the diff, and the full verification output. A failing step's output is included even without <code>--logs</code>, trimmed to the last 2000 bytes, because it is the first thing anyone needs.</p>
+</section>
+
+<section id="where-the-work-is">
+<h2>Where the work ends up, and how to review the branch with git</h2>
+
+<p>On success, aidev commits the agent's work to the task's own branch and removes the worktree. The branch is named after the task reference, for example <code>aidev/TASK-000001</code>. Nothing is merged into your branch. Nothing is ever committed to your working branch. Your own checkout stays clean.</p>
+
+<p>Review the result with ordinary git commands. <code>git log</code> lists commits. <code>git diff</code> shows what changed between two branches.</p>
+
+<pre><code>cd /tmp/aidev-demo
+git log --oneline aidev/TASK-000001
+git diff main..aidev/TASK-000001
+go clean -testcache &amp;&amp; go test ./...
+# run the test yourself on your own checkout of the branch:
+# it should pass, because verification already passed in the worktree</code></pre>
+
+<p>On failure, the worktree is kept exactly as the agent left it, under <code>WORKSPACE_ROOT</code>, and recorded as RETAINED. That is deliberate: partial work is often the most useful thing about a failure. Find it with <code>aidev worktree list</code>, inspect it, and remove it only when you are done. The <a href="debugging.html#worktrees">debugging page</a> walks through that.</p>
+
+<p>When you are finished with the demo, delete the throwaway directory. Then continue with the <a href="index.html">guide index</a>, the <a href="debugging.html">debugging page</a> for everything that can go wrong, and the <a href="reference.html">reference page</a> for the complete flag and variable lists.</p>
+
+<pre><code>cd /tmp
+rm -rf /tmp/aidev-demo
+aidev task list
+# your demo task is still in PostgreSQL: the record outlives the directory</code></pre>
+</section>
+</main>
+</body>
+</html>

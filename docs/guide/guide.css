@@ -1,0 +1,149 @@
+/* aidev guide stylesheet. No external fonts, no network, no JavaScript. */
+
+:root {
+  --bg: #ffffff;
+  --fg: #1a1a1a;
+  --muted: #5a5a5a;
+  --accent: #1a5fb4;
+  --code-bg: #f3f1ec;
+  --code-fg: #1a1a1a;
+  --border: #d8d4cc;
+  --table-head: #efece5;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1b1b1e;
+    --fg: #e8e6e1;
+    --muted: #b3aca0;
+    --accent: #7fb3e8;
+    --code-bg: #26262b;
+    --code-fg: #e8e6e1;
+    --border: #4a4a52;
+    --table-head: #2c2c32;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 100%;
+}
+
+body {
+  margin: 0;
+  padding: 0 1rem 4rem;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: Georgia, "Times New Roman", serif;
+  line-height: 1.7;
+}
+
+main {
+  max-width: 46rem;
+  margin: 0 auto;
+}
+
+nav.breadcrumb {
+  max-width: 46rem;
+  margin: 0 auto;
+  padding: 1rem 0;
+  font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+nav.breadcrumb a {
+  color: var(--accent);
+}
+
+h1, h2, h3 {
+  font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  line-height: 1.3;
+}
+
+h1 {
+  font-size: 2rem;
+  border-bottom: 2px solid var(--border);
+  padding-bottom: 0.5rem;
+}
+
+h2 {
+  font-size: 1.4rem;
+  margin-top: 2.5rem;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.3rem;
+}
+
+h3 {
+  font-size: 1.1rem;
+  margin-top: 1.8rem;
+}
+
+p, li {
+  font-size: 1.02rem;
+}
+
+a {
+  color: var(--accent);
+}
+
+code {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 0.92em;
+  background: var(--code-bg);
+  color: var(--code-fg);
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+}
+
+pre {
+  background: var(--code-bg);
+  color: var(--code-fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1rem;
+  overflow-x: auto;
+  line-height: 1.5;
+}
+
+pre code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0 1.5rem;
+  font-size: 0.95rem;
+  font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+}
+
+th, td {
+  border: 1px solid var(--border);
+  padding: 0.5rem 0.7rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+th {
+  background: var(--table-head);
+}
+
+.notice {
+  border-left: 4px solid var(--accent);
+  padding: 0.7rem 1rem;
+  margin: 1.2rem 0;
+  background: var(--code-bg);
+  font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 0.95rem;
+}
+
+.diagram {
+  white-space: pre;
+  overflow-x: auto;
+}
