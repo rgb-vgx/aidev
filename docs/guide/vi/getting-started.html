@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bắt đầu với aidev: từ con số không tới task đầu tiên</title>
+<link rel="stylesheet" href="../guide.css">
+</head>
+<body>
+<nav class="breadcrumb"><a href="index.html">Hướng dẫn</a> · <a href="getting-started.html">Bắt đầu</a> · <a href="debugging.html">Gỡ lỗi</a> · <a href="reference.html">Tra cứu</a></nav>
+<nav class="lang-switch"><a href="../getting-started.html">English</a></nav>
+<main>
+<h1>Bắt đầu: từ con số không tới một task hoàn chỉnh</h1>
+
+<p>Trang này đưa bạn từ một máy trống trơn tới một task chạy xong. Hãy làm theo đúng thứ tự. Mỗi bước đều có lệnh đầy đủ, mô tả kết quả đúng trông ra sao, và cách xử lý khi gặp lỗi.</p>
+
+<div class="notice"><strong>Nhớ quy tắc duy nhất:</strong> aidev chạy agent trong một worktree git tách biệt, rồi tự chạy các lệnh verification của task, và chỉ các lệnh đó mới được đưa task sang SUCCEEDED. Agent nói công việc đã xong cũng không thay đổi điều gì. Mọi thứ bạn làm dưới đây đều là chuẩn bị cho khoảnh khắc verification đó.</div>
+
+<section id="prerequisites">
+<h2>Điều kiện cần: những gì phải có, và cách kiểm tra từng thứ</h2>
+
+<p><strong>Điều kiện cần</strong> là thứ phải cài sẵn trước khi bắt đầu. Mỗi thứ dưới đây đều kèm lệnh kiểm tra. Hãy chạy lệnh kiểm tra, nếu hỏng thì sửa xong rồi mới đi tiếp. Đừng bỏ qua bước kiểm tra: hầu hết lỗi khó hiểu về sau thực chất chỉ là thiếu một điều kiện cần.</p>
+
+<table>
+<tr><th>Bạn cần</th><th>Để làm gì</th><th>Kiểm tra thế nào</th><th>Nếu hỏng thì sao</th></tr>
+<tr><td>Go, bản 1.25 trở lên</td><td>aidev viết bằng Go, và thư viện MCP đòi Go bản mới.</td><td><code>go version</code></td><td>Cài Go từ trình quản lý gói của hệ điều hành hoặc trang chủ Go. Với Go 1.24, toolchain sẽ tự tải bản mới hơn, nhưng việc đó cần mạng.</td></tr>
+<tr><td>git, bản 2.23 trở lên</td><td>Mỗi task chạy trong một worktree git, vốn là một tính năng của git.</td><td><code>git --version</code></td><td>Cài git bằng trình quản lý gói rồi chạy lại lệnh kiểm tra.</td></tr>
+<tr><td>Docker kèm Compose</td><td>PostgreSQL chạy trong container khi phát triển trên máy cá nhân.</td><td><code>docker compose version</code></td><td>Cài Docker Desktop hoặc Docker engine kèm plugin compose, rồi chắc chắn dịch vụ Docker đang chạy.</td></tr>
+<tr><td>OpenCode, bản 1.18 trở lên</td><td>OpenCode là agent viết code. Muốn chạy task thật thì phải có nó.</td><td><code>opencode --version</code></td><td>Cài OpenCode và chắc chắn chương trình <code>opencode</code> nằm trên <code>PATH</code>, hoặc đặt <code>OPENCODE_COMMAND</code> trỏ tới chỗ nó nằm. Các model <code>opencode/*</code> công khai không cần API key.</td></tr>
+</table>
+
+<p>Chạy cả bốn lệnh kiểm tra ngay bây giờ, đầy đủ:</p>
+
+<pre><code>go version
+# want: go1.25 or newer, for example: go version go1.26.8 linux/amd64
+
+git --version
+# want: git version 2.43.0 or similar (anything 2.23 or newer)
+
+docker compose version
+# want: Docker Compose version v5.5.1 or similar
+
+opencode --version
+# want: 1.18.30 or similar (anything 1.18 or newer)</code></pre>
+
+<p>Giải thích vài từ: <code>PATH</code> là danh sách thư mục mà shell lục tìm mỗi khi bạn gõ tên một chương trình. Chương trình "nằm trên PATH" nghĩa là bạn gõ tên nó ở đâu cũng chạy. <code>HOME</code> là thư mục nhà của bạn. <strong>container</strong> là một tiến trình cách ly nhẹ do Docker quản lý; ở đây chỉ cần hiểu là "PostgreSQL chạy trong Docker nên bạn khỏi phải cài trực tiếp".</p>
+</section>
+
+<section id="install">
+<h2>Cài đặt: biên dịch aidev</h2>
+
+<p><strong>Biên dịch</strong> nghĩa là biến mã nguồn thành chương trình chạy được. Lấy kho mã về trước, rồi biên dịch.</p>
+
+<pre><code>git clone &lt;this repository&gt; aidev
+cd aidev
+make build
+# produces bin/aidev</code></pre>
+
+<p>Dấu hiệu thành công: lệnh cuối kết thúc không lỗi, và tập tin <code>bin/aidev</code> tồn tại. Kiểm tra bằng:</p>
+
+<pre><code>ls bin/aidev
+./bin/aidev version
+# want: aidev &lt;version&gt;, for example: aidev dev</code></pre>
+
+<p>Nếu <code>make build</code> hỏng, hãy đọc thông báo lỗi. Thiếu Go thì nó báo <code>go: command not found</code>. Lỗi mạng khi tải toolchain thì báo gì đó về fetching toolchain. Sửa đúng lỗi được nêu rồi chạy lại <code>make build</code>. Chạy lại thoải mái, không sao cả.</p>
+
+<p>Nếu muốn gõ <code>aidev</code> ở thư mục nào cũng được, tức là đưa chương trình lên PATH:</p>
+
+<pre><code>make install
+# runs: go install ./cmd/aidev</code></pre>
+
+<p>Từ đây hướng dẫn sẽ viết <code>aidev</code>. Nếu bạn không cài theo cách đó thì chỗ nào thấy <code>aidev</code> hãy gõ <code>./bin/aidev</code>.</p>
+</section>
+
+<section id="database">
+<h2>Cơ sở dữ liệu: khởi động PostgreSQL và chạy migration</h2>
+
+<p><strong>PostgreSQL</strong> là nơi aidev cất mọi thứ. <strong>Migration</strong> là tập tin SQL có đánh phiên bản, dùng để tạo hoặc sửa các bảng trong cơ sở dữ liệu. Chạy migration nghĩa là thực thi các tập tin đó theo thứ tự để cấu trúc cơ sở dữ liệu khớp với những gì chương trình mong đợi. Migration được nhúng sẵn trong chính chương trình aidev nên bạn không cần cài thêm công cụ migration nào.</p>
+
+<p>Khởi động PostgreSQL:</p>
+
+<pre><code>make db-up
+# starts PostgreSQL and waits until it is healthy</code></pre>
+
+<p>Dấu hiệu thành công: lệnh chờ vài giây rồi báo container đã khỏe. Lệnh này làm gì: nó khởi động một container PostgreSQL lắng nghe trên máy bạn ở <code>127.0.0.1:5434</code>. Địa chỉ đó nghĩa là "chính máy này, cổng 5434". Cổng là 5434 chứ không phải 5432 như thường lệ, vì 5432 và 5433 đã bị chiếm trên máy phát triển aidev. Nếu 5434 trên máy bạn cũng bị chiếm thì đổi cổng:</p>
+
+<pre><code>AIDEV_DB_PORT=5440 make db-up</code></pre>
+
+<p>Nếu <code>make db-up</code> hỏng thì thường do hai nguyên nhân: Docker chưa chạy (bật Docker lên rồi thử lại), hoặc cổng đã có chương trình khác dùng (chọn cổng khác như trên). Thông báo lỗi sẽ nêu rõ nguyên nhân. Sửa rồi chạy lại lệnh, chạy lại thoải mái.</p>
+
+<p>Tiếp theo, cấu hình kết nối rồi áp cấu trúc bảng. <strong>Chuỗi kết nối</strong> là một dòng chữ duy nhất cho chương trình biết cách tới cơ sở dữ liệu: đăng nhập tên gì, ở đâu, kèm tùy chọn gì.</p>
+
+<pre><code>cp .env.example .env
+export DATABASE_URL='postgres://aidev:aidev@127.0.0.1:5434/aidev?sslmode=disable'
+aidev migrate
+# want: "database is up to date (N migrations)" or a list of "applied ..." lines</code></pre>
+
+<p>Vì sao mỗi dòng quan trọng. Dòng đầu sao chép tập tin môi trường mẫu. Nếu đổi cổng thì sửa <code>.env</code> cho khớp. Dòng thứ hai đặt <code>DATABASE_URL</code> cho shell hiện tại. Dòng thứ ba áp các migration còn thiếu. <code>aidev migrate</code> có tính lũy đẳng, tức là chạy hai lần cũng không sao: lần thứ hai chẳng còn gì để làm và nó báo cơ sở dữ liệu đã cập nhật.</p>
+
+<p>Nếu <code>aidev migrate</code> báo cấu hình không hợp lệ thì nó sẽ nêu tên biến. Nếu không kết nối được thì kiểm tra xem <code>make db-up</code> còn chạy không, và cổng trong <code>DATABASE_URL</code> có khớp với cổng cơ sở dữ liệu đang nghe không. Nếu bạn sửa một tập tin migration đã áp rồi thì bộ migrator sẽ từ chối khởi động và nói rõ: đừng bao giờ sửa migration đã áp, hãy thêm migration mới.</p>
+</section>
+
+<section id="configuration">
+<h2>Cấu hình: các biến môi trường quan trọng</h2>
+
+<p>aidev đọc cấu hình từ <strong>biến môi trường</strong>. Biến môi trường là một giá trị có tên gắn với phiên shell của bạn, như <code>DATABASE_URL</code> ở trên. Chỉ một bộ phận của aidev đọc chúng, và nó kiểm tra mọi thứ ngay khi khởi động rồi báo hết mọi lỗi một lúc, thay vì chạy nửa chừng mới đổ vỡ.</p>
+
+<table>
+<tr><th>Biến</th><th>Mặc định</th><th>Dùng để làm gì</th><th>Sai thì chuyện gì xảy ra</th></tr>
+<tr><td><code>DATABASE_URL</code></td><td>không có: bắt buộc</td><td>Cách aidev tới được PostgreSQL.</td><td>Mọi lệnh đụng tới cơ sở dữ liệu đều chết ngay khi khởi động, kèm thông báo nêu tên <code>DATABASE_URL</code>. Không chạy được gì cả.</td></tr>
+<tr><td><code>WORKSPACE_ROOT</code></td><td><code>$XDG_DATA_HOME/aidev/worktrees</code> hoặc <code>~/.local/share/aidev/worktrees</code></td><td>Thư mục chứa mọi worktree của task. Mọi worktree đều phải nằm trong nó.</td><td>Task chạy thất bại vì không chuẩn bị được thư mục cách ly. Thông báo lỗi sẽ nêu đường dẫn.</td></tr>
+<tr><td><code>DEFAULT_TASK_TIMEOUT</code></td><td><code>30m</code></td><td>Một lần chạy agent được phép kéo dài bao lâu trước khi aidev dừng nó.</td><td>Đặt quá ngắn thì model chậm sẽ bị diệt giữa chừng. Giá trị mặc định rộng rãi có chủ ý: lần chạy đầu tiên trên kho mã mới từng bị đo là mất hơn bốn phút mới ra output.</td></tr>
+<tr><td><code>OPENCODE_MODEL</code></td><td><code>opencode/muse-spark-1.3-contributor-free</code></td><td>Model mà OpenCode dùng. Đặt chuỗi rỗng để OpenCode tự chọn.</td><td>Model lạ sẽ làm agent lỗi, kéo theo task lỗi. Giá trị mặc định công khai không cần tài khoản.</td></tr>
+<tr><td><code>LOG_LEVEL</code></td><td><code>info</code></td><td>Mức chi tiết log của aidev: <code>debug</code>, <code>info</code>, <code>warn</code> hoặc <code>error</code>.</td><td>Giá trị lạ làm khởi động thất bại. Quá ít thì mất manh mối chẩn đoán, quá nhiều thì tín hiệu chìm trong nhiễu.</td></tr>
+</table>
+
+<p>Danh sách đầy đủ kèm mọi giá trị mặc định nằm ở <a href="reference.html#environment">trang tra cứu</a>. Muốn xem chính xác aidev đã nhận gì, với mật khẩu cơ sở dữ liệu đã che đi:</p>
+
+<pre><code>aidev config
+aidev config --json</code></pre>
+
+<p>Dấu hiệu thành công: một bảng thiết lập với giá trị của bạn. Mật khẩu cơ sở dữ liệu hiện dạng đã che. Nếu <code>aidev config</code> báo lỗi thì nó liệt kê mọi vấn đề. Sửa hết rồi chạy lại. Cấu hình sai lộ mặt ở đây, ngay khi khởi động, chứ không đợi tới giữa task mới bung ra, đó chính là ý nghĩa của lệnh này.</p>
+</section>
+
+<section id="first-task">
+<h2>Task đầu tiên: ví dụ làm thật trên kho mã dùng một lần</h2>
+
+<p>Giờ tới phần thật. Bạn sẽ tạo một kho mã thực hành nhỏ mà test của nó hỏng cho tới khi việc xong, rồi nhờ aidev làm. <strong>Kho mã dùng một lần</strong> là dự án nháp để xóa sau. Dùng nó để lần chạy đầu tiên tránh xa code thật.</p>
+
+<p>Vì sao ví dụ có hình dạng này: task cần một lệnh verification hỏng trước khi làm và qua sau khi làm xong. Có vậy mới chứng minh được verification là bên quyết định. Một test đang hỏng là điểm xuất phát trung thực.</p>
+
+<p>Bước 1. Tạo kho mã dùng một lần. <strong>Module</strong> ở đây chỉ là một dự án Go nhỏ. Các lệnh dưới tạo thư mục, khởi tạo kho git trong đó, rồi thêm một test chắc chắn hỏng vì hàm nó kiểm tra còn chưa tồn tại.</p>
+
+<pre><code>mkdir -p /tmp/aidev-demo
+cd /tmp/aidev-demo
+git init -b main
+go mod init demo
+cat &gt; greet_test.go &lt;&lt;EOF
+package main
+
+import "testing"
+
+func TestGreet(t *testing.T) {
+    if Greet("Ada") != "Hello, Ada" {
+        t.Fatalf("Greet returned the wrong string")
+    }
+}
+EOF
+go test ./...
+# want: FAIL, something like: undefined: Greet
+# that failure is the point: the test fails until the work is done</code></pre>
+
+<p>Nếu <code>go test ./...</code> ở đây lại qua thì có gì đó sai: có thể trong thư mục đã sẵn một tập tin <code>greet.go</code>. Xóa nó rồi chạy test lại. Bạn muốn một test đang hỏng.</p>
+
+<p>Bước 2. Tạo task. Cờ <code>--verify</code> cho một lệnh verification. Muốn nhiều lệnh thì lặp lại cờ đó. Ít nhất một lệnh là bắt buộc: task mà aidev không kiểm được thì aidev không nhận.</p>
+
+<pre><code>cd /tmp/aidev-demo
+aidev task create \
+  --title "Add a Greet function" \
+  --description "Create greet.go with Greet(name string) string returning Hello plus name" \
+  --verify 'go test ./...' \
+  --verify 'go vet ./...'
+# want: created TASK-000001  Add a Greet function
+#           run it with: aidev task run TASK-000001</code></pre>
+
+<p>Ý nghĩa các cờ: <code>--title</code> là một dòng ngắn nói cần làm gì. <code>--description</code> là hướng dẫn đầy đủ agent sẽ đọc. Mỗi <code>--verify</code> là một lệnh aidev tự chạy, không qua shell, để quyết định kết quả. Mã tham chiếu bạn nhận lại, kiểu <code>TASK-000001</code>, là cách gọi tên task từ nay về sau.</p>
+
+<p>Nếu tạo thất bại với thông báo về verification thì bạn đã quên <code>--verify</code>. Nếu nó than đường dẫn không phải kho git thì kiểm tra xem bạn có đang ở trong <code>/tmp/aidev-demo</code> không và <code>git status</code> ở đó có chạy không.</p>
+
+<p>Bước 3. Chạy nó:</p>
+
+<pre><code>aidev task run TASK-000001</code></pre>
+
+<p>Lệnh này mất bao lâu: tính bằng phút chứ không phải giây. Phần lớn thời gian chờ là model suy nghĩ, không phải aidev. Phần việc của riêng aidev trong một lần chạy, gồm tạo worktree, lấy diff, chạy verification và mọi lần ghi cơ sở dữ liệu, được đo chỉ khoảng 0,2 giây, trong khi agent tốn từ 9 tới 656 giây. Model mặc định là bản nhanh và ổn định, nhưng độ trễ của bản miễn phí thất thường. Nếu mất mười phút thì đó là do model, không phải lỗi. Trong lúc chạy, bạn có thể mở terminal khác xem nhật ký event như <a href="debugging.html#events">trang gỡ lỗi</a> mô tả.</p>
+
+<p>Nếu lệnh bị ngắt bằng Ctrl-C thì task bị hủy và worktree được giữ lại. Như vậy là an toàn. Xem <a href="debugging.html#recovery">phần khôi phục</a> để biết bước tiếp theo.</p>
+</section>
+
+<section id="reading-the-result">
+<h2>Đọc kết quả</h2>
+
+<p>Khi chạy xong, lệnh sẽ báo kết quả. Thành công trông thế này:</p>
+
+<pre><code>TASK-000001 succeeded: 2/2 verification steps passed, work committed on aidev/TASK-000001
+
+agent (opencode)
+  outcome       SUCCEEDED
+  changed files 1
+  took          10m56s
+
+verification (run by aidev)
+  PASSED    go test ./...
+  PASSED    go vet ./...</code></pre>
+
+<p>Đọc nó làm hai nửa. Nửa agent nói agent đã làm gì và nó nói gì. Nửa verification nói aidev tự xác minh được gì. Chỉ nửa thứ hai quyết định. <code>aidev task run</code> thoát với mã 0 khi thành công và mã khác 0 khi task không thành công, nên <code>aidev task run TASK-000001 &amp;&amp; ./deploy.sh</code> đúng như người dùng shell mong đợi: lệnh thứ hai chỉ chạy khi task đã thành công.</p>
+
+<p>Thất bại trông thế này:</p>
+
+<pre><code>TASK-000002 FAILED (VERIFICATION): verification did not pass: 0/1 steps passed
+
+agent (opencode)
+  outcome       SUCCEEDED
+  changed files 0
+  says          Done! I implemented the function and all tests pass.
+
+verification (run by aidev)
+  FAILED    go test ./...  (exit 1)
+
+the work was kept for inspection</code></pre>
+
+<p>Để ý nửa agent: nó nói thành công. Để ý nửa verification: bước kiểm tra hỏng. Task là FAILED, vì chỉ verification quyết định. Đây là quy tắc duy nhất trong thực tế. Lời agent được ghi lại vì giúp chẩn đoán, chứ không bao giờ là bằng chứng.</p>
+
+<p>Hai lệnh cho bạn xem thêm bất cứ khi nào cần:</p>
+
+<pre><code>aidev task result TASK-000001
+aidev task result TASK-000001 --logs</code></pre>
+
+<p>Lệnh đầu cho kết quả của attempt mới nhất: trạng thái, thời gian, kết quả verification từng bước, và công việc đang ở đâu. Lệnh thứ hai thêm bản ghi của agent, diff và toàn bộ output verification. Output của bước hỏng luôn được kèm theo ngay cả khi không có <code>--logs</code>, cắt lấy 2000 byte cuối, vì đó là thứ ai cũng cần đầu tiên.</p>
+</section>
+
+<section id="where-the-work-is">
+<h2>Công việc nằm ở đâu, và cách xem lại nhánh bằng git</h2>
+
+<p>Khi thành công, aidev commit phần việc của agent lên nhánh (branch) riêng của task rồi xóa worktree. Nhánh đặt tên theo mã task, ví dụ <code>aidev/TASK-000001</code>. Không có gì được merge vào nhánh của bạn. Không bao giờ có commit nào lên nhánh bạn đang làm. Bản checkout của bạn vẫn sạch.</p>
+
+<p>Xem lại kết quả bằng lệnh git thường. <code>git log</code> liệt kê commit. <code>git diff</code> cho thấy hai nhánh khác nhau chỗ nào.</p>
+
+<pre><code>cd /tmp/aidev-demo
+git log --oneline aidev/TASK-000001
+git diff main..aidev/TASK-000001
+go clean -testcache &amp;&amp; go test ./...
+# run the test yourself on your own checkout of the branch:
+# it should pass, because verification already passed in the worktree</code></pre>
+
+<p>Khi thất bại, worktree được giữ nguyên như agent để lại, nằm dưới <code>WORKSPACE_ROOT</code>, và ghi nhận là RETAINED. Đó là chủ ý: công việc dở dang thường là thứ hữu ích nhất của một lần hỏng. Tìm nó bằng <code>aidev worktree list</code>, xem xét, và chỉ xóa khi đã xong. <a href="debugging.html#worktrees">Trang gỡ lỗi</a> hướng dẫn từng bước việc đó.</p>
+
+<p>Làm xong demo thì xóa thư mục dùng một lần. Rồi đọc tiếp <a href="index.html">trang đầu hướng dẫn</a>, <a href="debugging.html">trang gỡ lỗi</a> cho mọi thứ có thể hỏng, và <a href="reference.html">trang tra cứu</a> cho danh sách đầy đủ cờ và biến.</p>
+
+<pre><code>cd /tmp
+rm -rf /tmp/aidev-demo
+aidev task list
+# your demo task is still in PostgreSQL: the record outlives the directory</code></pre>
+</section>
+</main>
+</body>
+</html>
