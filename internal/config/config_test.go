@@ -228,3 +228,52 @@ func TestNilLookupFallsBackToEnvironment(t *testing.T) {
 		t.Skip("environment happens to provide a valid configuration")
 	}
 }
+
+func TestCleanupPolicyDefaultsToOnSuccess(t *testing.T) {
+	cfg, err := Load(env(map[string]string{"DATABASE_URL": testDSN}))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.WorktreeCleanup != CleanupOnSuccess {
+		t.Errorf("cleanup = %s, want on-success", cfg.WorktreeCleanup)
+	}
+}
+
+func TestCleanupPolicyOverride(t *testing.T) {
+	cfg, err := Load(env(map[string]string{
+		"DATABASE_URL":     testDSN,
+		"WORKTREE_CLEANUP": "NEVER",
+	}))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.WorktreeCleanup != CleanupNever {
+		t.Errorf("cleanup = %s, want never (the value should be case-insensitive)", cfg.WorktreeCleanup)
+	}
+}
+
+func TestUnknownCleanupPolicyIsRejected(t *testing.T) {
+	_, err := Load(env(map[string]string{
+		"DATABASE_URL":     testDSN,
+		"WORKTREE_CLEANUP": "always",
+	}))
+	if err == nil {
+		t.Fatal("an unknown cleanup policy was accepted")
+	}
+	// "always" would mean discarding failed work, which aidev does not offer;
+	// the error must list what it does offer.
+	if !strings.Contains(err.Error(), "on-success") || !strings.Contains(err.Error(), "never") {
+		t.Errorf("error = %v, want the valid policies listed", err)
+	}
+}
+
+func TestCleanupPolicyValidity(t *testing.T) {
+	for _, p := range AllCleanupPolicies() {
+		if !p.Valid() {
+			t.Errorf("%s is listed but reports itself invalid", p)
+		}
+	}
+	if CleanupPolicy("force").Valid() {
+		t.Error("an unknown policy reported itself valid")
+	}
+}

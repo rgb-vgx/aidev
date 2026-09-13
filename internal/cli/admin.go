@@ -39,6 +39,7 @@ func runConfig(_ context.Context, env *Env, args []string) error {
 			"opencode_model":               cfg.OpenCodeModel,
 			"opencode_agent":               cfg.OpenCodeAgent,
 			"max_output_bytes":             cfg.MaxOutputBytes,
+			"worktree_cleanup":             cfg.WorktreeCleanup.String(),
 			"log_level":                    cfg.LogLevel.String(),
 		})
 	}
@@ -55,6 +56,7 @@ func runConfig(_ context.Context, env *Env, args []string) error {
 	fmt.Fprintf(env.Stdout, "opencode model                %s\n", model)
 	fmt.Fprintf(env.Stdout, "opencode agent                %s\n", cfg.OpenCodeAgent)
 	fmt.Fprintf(env.Stdout, "max output bytes              %d\n", cfg.MaxOutputBytes)
+	fmt.Fprintf(env.Stdout, "worktree cleanup              %s\n", cfg.WorktreeCleanup)
 	fmt.Fprintf(env.Stdout, "log level                     %s\n", cfg.LogLevel)
 	return nil
 }

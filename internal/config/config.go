@@ -28,7 +28,39 @@ const (
 	DefaultOpenCodeCommand     = "opencode"
 	DefaultOpenCodeAgent       = "build"
 	DefaultMaxOutputBytes      = 1 << 20 // 1 MiB per captured stream
+	DefaultCleanupPolicy       = CleanupOnSuccess
 )
+
+// CleanupPolicy decides what happens to a task's worktree once it finishes.
+//
+// There is no policy that discards a failed attempt's work. Git itself refuses to
+// remove a worktree holding uncommitted changes, and aidev never passes --force
+// automatically (docs/research.md §7b), so a failed attempt is always inspectable.
+type CleanupPolicy string
+
+const (
+	// CleanupOnSuccess commits the work to the task's branch and then removes
+	// the worktree directory. The result stays reviewable with ordinary git
+	// commands while the workspace does not grow without bound. This is the
+	// default.
+	CleanupOnSuccess CleanupPolicy = "on-success"
+
+	// CleanupNever keeps every worktree on disk. Useful when debugging aidev
+	// itself, at the cost of an ever-growing workspace.
+	CleanupNever CleanupPolicy = "never"
+)
+
+// Valid reports whether p is a known policy.
+func (p CleanupPolicy) Valid() bool {
+	return p == CleanupOnSuccess || p == CleanupNever
+}
+
+func (p CleanupPolicy) String() string { return string(p) }
+
+// AllCleanupPolicies lists every policy, for error messages and documentation.
+func AllCleanupPolicies() []CleanupPolicy {
+	return []CleanupPolicy{CleanupOnSuccess, CleanupNever}
+}
 
 // Config is the fully resolved, validated configuration.
 type Config struct {
@@ -63,6 +95,10 @@ type Config struct {
 	// exhaust memory or the database.
 	MaxOutputBytes int
 
+	// WorktreeCleanup decides what happens to a worktree once its task
+	// finishes. No policy discards failed work.
+	WorktreeCleanup CleanupPolicy
+
 	// LogLevel is the minimum level emitted by the structured logger.
 	LogLevel slog.Level
 }
@@ -86,6 +122,7 @@ func Load(lookup Lookup) (Config, error) {
 		OpenCodeCommand:            DefaultOpenCodeCommand,
 		OpenCodeAgent:              DefaultOpenCodeAgent,
 		MaxOutputBytes:             DefaultMaxOutputBytes,
+		WorktreeCleanup:            DefaultCleanupPolicy,
 		LogLevel:                   slog.LevelInfo,
 	}
 
@@ -145,6 +182,19 @@ func Load(lookup Lookup) (Config, error) {
 			fail("MAX_OUTPUT_BYTES must be at least 1024, got %d", n)
 		default:
 			cfg.MaxOutputBytes = n
+		}
+	}
+
+	if v := strings.TrimSpace(get(lookup, "WORKTREE_CLEANUP")); v != "" {
+		policy := CleanupPolicy(strings.ToLower(v))
+		if !policy.Valid() {
+			names := make([]string, 0, len(AllCleanupPolicies()))
+			for _, p := range AllCleanupPolicies() {
+				names = append(names, string(p))
+			}
+			fail("WORKTREE_CLEANUP %q is not one of %s", v, strings.Join(names, ", "))
+		} else {
+			cfg.WorktreeCleanup = policy
 		}
 	}
 
