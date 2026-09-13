@@ -169,7 +169,7 @@ aidev task events TASK-000001 --after 5 --limit 50
 <section id="environment">
 <h2>Biến môi trường</h2>
 
-<p>Cấu hình chỉ do <code>internal/config</code> đọc. Không chỗ nào khác trong aidev đọc môi trường trực tiếp. Mọi thứ được kiểm tra khi khởi động và mọi lỗi báo một lúc. <code>DATABASE_URL</code> là biến bắt buộc duy nhất; còn lại đều có mặc định.</p>
+<p>Cấu hình chỉ do <code>internal/config</code> đọc. Không chỗ nào khác trong aidev đọc môi trường trực tiếp. Các giá trị này có thể tới từ tập tin cấu hình cũng như từ môi trường: aidev đọc <code>$XDG_CONFIG_HOME/aidev/config.env</code>, hoặc <code>~/.config/aidev/config.env</code> khi <code>XDG_CONFIG_HOME</code> không đặt, trừ khi <code>AIDEV_CONFIG</code> chỉ một tập tin khác. Mọi thứ xuất trong shell đều thắng tập tin. Mọi thứ được kiểm tra khi khởi động và mọi lỗi báo một lúc. <code>DATABASE_URL</code> là biến bắt buộc duy nhất; còn lại đều có mặc định.</p>
 
 <table>
 <tr><th>Biến</th><th>Mặc định</th><th>Mục đích</th></tr>
@@ -188,6 +188,7 @@ aidev task events TASK-000001 --after 5 --limit 50
 <tr><td><code>OTEL_EXPORTER_OTLP_HEADERS</code></td><td>không đặt</td><td>Các cặp <code>key=value</code> cách nhau bằng phẩy, ví dụ header xác thực.</td></tr>
 <tr><td><code>OTEL_SERVICE_NAME</code></td><td><code>aidev</code></td><td>Tên dịch vụ hiện trong backend tracing.</td></tr>
 <tr><td><code>OTEL_TRACES_SAMPLER_ARG</code></td><td><code>1</code></td><td>Tỉ lệ lấy mẫu từ 0 tới 1. Ngoài khoảng đó thì khởi động thất bại.</td></tr>
+<tr><td><code>AIDEV_CONFIG</code></td><td><code>$XDG_CONFIG_HOME/aidev/config.env</code>, nếu không thì <code>~/.config/aidev/config.env</code></td><td>Chỉ một tập tin cấu hình khác thay cho mặc định. Tập tin được phân tích chứ không bao giờ được thực thi: giá trị là chữ nguyên văn.</td></tr>
 </table>
 
 <p>Các biến liên quan nhưng không phải cấu hình aidev mà xuất hiện trong quy trình của nó: <code>AIDEV_DB_PORT</code> đổi cổng PostgreSQL trên máy cho <code>make db-up</code>; <code>TEST_DATABASE_URL</code> trỏ test tích hợp tới cơ sở dữ liệu (không có nó thì test tự bỏ qua); <code>AIDEV_TEST_OTLP</code> giữ cửa cho test xuất tracing thật. Xem <a href="debugging.html#tracing">phần tracing</a> để thấy các biến OTLP khi dùng thật.</p>

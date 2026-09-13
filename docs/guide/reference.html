@@ -169,7 +169,7 @@ aidev task events TASK-000001 --after 5 --limit 50
 <section id="environment">
 <h2>Environment variables</h2>
 
-<p>Configuration is read only by <code>internal/config</code>. Nothing else in aidev reads the environment directly. Everything is validated at startup and every problem is reported at once. <code>DATABASE_URL</code> is the only required variable; everything else has a default.</p>
+<p>Configuration is read only by <code>internal/config</code>. Nothing else in aidev reads the environment directly. These values may come from the configuration file as well as the environment: aidev reads <code>$XDG_CONFIG_HOME/aidev/config.env</code>, or <code>~/.config/aidev/config.env</code> when <code>XDG_CONFIG_HOME</code> is unset, unless <code>AIDEV_CONFIG</code> names a different file. Anything exported in the shell overrides the file. Everything is validated at startup and every problem is reported at once. <code>DATABASE_URL</code> is the only required variable; everything else has a default.</p>
 
 <table>
 <tr><th>Variable</th><th>Default</th><th>Purpose</th></tr>
@@ -188,6 +188,7 @@ aidev task events TASK-000001 --after 5 --limit 50
 <tr><td><code>OTEL_EXPORTER_OTLP_HEADERS</code></td><td>unset</td><td>Comma-separated <code>key=value</code> pairs, for example authorization headers.</td></tr>
 <tr><td><code>OTEL_SERVICE_NAME</code></td><td><code>aidev</code></td><td>Service name shown in the tracing backend.</td></tr>
 <tr><td><code>OTEL_TRACES_SAMPLER_ARG</code></td><td><code>1</code></td><td>Sample ratio from 0 to 1. Values outside that range fail at startup.</td></tr>
+<tr><td><code>AIDEV_CONFIG</code></td><td><code>$XDG_CONFIG_HOME/aidev/config.env</code>, else <code>~/.config/aidev/config.env</code></td><td>Names a different configuration file instead of the default. The file is parsed, never executed: values are literal.</td></tr>
 </table>
 
 <p>Related variables that are not aidev configuration but appear in its workflow: <code>AIDEV_DB_PORT</code> overrides the host PostgreSQL port for <code>make db-up</code>; <code>TEST_DATABASE_URL</code> points integration tests at a database (without it they skip themselves); <code>AIDEV_TEST_OTLP</code> gates the live tracing export test. See the <a href="debugging.html#tracing">tracing section</a> for the OTLP variables in use.</p>
