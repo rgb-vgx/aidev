@@ -11,11 +11,15 @@ about whether it succeeded is not an input to that decision.
 Everything — the task, each attempt, the captured output, the diff, the
 verification results, and a full event history — is persisted in PostgreSQL.
 
-> **Status: Phase 1 of 5.** The domain model, PostgreSQL persistence, migrations,
-> configuration and logging are built and tested. Worktree isolation, the OpenCode
-> backend, verification, the task CLI and the MCP server are not yet implemented —
-> see [docs/architecture.md](docs/architecture.md#status). The commands documented
-> below are the ones that exist today.
+> **Status: Phase 2 of 5.** The pipeline works end to end: a task is isolated in a
+> git worktree, implemented by the real OpenCode, verified independently by aidev,
+> committed to its own branch, and recorded in PostgreSQL. This has been run
+> against the installed OpenCode, not only against a test double.
+>
+> What is missing is the surface: there is no `aidev task` CLI yet (Phase 3) and no
+> MCP server (Phase 4), so running a task today means calling
+> `internal/worker` from Go or from the test suite. See
+> [docs/architecture.md](docs/architecture.md#status).
 
 ## Why it exists
 
@@ -32,6 +36,11 @@ makes that structural rather than advisory:
   permission prompt, so the worktree is the only containment boundary there is
   ([docs/research.md §2.6](docs/research.md)).
 - **History is append-only.** The database rejects `UPDATE` on the event log.
+
+The integration suite contains the test that states the whole idea: an agent that
+reports *"All done! Tests pass."* without touching a single file produces a
+**FAILED** task — its claim recorded verbatim, next to the verification result
+that contradicts it.
 
 ## Architecture
 
@@ -116,6 +125,7 @@ required variable; everything else has a default.
 | `OPENCODE_MODEL` | *(empty)* | empty lets OpenCode choose, which works with no credentials |
 | `OPENCODE_AGENT` | `build` | default OpenCode agent |
 | `MAX_OUTPUT_BYTES` | `1048576` | per-stream capture limit; output beyond it is dropped and flagged |
+| `WORKTREE_CLEANUP` | `on-success` | `on-success` commits and removes; `never` keeps every worktree. Neither discards failed work |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 
 The task timeout default is deliberately generous: OpenCode's first run against a
@@ -141,20 +151,60 @@ aidev migrate [--json]    # apply pending migrations
 Task commands (`aidev task create|get|list|run|cancel|result`) arrive in Phase 3,
 and the MCP server for Claude Code in Phase 4.
 
+## What happens when a task runs
+
+```text
+create task ──▶ isolate in a git worktree ──▶ run the agent there
+                                                      │
+  record in PostgreSQL ◀── verify independently ◀──────┘
+                                   │
+                    passed ──▶ commit to aidev/<ref>, remove the worktree
+                    failed ──▶ keep the worktree for inspection
+```
+
+A successful task leaves a commit on its own branch, so the result is reviewable
+with ordinary git:
+
+```bash
+git log --oneline aidev/TASK-000001
+git diff main..aidev/TASK-000001
+```
+
+Nothing is merged, and nothing is ever committed to your working branch.
+
+A failed task leaves its worktree exactly as the agent left it, under
+`WORKSPACE_ROOT`, because partial work is often the most useful thing about a
+failure. `git worktree remove` refuses to discard uncommitted work and aidev never
+overrides that automatically, so this holds regardless of configuration. See
+[the cleanup policy](docs/architecture.md#cleanup-policy).
+
 Human-readable output goes to **stdout**; structured logs go to **stderr**. This
 separation is load-bearing: when aidev runs as an MCP server, stdout carries the
 JSON-RPC protocol, so nothing else may ever be written there.
 
 ## OpenCode setup
 
-Not required until Phase 2. What Phase 0 established about the installed version:
+Install OpenCode and make it reachable on `PATH`, or set `OPENCODE_COMMAND`. No
+API credentials are required: the public `opencode/*` models work and report zero
+cost, which is how this project's end-to-end test runs without a key.
 
-- aidev will invoke `opencode run --dir <worktree> --format json`, capturing
-  newline-delimited JSON events.
-- OpenCode works **without any API credentials** using its public
-  `opencode/*` models, which report zero cost. `opencode models` lists them.
-- The first run against an unfamiliar repository can take minutes; later runs take
-  seconds.
+```bash
+opencode --version          # verified against 1.18.30
+opencode models | head      # the opencode/* entries need no credentials
+```
+
+aidev invokes `opencode run --dir <worktree> --format json -- <prompt>` and reads
+the newline-delimited event stream. You never write that command yourself; knowing
+it is aidev's job, not the planner's.
+
+Two measured behaviours worth knowing before your first task:
+
+- **The first run against a repository OpenCode has not seen can take minutes**
+  before producing any output, then seconds afterwards. One end-to-end run here
+  took 301 seconds. This is why `DEFAULT_TASK_TIMEOUT` is 30 minutes.
+- **OpenCode writes files without asking**, even without its `--auto` flag. That
+  is why every task runs in a dedicated worktree and why aidev refuses a worktree
+  path that would land inside your repository.
 
 See [docs/research.md](docs/research.md) for the measurements behind all of this.
 
@@ -181,6 +231,7 @@ Exact instructions, the tool list, and their schemas will live in
 make check            # the gate: gofmt, go vet, staticcheck, unit tests
 make test             # unit tests only
 make test-integration # everything, including tests that need PostgreSQL
+make test-e2e         # the real OpenCode, end to end (slow: minutes)
 ```
 
 `make check` passes on a machine with no database: integration tests skip
@@ -217,6 +268,18 @@ The suite is not only coverage; several tests exist to hold specific invariants:
 - `UPDATE` on the event log is refused by the database; deleting a task still
   cascades its history.
 - A task and its creation event commit together or not at all.
+- An agent cannot produce a successful task by claiming success.
+- A file written in a worktree does not appear in the repository, which stays clean.
+- Collecting a diff reveals new files and does not stage anything in the worktree.
+- A failed attempt's worktree survives; a successful one's work is committed first.
+- Cancelling a task mid-run still records the cancellation, rather than leaving the
+  row in `RUNNING`.
+- Cancellation kills the whole process group, so a verification command's children
+  do not outlive it.
+
+Several of these were confirmed by deliberately breaking the implementation and
+checking that the test failed, rather than by assuming a green test meant a real
+guarantee.
 
 ## Documentation
 

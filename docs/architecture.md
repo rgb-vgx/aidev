@@ -42,13 +42,14 @@ touch the orchestration layer.
 |---|---|---|
 | 0 | Environment research | done — [docs/research.md](research.md) |
 | 1 | Domain, persistence, migrations, config, logging | done |
-| 2 | Git worktrees, `AgentBackend`, OpenCode backend, verification, execution | not started |
+| 2 | Git worktrees, `AgentBackend`, OpenCode backend, verification, execution | done |
 | 3 | Task CLI | not started |
 | 4 | MCP server | not started |
 | 5 | Hardening, E2E, docs | not started |
 
-Sections below describing Phase 2+ state intent, not implementation. Anything not
-yet built says so.
+Sections below describing Phase 3+ state intent, not implementation. Anything not
+yet built says so. There is no CLI or MCP surface for running a task yet: the
+orchestration is exercised through `internal/worker` by the test suites.
 
 ## Package layout
 
@@ -61,9 +62,18 @@ internal/
   store/              PostgreSQL persistence and the embedded migrator
   config/             environment configuration, loaded and validated once
   logging/            structured logging to stderr
+  procexec/           one place where external processes are run, bounded,
+                      deadlined and cancellable
+  git/                worktree creation, diff collection, cleanup, and the path
+                      checks that enforce isolation
+  agent/              the Backend boundary, the OpenCode implementation, a fake
+  verification/       aidev running the task's own commands
+  worker/             the lifecycle: isolate, delegate, verify, record
   cli/                command line surface
 migrations/           SQL, embedded into the binary
-tests/integration/    tests that require a real PostgreSQL
+prompts/              agent instruction templates, embedded
+tests/integration/    real PostgreSQL, real git, scripted agent
+tests/e2e/            real PostgreSQL, real git, real OpenCode (opt-in)
 docs/                 this directory
 ```
 
@@ -79,6 +89,81 @@ packages would buy directory symmetry at the price of import cycles and
 every other package may import it freely. That is what makes it safe for
 `internal/agent` to use `task.FailureKind` as the shared vocabulary for *why
 something failed* without the domain knowing anything about OpenCode.
+
+## Execution flow
+
+`worker.Orchestrator.RunTask` is the only code that knows this order.
+
+```text
+                resolve task
+                     │
+            ┌────────▼────────┐   requires approval and none granted
+            │ approval policy ├──────────────▶ WAITING_APPROVAL  (no attempt,
+            └────────┬────────┘                                   no worktree)
+                     │
+              PENDING ──▶ READY
+                     │
+        ┌────────────▼────────────┐  one transaction
+        │ claim task + open attempt│  RUNNING + attempt row + task.started
+        └────────────┬────────────┘
+                     │
+              create worktree ──────── failure ──▶ FAILED (WORKTREE)
+                     │
+              run agent in it ──────── failure ──▶ FAILED (agent's own kind)
+                     │                             worktree RETAINED
+              collect diff from git
+              persist worker run
+                     │
+                 VERIFYING
+                     │
+         aidev runs the task's commands
+                     │
+         ┌───────────┴───────────┐
+      passed                  failed
+         │                       │
+  commit to aidev/<ref>     worktree RETAINED
+  remove worktree           FAILED (VERIFICATION)
+  SUCCEEDED
+```
+
+Three properties of this flow are worth stating separately, because they are what
+the tests hold rather than what the diagram shows:
+
+**A state change and its event are one transaction.** History cannot disagree with
+state. Claiming a task and opening its attempt are likewise atomic, so a task can
+never be `RUNNING` without a record of which attempt is running it.
+
+**The writes that record an outcome run on a detached context.** Cancelling a task
+would otherwise cancel the very writes that record the cancellation, leaving the
+row in `RUNNING` forever. A test cancels mid-run and then re-reads the task from
+the database.
+
+**A failed task is an `Outcome`, not an error.** Delegating work to an agent that
+does not succeed is the expected case, and the caller needs the record rather than
+an exception. `RunTask` returns an error only when it could not conduct the run at
+all.
+
+## Cleanup policy
+
+The policy exists because the obvious options are both wrong. Removing a
+successful task's worktree destroys the deliverable, since the agent's work is
+uncommitted. Keeping every worktree grows the workspace without bound.
+
+| Outcome | What happens |
+|---|---|
+| succeeded | the work is committed to `aidev/<ref>`, then the worktree directory is removed |
+| failed | the worktree is kept, untouched and uncommitted, and recorded as `RETAINED` |
+| cancelled | same as failed |
+| `WORKTREE_CLEANUP=never` | nothing is removed, but the work is still committed |
+
+Committing is not merging: only the task's own branch is written, and the result is
+reviewable with `git log aidev/<ref>` and `git diff main..aidev/<ref>`.
+
+There is deliberately no policy that discards failed work, and `--force` is never
+passed automatically. Git refuses to remove a worktree holding uncommitted
+changes, so the guard is the tool's own behaviour rather than aidev's diligence
+(docs/research.md §7b). `ListRetainedWorktrees` is how an operator finds abandoned
+work.
 
 ## Design decisions
 
@@ -119,6 +204,18 @@ alternative is owning a server's lifecycle — health, ports, crash recovery —
 MVP capability. The `AgentBackend` interface keeps a server-mode backend addable
 without touching orchestration.
 
+### External processes are run in exactly one place
+
+`internal/procexec` owns every subprocess: its deadline, its cancellation, its
+bounded output, and the classification of how it ended. The agent backend and the
+verification runner both use it, because both need the same guarantees and two
+implementations would mean two places to get process cleanup wrong.
+
+Cancellation signals the process group, not the pid. `opencode run` spawns no
+children, but verification commands routinely do — `go test` starts compilers and
+test binaries — so killing only the parent would leave them running. The test for
+this was verified to fail when the kill is changed to pid-only.
+
 ### Configuration is read once, in one place
 
 `config.Load` is the only reader of the environment. It validates everything and
@@ -142,6 +239,18 @@ SQL. The duplication is real, so `TestEnumsMatchMigrationConstraints` reads the
 migration and fails on drift. The test was verified to fail when a value is removed
 from the constraint.
 
+### An agent's account of itself is recorded, never trusted
+
+`worker_runs.summary` stores what the agent said it did, verbatim, because it is
+useful when diagnosing a failure. It has no effect on the outcome. The diff stored
+alongside it is collected from git by aidev, not reported by the agent, and the
+verification rows come from aidev running the commands itself.
+
+The integration suite contains the direct test of this:
+`TestAgentClaimingSuccessWithoutDoingTheWorkFails` has the agent report "All done!
+Tests pass." without touching a file, and the task ends `FAILED` with the claim on
+record beside the contradiction.
+
 ### State changes are compare-and-set
 
 `UPDATE ... WHERE id = $1 AND status = $2`. Zero rows means another writer moved
@@ -156,13 +265,13 @@ place a listed future feature plugs in without a rewrite.
 
 | Future feature | Seam that already exists |
 |---|---|
-| Retry | `task_attempts` is append-only with numbered attempts; `max_retries` is stored; `worker_runs.session_id` records the resumable agent session. Only the `FAILED → READY` edge and a policy are missing. |
+| Retry | `task_attempts` is append-only with numbered attempts; `max_retries` is stored; `worker_runs.session_id` records the resumable agent session; worktree and branch names already include the attempt number so a second attempt cannot collide with the first. Only the `FAILED → READY` edge and a policy are missing. |
 | Concurrent workers | `tasks_ready_claim_idx` matches a `FOR UPDATE SKIP LOCKED` claim; status changes are already compare-and-set. |
-| A second agent backend | `AgentBackend` (Phase 2); orchestration never names OpenCode. |
+| A second agent backend | `agent.Backend`; orchestration never names OpenCode. A server-mode OpenCode backend, or a different agent entirely, is a new file in `internal/agent`. |
 | Dependency DAG | `PENDING` exists as "not yet eligible"; the eligibility check is the hook. |
 | Observability / event-driven features | `events.seq` gives a total order, so a consumer can resume from a cursor. |
 | Approval workflows | `approvals` with one-pending-per-task, plus `WAITING_APPROVAL` in the state machine. |
-| Merge | `worktrees` records branch and base commit; nothing merges yet, by design. |
+| Merge | every successful task leaves a reviewable commit on `aidev/<ref>`, and `worktrees` records branch, base commit and head commit; nothing merges yet, by design. |
 
 Deliberately **not** present: a scheduler, a DAG executor, automatic merge, a web
 dashboard, authentication, Redis, Kafka, Kubernetes, or an LLM inside aidev.
