@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -54,6 +55,10 @@ type Fake struct {
 
 	// Err makes Run fail at aidev's level, as a missing executable would.
 	Err error
+
+	// KnownAgents restricts which agent names ValidateAgentName accepts. Empty
+	// means "accept any non-empty name", which is what most tests want.
+	KnownAgents []string
 
 	mu    sync.Mutex
 	calls []Request
@@ -181,11 +186,18 @@ func (f *Fake) Run(ctx context.Context, req Request) (Result, error) {
 	return finish(), nil
 }
 
-// ValidateAgentName implements Validator. The fake accepts any non-empty name, so
-// that tests exercising validation can use the real backend for that purpose.
+// ValidateAgentName implements Validator.
 func (f *Fake) ValidateAgentName(_ context.Context, name string) error {
-	if name == "" {
+	if strings.TrimSpace(name) == "" {
 		return fmt.Errorf("agent name is empty")
 	}
-	return nil
+	if len(f.KnownAgents) == 0 {
+		return nil
+	}
+	for _, known := range f.KnownAgents {
+		if known == name {
+			return nil
+		}
+	}
+	return fmt.Errorf("no agent named %q; available agents: %s", name, strings.Join(f.KnownAgents, ", "))
 }

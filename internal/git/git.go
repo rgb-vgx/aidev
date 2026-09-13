@@ -541,3 +541,22 @@ func classifyWorktreeAdd(stderr, branch, path string) error {
 		return fmt.Errorf("create worktree %s: %s", path, firstLine(stderr))
 	}
 }
+
+// CurrentBranch reports the branch the repository currently has checked out,
+// falling back to "main" when it cannot be determined.
+//
+// A repository using "master", "trunk" or anything else must not be silently
+// assumed to use "main": the value becomes the project's default base ref, and
+// getting it wrong would make every task branch from the wrong place.
+func (m *Manager) CurrentBranch(ctx context.Context, repo Repository) string {
+	res, err := m.run(ctx, repo.Path, nil, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil || !res.Succeeded() {
+		return "main"
+	}
+	branch := strings.TrimSpace(res.Stdout)
+	if branch == "" || branch == "HEAD" {
+		// Detached HEAD: there is no current branch to record.
+		return "main"
+	}
+	return branch
+}
