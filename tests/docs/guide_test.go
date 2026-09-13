@@ -21,7 +21,23 @@ const guideDir = "../../docs/guide"
 
 // page is one required page and what it must contain.
 type page struct {
+	// dir is the subdirectory under docs/guide, empty for the English pages.
+	dir string
+
 	file string
+
+	// lang is the value the <html lang> attribute must have.
+	lang string
+
+	// minVietnameseRunes, when set, requires that many characters carrying
+	// Vietnamese diacritics. It is a crude proxy, and it exists for one specific
+	// failure: an English page saved under a Vietnamese path with lang="vi",
+	// which would pass every other check here while being useless.
+	minVietnameseRunes int
+
+	// mustNotContain catches exactly that, by naming sentences from the English
+	// original that a translation cannot legitimately reproduce verbatim.
+	mustNotContain []string
 
 	// title must appear in the <title> element.
 	titleContains string
@@ -43,9 +59,17 @@ type page struct {
 	minCodeBlocks int
 }
 
+// englishPages and vietnamesePages are kept as one list so that every structural
+// check applies to both without being written twice. A translation that is not held
+// to the same standard as the original is a translation nobody can rely on.
 func requiredPages() []page {
+	return append(englishPages(), vietnamesePages()...)
+}
+
+func englishPages() []page {
 	return []page{
 		{
+			lang:          "en",
 			file:          "index.html",
 			titleContains: "aidev",
 			sections: []string{
@@ -66,6 +90,7 @@ func requiredPages() []page {
 			minCodeBlocks: 3,
 		},
 		{
+			lang:          "en",
 			file:          "getting-started.html",
 			titleContains: "Getting started",
 			sections: []string{
@@ -86,6 +111,7 @@ func requiredPages() []page {
 			minCodeBlocks: 6,
 		},
 		{
+			lang:          "en",
 			file:          "debugging.html",
 			titleContains: "Debugging",
 			sections: []string{
@@ -107,6 +133,7 @@ func requiredPages() []page {
 			minCodeBlocks: 8,
 		},
 		{
+			lang:          "en",
 			file:          "reference.html",
 			titleContains: "Reference",
 			sections: []string{
@@ -126,19 +153,56 @@ func requiredPages() []page {
 	}
 }
 
-func readPage(t *testing.T, file string) string {
+// vietnamesePages mirror the English set. The section ids and the things each page
+// must mention are deliberately identical: commands, status names, event types and
+// environment variables are not translated, and holding both versions to the same
+// list is what stops them drifting apart.
+func vietnamesePages() []page {
+	pages := englishPages()
+	out := make([]page, 0, len(pages))
+
+	titles := map[string]string{
+		"index.html":           "aidev",
+		"getting-started.html": "Bắt đầu",
+		"debugging.html":       "Gỡ lỗi",
+		"reference.html":       "Tra cứu",
+	}
+	// Sentences from the English original. Finding one in the translation means a
+	// page was copied rather than written.
+	untranslated := []string{
+		"An agent that reports its own success is not a source of truth",
+		"only verification can move a task to SUCCEEDED",
+		"A reader who is new needs commands they can copy",
+	}
+
+	for _, p := range pages {
+		p.dir = "vi"
+		p.lang = "vi"
+		p.titleContains = titles[p.file]
+		p.minVietnameseRunes = 600
+		p.mustNotContain = untranslated
+		out = append(out, p)
+	}
+	return out
+}
+
+func readPage(t *testing.T, p page) string {
 	t.Helper()
-	body, err := os.ReadFile(filepath.Join(guideDir, file))
+	path := filepath.Join(guideDir, p.dir, p.file)
+	body, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("docs/guide/%s is missing: %v", file, err)
+		t.Fatalf("%s is missing: %v", filepath.Join("docs/guide", p.dir, p.file), err)
 	}
 	return string(body)
 }
 
+// label names a page for test output, including its locale directory.
+func (p page) label() string { return filepath.Join(p.dir, p.file) }
+
 func TestGuidePagesExistAndAreComplete(t *testing.T) {
 	for _, p := range requiredPages() {
-		t.Run(p.file, func(t *testing.T) {
-			body := readPage(t, p.file)
+		t.Run(p.label(), func(t *testing.T) {
+			body := readPage(t, p)
 
 			if len(body) < p.minBytes {
 				t.Errorf("page is %d bytes, want at least %d: it is meant to explain, not to list headings",
@@ -175,20 +239,67 @@ func TestGuidePagesExistAndAreComplete(t *testing.T) {
 // A reader arriving on any page must be able to get back, and the index must lead
 // everywhere, or the guide is a pile of pages rather than a guide.
 func TestGuideIsNavigable(t *testing.T) {
-	index := readPage(t, "index.html")
-	for _, p := range requiredPages() {
-		if p.file == "index.html" {
-			continue
-		}
-		if !strings.Contains(index, p.file) {
-			t.Errorf("index.html does not link to %s", p.file)
-		}
-
-		body := readPage(t, p.file)
-		if !strings.Contains(body, "index.html") {
-			t.Errorf("%s has no link back to index.html", p.file)
+	for _, set := range [][]page{englishPages(), vietnamesePages()} {
+		index := readPage(t, set[0])
+		for _, p := range set {
+			if p.file == "index.html" {
+				continue
+			}
+			if !strings.Contains(index, p.file) {
+				t.Errorf("%s does not link to %s", set[0].label(), p.file)
+			}
+			if !strings.Contains(readPage(t, p), "index.html") {
+				t.Errorf("%s has no link back to its index", p.label())
+			}
 		}
 	}
+}
+
+// A reader who lands on the wrong language must be able to switch, from any page,
+// or the translation is only reachable by guessing a URL.
+func TestGuideLinksBetweenLanguages(t *testing.T) {
+	for _, p := range englishPages() {
+		if !strings.Contains(readPage(t, p), "vi/") {
+			t.Errorf("%s offers no link to the Vietnamese version", p.label())
+		}
+	}
+	for _, p := range vietnamesePages() {
+		if !strings.Contains(readPage(t, p), "../") {
+			t.Errorf("%s offers no link back to the English version", p.label())
+		}
+	}
+}
+
+// A translation must be a translation. lang="vi" on an English page would satisfy
+// every structural check here while being worthless.
+func TestVietnamesePagesAreActuallyVietnamese(t *testing.T) {
+	for _, p := range vietnamesePages() {
+		body := readPage(t, p)
+
+		if n := countVietnameseRunes(body); n < p.minVietnameseRunes {
+			t.Errorf("%s has %d characters with Vietnamese diacritics, want at least %d: it does not look translated",
+				p.label(), n, p.minVietnameseRunes)
+		}
+		for _, sentence := range p.mustNotContain {
+			if strings.Contains(body, sentence) {
+				t.Errorf("%s contains the English sentence %q verbatim, so that part was copied rather than translated",
+					p.label(), sentence)
+			}
+		}
+	}
+}
+
+// countVietnameseRunes counts characters that only appear in Vietnamese text, which
+// is enough to tell a translation from a copy.
+func countVietnameseRunes(body string) int {
+	const marks = "ăâđêôơưáàảãạắằẳẵặấầẩẫậéèẻẽẹếềểễệíìỉĩịóòỏõọốồổỗộớờởỡợúùủũụứừửữựýỳỷỹỵ"
+	count := 0
+	for _, r := range strings.ToLower(body) {
+		if strings.ContainsRune(marks, r) {
+			count++
+		}
+	}
+	return count
 }
 
 // A link that does not resolve is worse than no link: it teaches the reader that
@@ -197,8 +308,9 @@ func TestGuideHasNoBrokenInternalLinks(t *testing.T) {
 	hrefPattern := regexp.MustCompile(`(?i)(?:href|src)="([^"]+)"`)
 
 	for _, p := range requiredPages() {
-		body := readPage(t, p.file)
+		body := readPage(t, p)
 		ids := collectIDs(body)
+		base := filepath.Join(guideDir, p.dir)
 
 		for _, match := range hrefPattern.FindAllStringSubmatch(body, -1) {
 			target := match[1]
@@ -209,7 +321,7 @@ func TestGuideHasNoBrokenInternalLinks(t *testing.T) {
 
 			case strings.HasPrefix(target, "#"):
 				if anchor := strings.TrimPrefix(target, "#"); anchor != "" && !ids[anchor] {
-					t.Errorf("%s links to #%s, which no element on that page defines", p.file, anchor)
+					t.Errorf("%s links to #%s, which no element on that page defines", p.label(), anchor)
 				}
 
 			default:
@@ -217,15 +329,15 @@ func TestGuideHasNoBrokenInternalLinks(t *testing.T) {
 				if file == "" {
 					continue
 				}
-				path := filepath.Join(guideDir, file)
+				path := filepath.Join(base, file)
 				if _, err := os.Stat(path); err != nil {
-					t.Errorf("%s links to %q, which does not exist", p.file, target)
+					t.Errorf("%s links to %q, which does not exist", p.label(), target)
 					continue
 				}
 				if anchor != "" && strings.HasSuffix(file, ".html") {
 					linked, err := os.ReadFile(path)
 					if err == nil && !collectIDs(string(linked))[anchor] {
-						t.Errorf("%s links to %q, but %s defines no id=%q", p.file, target, file, anchor)
+						t.Errorf("%s links to %q, but %s defines no id=%q", p.label(), target, file, anchor)
 					}
 				}
 			}
@@ -239,9 +351,10 @@ func TestGuideHasAStylesheet(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(guideDir, "guide.css")); err != nil {
 		t.Fatalf("docs/guide/guide.css is missing: %v", err)
 	}
+	// One stylesheet for both languages: a second copy would drift.
 	for _, p := range requiredPages() {
-		if !strings.Contains(readPage(t, p.file), "guide.css") {
-			t.Errorf("%s does not reference guide.css", p.file)
+		if !strings.Contains(readPage(t, p), "guide.css") {
+			t.Errorf("%s does not reference guide.css", p.label())
 		}
 	}
 }
@@ -250,27 +363,27 @@ func TestGuideHasAStylesheet(t *testing.T) {
 // structure. Unclosed tags are how a page silently loses half its content.
 func TestGuidePagesAreWellFormed(t *testing.T) {
 	for _, p := range requiredPages() {
-		body := readPage(t, p.file)
+		body := readPage(t, p)
 
 		if !strings.Contains(strings.ToLower(body), "<!doctype html>") {
-			t.Errorf("%s has no doctype", p.file)
+			t.Errorf("%s has no doctype", p.label())
 		}
-		if !strings.Contains(body, `lang=`) {
-			t.Errorf("%s does not declare a language on <html>", p.file)
+		if !strings.Contains(body, `lang="`+p.lang+`"`) {
+			t.Errorf("%s does not declare lang=%q on <html>", p.label(), p.lang)
 		}
 		if !strings.Contains(strings.ToLower(body), `charset=`) {
-			t.Errorf("%s does not declare a charset", p.file)
+			t.Errorf("%s does not declare a charset", p.label())
 		}
 
 		for _, tag := range []string{"html", "head", "body", "main"} {
 			open := strings.Count(strings.ToLower(body), "<"+tag)
 			close := strings.Count(strings.ToLower(body), "</"+tag+">")
 			if open == 0 {
-				t.Errorf("%s has no <%s>", p.file, tag)
+				t.Errorf("%s has no <%s>", p.label(), tag)
 				continue
 			}
 			if open != close {
-				t.Errorf("%s has %d <%s> and %d </%s>: tags are unbalanced", p.file, open, tag, close, tag)
+				t.Errorf("%s has %d <%s> and %d </%s>: tags are unbalanced", p.label(), open, tag, close, tag)
 			}
 		}
 	}
@@ -281,10 +394,10 @@ func TestGuidePagesAreWellFormed(t *testing.T) {
 func TestGuideHasNoPlaceholders(t *testing.T) {
 	forbidden := []string{"TODO", "FIXME", "Lorem ipsum", "XXX", "<!-- fill", "TBD", "coming soon"}
 	for _, p := range requiredPages() {
-		body := readPage(t, p.file)
+		body := readPage(t, p)
 		for _, bad := range forbidden {
 			if strings.Contains(body, bad) {
-				t.Errorf("%s contains the placeholder %q", p.file, bad)
+				t.Errorf("%s contains the placeholder %q", p.label(), bad)
 			}
 		}
 	}
@@ -294,34 +407,37 @@ func TestGuideHasNoPlaceholders(t *testing.T) {
 // leaves a reader believing the agent decides the outcome has failed at its job
 // however well written the rest is.
 func TestGuideExplainsThatOnlyVerificationDecidesSuccess(t *testing.T) {
-	index := readPage(t, "index.html")
-	lowered := strings.ToLower(index)
+	for _, set := range [][]page{englishPages(), vietnamesePages()} {
+		index := readPage(t, set[0])
+		lowered := strings.ToLower(index)
 
-	for _, phrase := range []string{"only", "verification"} {
-		if !strings.Contains(lowered, phrase) {
-			t.Fatalf("index.html does not contain %q", phrase)
+		// "verification" and "agent" are not translated in either version: they
+		// name things the reader will see in the tool's own output.
+		for _, phrase := range []string{"verification", "agent", "SUCCEEDED"} {
+			if !strings.Contains(lowered, strings.ToLower(phrase)) {
+				t.Errorf("%s does not contain %q", set[0].label(), phrase)
+			}
 		}
-	}
-	// The agent's claim must be named as something that does not decide anything.
-	if !strings.Contains(lowered, "agent") {
-		t.Error("index.html never mentions the agent")
-	}
-	if !hasID(index, "why") {
-		t.Error("index.html has no #why section, which is where this belongs")
+		if !hasID(index, "why") {
+			t.Errorf("%s has no #why section, which is where this belongs", set[0].label())
+		}
 	}
 }
 
 // A glossary is what lets a reader who does not know the words follow the rest.
 func TestGuideDefinesItsTerms(t *testing.T) {
-	index := readPage(t, "index.html")
-	if !hasID(index, "vocabulary") {
-		t.Fatal("index.html has no #vocabulary section")
-	}
-	for _, term := range []string{
-		"worktree", "attempt", "verification", "task", "agent", "event",
-	} {
-		if !strings.Contains(strings.ToLower(index), term) {
-			t.Errorf("the vocabulary does not cover %q", term)
+	for _, set := range [][]page{englishPages(), vietnamesePages()} {
+		index := readPage(t, set[0])
+		if !hasID(index, "vocabulary") {
+			t.Errorf("%s has no #vocabulary section", set[0].label())
+			continue
+		}
+		for _, term := range []string{
+			"worktree", "attempt", "verification", "task", "agent", "event",
+		} {
+			if !strings.Contains(strings.ToLower(index), term) {
+				t.Errorf("%s: the vocabulary does not cover %q", set[0].label(), term)
+			}
 		}
 	}
 }
