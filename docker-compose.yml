@@ -7,7 +7,9 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: aidev-postgres
+    # Overridable so that two checkouts of aidev can run their own database:
+    # a fixed name makes the second `docker compose up` fail on a name clash.
+    container_name: ${AIDEV_DB_CONTAINER:-aidev-postgres}
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${AIDEV_DB_USER:-aidev}

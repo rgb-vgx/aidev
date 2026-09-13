@@ -10,7 +10,8 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 # Matches docker-compose.yml, which publishes PostgreSQL on 5434 because 5432
 # and 5433 are commonly already taken (docs/research.md 5).
-DB_PORT ?= 5434
+DB_PORT      ?= 5434
+DB_CONTAINER ?= $(or $(AIDEV_DB_CONTAINER),aidev-postgres)
 DB_URL  ?= postgres://aidev:aidev@127.0.0.1:$(DB_PORT)/aidev?sslmode=disable
 TEST_DB_URL ?= postgres://aidev:aidev@127.0.0.1:$(DB_PORT)/aidev_test?sslmode=disable
 
@@ -53,7 +54,7 @@ db-up: ## start PostgreSQL and wait for it to accept connections
 	docker compose up -d
 	@printf 'waiting for postgres'
 	@for i in $$(seq 1 60); do \
-		if [ "$$(docker inspect -f '{{.State.Health.Status}}' aidev-postgres 2>/dev/null)" = healthy ]; then echo " ready"; exit 0; fi; \
+		if [ "$$(docker inspect -f '{{.State.Health.Status}}' $(DB_CONTAINER) 2>/dev/null)" = healthy ]; then echo " ready"; exit 0; fi; \
 		printf '.'; sleep 1; \
 	done; echo " timed out"; exit 1
 

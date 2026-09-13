@@ -222,10 +222,16 @@ repository. Free-tier latency alone can therefore account for the slow first run
 output for 240s" is equally consistent with waiting on a provider, since nothing is printed
 until the model replies.
 
-- **[UNRESOLVED]** whether a per-project initialisation cost exists at all. It may; the
-  evidence that was thought to show it does not separate it from provider latency.
+- **[OBSERVED]** a task in a repository created seconds earlier — a new root commit, so a
+  project OpenCode had never seen — completed in **12 seconds** end to end using
+  `muse-spark-1.3`. Whatever per-project initialisation exists therefore costs seconds, not
+  minutes, and cannot explain a 656-second run.
 - **[OBSERVED]** `init` is the last log line before the wait, which is suggestive but not
-  conclusive.
+  conclusive about what the wait is for.
+
+That measurement closes the question in practice: the slow first runs were provider latency,
+not initialisation. The wrong explanation survived three retellings before being checked,
+which is the argument for this document distinguishing observation from attribution at all.
 
 **Implication for aidev, unchanged but for a different reason:** the default agent timeout
 must be generous and configurable (`DEFAULT_TASK_TIMEOUT`). The advice that followed from the
@@ -618,8 +624,12 @@ Both produced correct code that passed `go test ./...` and `go vet ./...`.
 setup: fast, consistent, and correct on these tasks. `OPENCODE_MODEL` remains configurable and
 empty still means "let OpenCode choose".
 
+A third task, in a repository created moments before, completed in 12s with the same model —
+which is the measurement that ruled out a per-project initialisation cost (§2.9).
+
 **[UNRESOLVED]** How either model behaves on tasks substantially larger than "write one small
-function". Two data points on trivial tasks do not generalise, and no claim is made that they do.
+function". A handful of data points on trivial tasks do not generalise, and no claim is made
+that they do.
 
 ## 8. Reproducing this research
 
