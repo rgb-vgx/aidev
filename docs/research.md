@@ -709,6 +709,71 @@ so stderr text must not be used to classify a Codex run.
 **[UNRESOLVED]** Whether `codex exec resume` can continue a session by `thread_id` the way
 OpenCode's `-s` does. The id is recorded now so that retry-with-context stays possible.
 
+## 7e. When the agent writes the judge **[OBSERVED]**
+
+### What happened
+
+TASK-000026 ran Codex (`AGENT_BACKEND=codex`, profile `web9router`, sandbox
+`workspace-write`) on a scratch Python repository, with `python3 -m pytest -q` as
+verification. pytest was not installed. Over 56 shell commands the agent tried
+`pip3 install pytest` (refused by PEP 668), `pip3 install --break-system-packages`
+(no network: `Name or service not known`), `sudo apt-get install -y python3-pytest`
+(refused: `The "no new privileges" flag is set`), and `apt-get download` (no DNS). It
+then wrote a 217-line `pytest.py` into the repository root, committed as part of the work.
+
+aidev's verification passed in 31 ms. `python3 -c "import pytest; print(pytest.__file__)"`
+in a checkout of the branch prints the agent's file: **aidev's check ran code written by
+the agent it was checking.**
+
+Two things were true and neither is a defence. The agent disclosed the file in its summary
+("Added `pytest.py` fallback runner"). And the shim is not a fake: changing the test's
+expected value makes it report `1 failed` and exit 1. aidev cannot know either in general;
+the product rule is that an agent's account is not evidence.
+
+### Approval prompts
+
+`codex exec` has no `--ask-for-approval` flag (it exists only on interactive `codex`), and
+the 69 `item.completed` events of this run contain no approval event. Non-interactive runs
+never stop to ask. What stopped the `sudo` and network attempts was the sandbox, not a
+prompt — so the sandbox setting, not the approval policy, is the control that matters for
+aidev.
+
+### How a runner is resolved from the worktree (Python 3.12.3, Go 1.26)
+
+| Probe | Result |
+|---|---|
+| `exec.Command("mytool")` with `Dir` holding an executable `./mytool` | `executable file not found in $PATH` — bare names are never taken from the working directory |
+| `python3 -m unittest` with `./unittest.py` | shadowed |
+| `python3 -munittest` | shadowed |
+| `python3 -P -m unittest`, `-I`, `-IP` | not shadowed |
+| `python3 -m shadowmod` with only `./shadowmod.pyc` | shadowed (sourceless import) |
+| `python3 -m notinstalled` with `./notinstalled/__main__.py`, no `__init__.py` | shadowed |
+| same, for an installed module (`unittest/__main__.py`) | not shadowed: a regular package later on `sys.path` wins |
+| `sitecustomize.py` in the working directory, `python3 -c pass` | not loaded |
+| `python3 sub/s.py` | `sys.path[0]` is `sub/`, not the working directory |
+| `importlib.machinery.all_suffixes()` | `.py .pyc .cpython-312-x86_64-linux-gnu.so .abi3.so .so` — every one starts with `<module>.` |
+
+### Git cannot be asked the obvious way
+
+After `git add` + `git commit` inside a worktree, a diff against a copy of the index with
+`add -N` is **empty**; the same diff against the base commit reports the file. So both
+`git status` and the recorded diff (`worker_runs.diff`, `changed_files`) lose work the
+agent committed. And files matching `.gitignore` never appear in either.
+
+### Consequence
+
+Before running verification, aidev lists every path that differs from the base commit —
+including committed and ignored ones — and refuses to run a step whose runner can be
+loaded from one of them: a command given as a relative path, the script an interpreter
+(`sh`, `bash`, `python`) is handed, or the top-level module of `python -m`. The attempt
+fails as `VERIFICATION` without running anything, and the worktree is kept.
+
+This guards the judge, not the exam. Tests, a `Makefile`, `conftest.py`, and project code
+are the work under review; changing them is what tasks are for, and whether the tests still
+test anything is the reviewer's question. Not covered: code passed with `-c` (`python -c`,
+`sh -c`), whose imports aidev cannot see; interpreters other than `sh`/`bash`/`python`; and
+modules beside a script shadowing its imports.
+
 ## 8. Reproducing this research
 
 Probes ran in a gitignored `.probe/` directory inside the repository (scratch repo, worktrees,
