@@ -112,6 +112,11 @@ type Config struct {
 
 	// LogLevel is the minimum level emitted by the structured logger.
 	LogLevel slog.Level
+
+	// ConfigFile is the path of the configuration file that was actually
+	// read. Empty when no file was read, so `aidev config` can report which
+	// file is in effect.
+	ConfigFile string
 }
 
 // Lookup abstracts environment access so tests need no global state.
@@ -119,6 +124,25 @@ type Lookup func(key string) (string, bool)
 
 // OSLookup reads the real process environment.
 func OSLookup(key string) (string, bool) { return os.LookupEnv(key) }
+
+// DefaultConfigPath reports the fixed location aidev reads its configuration
+// file from when AIDEV_CONFIG names no explicit file: under XDG_CONFIG_HOME
+// when set, otherwise under ~/.config. It touches nothing on disk, so
+// documentation and `aidev config` can tell a user where to create the file
+// without requiring one to exist.
+func DefaultConfigPath(lookup Lookup) (string, error) {
+	if lookup == nil {
+		lookup = OSLookup
+	}
+	if xdg, ok := lookup("XDG_CONFIG_HOME"); ok && strings.TrimSpace(xdg) != "" {
+		return filepath.Join(strings.TrimSpace(xdg), "aidev", "config.env"), nil
+	}
+	home, ok := lookup("HOME")
+	if !ok || strings.TrimSpace(home) == "" {
+		return "", errors.New("no XDG_CONFIG_HOME or HOME is set, so the default config file location cannot be determined (set AIDEV_CONFIG to name a file explicitly)")
+	}
+	return filepath.Join(strings.TrimSpace(home), ".config", "aidev", "config.env"), nil
+}
 
 // Load resolves configuration from lookup, applying defaults and validating
 // the result. All problems are reported together rather than one per run.
@@ -143,12 +167,29 @@ func Load(lookup Lookup) (Config, error) {
 		problems = append(problems, fmt.Sprintf(format, args...))
 	}
 
-	cfg.DatabaseURL = strings.TrimSpace(get(lookup, "DATABASE_URL"))
+	// A file lets a new shell reuse yesterday's settings instead of starting
+	// from a blank environment. Real variables still win, so one command can
+	// run differently without editing anything.
+	fileValues := map[string]string{}
+	if path := configFilePath(lookup); path != "" {
+		values, found, err := readConfigFile(path)
+		if err != nil {
+			fail("%v", err)
+		} else if found {
+			cfg.ConfigFile = path
+		}
+		if values != nil {
+			fileValues = values
+		}
+	}
+	resolved := overlayLookup(lookup, fileValues)
+
+	cfg.DatabaseURL = strings.TrimSpace(get(resolved, "DATABASE_URL"))
 	if cfg.DatabaseURL == "" {
 		fail("DATABASE_URL is required (example: postgres://aidev:aidev@127.0.0.1:5434/aidev?sslmode=disable)")
 	}
 
-	root := strings.TrimSpace(get(lookup, "WORKSPACE_ROOT"))
+	root := strings.TrimSpace(get(resolved, "WORKSPACE_ROOT"))
 	if root == "" {
 		def, err := defaultWorkspaceRoot()
 		if err != nil {
@@ -165,32 +206,32 @@ func Load(lookup Lookup) (Config, error) {
 		}
 	}
 
-	if d, ok, err := duration(lookup, "DEFAULT_TASK_TIMEOUT"); err != nil {
+	if d, ok, err := duration(resolved, "DEFAULT_TASK_TIMEOUT"); err != nil {
 		fail("%v", err)
 	} else if ok {
 		cfg.DefaultTaskTimeout = d
 	}
 
-	if d, ok, err := duration(lookup, "DEFAULT_VERIFICATION_TIMEOUT"); err != nil {
+	if d, ok, err := duration(resolved, "DEFAULT_VERIFICATION_TIMEOUT"); err != nil {
 		fail("%v", err)
 	} else if ok {
 		cfg.DefaultVerificationTimeout = d
 	}
 
-	if v := strings.TrimSpace(get(lookup, "OPENCODE_COMMAND")); v != "" {
+	if v := strings.TrimSpace(get(resolved, "OPENCODE_COMMAND")); v != "" {
 		cfg.OpenCodeCommand = v
 	}
 	// An unset OPENCODE_MODEL takes the default; setting it to an empty string is
 	// how a caller asks OpenCode to choose, which is a different intent and must
 	// stay expressible.
-	if raw, set := lookup("OPENCODE_MODEL"); set {
+	if raw, set := resolved("OPENCODE_MODEL"); set {
 		cfg.OpenCodeModel = strings.TrimSpace(raw)
 	}
-	if v := strings.TrimSpace(get(lookup, "OPENCODE_AGENT")); v != "" {
+	if v := strings.TrimSpace(get(resolved, "OPENCODE_AGENT")); v != "" {
 		cfg.OpenCodeAgent = v
 	}
 
-	if v := strings.TrimSpace(get(lookup, "MAX_OUTPUT_BYTES")); v != "" {
+	if v := strings.TrimSpace(get(resolved, "MAX_OUTPUT_BYTES")); v != "" {
 		n, err := strconv.Atoi(v)
 		switch {
 		case err != nil:
@@ -202,7 +243,7 @@ func Load(lookup Lookup) (Config, error) {
 		}
 	}
 
-	if v := strings.TrimSpace(get(lookup, "WORKTREE_CLEANUP")); v != "" {
+	if v := strings.TrimSpace(get(resolved, "WORKTREE_CLEANUP")); v != "" {
 		policy := CleanupPolicy(strings.ToLower(v))
 		if !policy.Valid() {
 			names := make([]string, 0, len(AllCleanupPolicies()))
@@ -215,7 +256,7 @@ func Load(lookup Lookup) (Config, error) {
 		}
 	}
 
-	if v := strings.TrimSpace(get(lookup, "LOG_LEVEL")); v != "" {
+	if v := strings.TrimSpace(get(resolved, "LOG_LEVEL")); v != "" {
 		lvl, err := ParseLevel(v)
 		if err != nil {
 			fail("%v", err)
@@ -289,6 +330,74 @@ func RedactURL(raw string) string {
 
 func get(lookup Lookup, key string) string {
 	v, _ := lookup(key)
+	return v
+}
+
+// configFilePath resolves which file to attempt from the environment alone,
+// so a file can never redirect aidev to a different file. AIDEV_CONFIG names
+// an explicit file; otherwise the default location applies. Empty means no
+// file should be attempted.
+func configFilePath(env Lookup) string {
+	if p, ok := env("AIDEV_CONFIG"); ok && strings.TrimSpace(p) != "" {
+		return strings.TrimSpace(p)
+	}
+	def, err := DefaultConfigPath(env)
+	if err != nil {
+		return ""
+	}
+	return def
+}
+
+// overlayLookup lets real environment variables override the config file:
+// anything set in the environment wins, and the file fills the gaps. A value
+// present in the file counts as set, so an explicitly empty OPENCODE_MODEL in
+// the file still means "let OpenCode choose".
+func overlayLookup(env Lookup, file map[string]string) Lookup {
+	return func(key string) (string, bool) {
+		if v, ok := env(key); ok {
+			return v, true
+		}
+		v, ok := file[key]
+		return v, ok
+	}
+}
+
+// readConfigFile parses path into KEY=value pairs without executing anything.
+// A file that does not exist is normal for someone who exports variables, and
+// reports found=false with no error; anything else wrong is an error, so that
+// a setting that is plainly present is never silently ignored.
+func readConfigFile(path string) (values map[string]string, found bool, err error) {
+	data, rerr := os.ReadFile(path)
+	if rerr != nil {
+		if os.IsNotExist(rerr) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("read config file %s: %w", path, rerr)
+	}
+	values = make(map[string]string)
+	for n, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if key = strings.TrimSpace(key); !ok || key == "" {
+			return values, true, fmt.Errorf("config file %s line %d: expected KEY=value, got %q", path, n+1, trimmed)
+		}
+		values[key] = unquoteConfigValue(strings.TrimSpace(value))
+	}
+	return values, true, nil
+}
+
+// unquoteConfigValue strips one matching pair of surrounding quotes, the
+// convention people expect in these files. Nothing inside is interpreted:
+// there is no shell here, so a value is taken literally.
+func unquoteConfigValue(v string) string {
+	if len(v) >= 2 {
+		if first, last := v[0], v[len(v)-1]; (first == '"' || first == '\'') && first == last {
+			return v[1 : len(v)-1]
+		}
+	}
 	return v
 }
 

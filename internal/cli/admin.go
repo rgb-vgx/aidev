@@ -31,6 +31,7 @@ func runConfig(_ context.Context, env *Env, args []string) error {
 
 	if *asJSON {
 		return writeJSON(env.Stdout, map[string]any{
+			"config_file":                  cfg.ConfigFile,
 			"database_url":                 cfg.DatabaseURL,
 			"workspace_root":               cfg.WorkspaceRoot,
 			"default_task_timeout":         cfg.DefaultTaskTimeout.String(),
@@ -48,6 +49,18 @@ func runConfig(_ context.Context, env *Env, args []string) error {
 	if model == "" {
 		model = "(let opencode choose)"
 	}
+	// A user who exports variables has no file; say so plainly and point at
+	// the location a file could be created, so the next shell is not a fresh
+	// setup.
+	configFile := cfg.ConfigFile
+	if configFile == "" {
+		if def, err := config.DefaultConfigPath(config.OSLookup); err == nil {
+			configFile = fmt.Sprintf("(none; create %s to persist settings)", def)
+		} else {
+			configFile = "(none)"
+		}
+	}
+	fmt.Fprintf(env.Stdout, "config file                   %s\n", configFile)
 	fmt.Fprintf(env.Stdout, "database url                  %s\n", cfg.DatabaseURL)
 	fmt.Fprintf(env.Stdout, "workspace root                %s\n", cfg.WorkspaceRoot)
 	fmt.Fprintf(env.Stdout, "default task timeout          %s\n", cfg.DefaultTaskTimeout)
