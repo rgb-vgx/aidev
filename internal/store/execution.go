@@ -197,6 +197,68 @@ func (s *Store) GetWorktreeByAttempt(ctx context.Context, attemptID uuid.UUID) (
 	return w, nil
 }
 
+// WorktreeWithTask is a worktree together with the task it belongs to, which is
+// what an operator needs to make sense of a directory on disk.
+type WorktreeWithTask struct {
+	Worktree      task.Worktree
+	TaskID        uuid.UUID
+	TaskRef       string
+	TaskTitle     string
+	TaskStatus    task.Status
+	AttemptNumber int
+}
+
+// ListWorktrees returns worktrees with their task, newest first, optionally
+// restricted to certain statuses.
+//
+// It exists because a worktree on disk is meaningless on its own: an operator
+// looking at WORKSPACE_ROOT needs to know which task left it there and how that
+// task ended.
+func (s *Store) ListWorktrees(ctx context.Context, statuses []task.WorktreeStatus) ([]WorktreeWithTask, error) {
+	wanted := make([]string, 0, len(statuses))
+	for _, st := range statuses {
+		wanted = append(wanted, string(st))
+	}
+
+	rows, err := s.db.Query(ctx, `
+		SELECT w.id, w.attempt_id, w.path, w.branch, w.base_commit, w.head_commit,
+		       w.status, w.created_at, w.removed_at,
+		       t.id, t.ref, t.title, t.status, a.attempt_number
+		FROM worktrees w
+		JOIN task_attempts a ON a.id = w.attempt_id
+		JOIN tasks t ON t.id = a.task_id
+		WHERE cardinality($1::text[]) = 0 OR w.status = ANY($1)
+		ORDER BY w.created_at DESC`, wanted)
+	if err != nil {
+		return nil, fmt.Errorf("list worktrees: %w", classify(err))
+	}
+	defer rows.Close()
+
+	var out []WorktreeWithTask
+	for rows.Next() {
+		var (
+			item       WorktreeWithTask
+			wtStatus   string
+			taskStatus string
+		)
+		err := rows.Scan(
+			&item.Worktree.ID, &item.Worktree.AttemptID, &item.Worktree.Path,
+			&item.Worktree.Branch, &item.Worktree.BaseCommit, &item.Worktree.HeadCommit,
+			&wtStatus, &item.Worktree.CreatedAt, &item.Worktree.RemovedAt,
+			&item.TaskID, &item.TaskRef, &item.TaskTitle, &taskStatus, &item.AttemptNumber)
+		if err != nil {
+			return nil, fmt.Errorf("list worktrees: %w", classify(err))
+		}
+		item.Worktree.Status = task.WorktreeStatus(wtStatus)
+		item.TaskStatus = task.Status(taskStatus)
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list worktrees: %w", classify(err))
+	}
+	return out, nil
+}
+
 // ListRetainedWorktrees returns worktrees deliberately kept after a failure, so
 // an operator can find and review abandoned work.
 func (s *Store) ListRetainedWorktrees(ctx context.Context) ([]task.Worktree, error) {
