@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -713,6 +714,22 @@ func (r *run) verify(ctx context.Context) (Outcome, error) {
 		return Outcome{}, err
 	}
 
+	// A runner the agent changed is not independent evidence, so verification
+	// does not run at all when one is found.
+	changed, err := r.worktree.ChangedPaths(ctx)
+	if err != nil {
+		span.SetAttributes(attribute.Bool("aidev.verification.passed", false))
+		return r.fail(ctx, task.FailureInternal,
+			fmt.Errorf("verification not run: cannot establish independence: %w", err))
+	}
+	if intercepted := verification.Interceptions(r.task.Verification, changed); len(intercepted) > 0 {
+		span.SetAttributes(attribute.Bool("aidev.verification.passed", false))
+		r.emit(ctx, event.TypeVerificationIntercepted, map[string]any{
+			"interceptions": interceptionPayload(intercepted),
+		})
+		return r.fail(ctx, task.FailureVerification, interceptionError(intercepted))
+	}
+
 	report, err := r.o.Verifier.Run(ctx, verification.Request{
 		AttemptID:  r.attempt.ID,
 		WorkingDir: r.worktree.Path,
@@ -744,6 +761,31 @@ func (r *run) verify(ctx context.Context) (Outcome, error) {
 		return r.fail(ctx, report.FailureKind, fmt.Errorf("verification did not pass: %s", report.Summary()))
 	}
 	return r.succeed(ctx)
+}
+
+// interceptionPayload lists what was replaced for the audit log, so a reviewer
+// can see which runner each step would have loaded.
+func interceptionPayload(ins []verification.Interception) []map[string]any {
+	out := make([]map[string]any, 0, len(ins))
+	for _, in := range ins {
+		out = append(out, map[string]any{
+			"step_index": in.StepIndex,
+			"step":       in.Step,
+			"path":       in.Path,
+		})
+	}
+	return out
+}
+
+// interceptionError names every step and path, so the failure reason tells a
+// reviewer what was replaced without opening the audit log.
+func interceptionError(ins []verification.Interception) error {
+	parts := make([]string, 0, len(ins))
+	for _, in := range ins {
+		parts = append(parts, fmt.Sprintf("step %d `%s` would run %s, which changed during this attempt",
+			in.StepIndex, in.Step, in.Path))
+	}
+	return fmt.Errorf("verification not run: %s", strings.Join(parts, "; "))
 }
 
 // traceVerificationSteps emits one span per declared step, including steps that

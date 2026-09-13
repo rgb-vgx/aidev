@@ -36,9 +36,10 @@ const (
 	TypeWorkerCompleted Type = "task.worker_completed"
 
 	// Independent verification.
-	TypeVerificationStarted   Type = "task.verification_started"
-	TypeVerificationStepRan   Type = "task.verification_step_completed"
-	TypeVerificationCompleted Type = "task.verification_completed"
+	TypeVerificationStarted     Type = "task.verification_started"
+	TypeVerificationStepRan     Type = "task.verification_step_completed"
+	TypeVerificationCompleted   Type = "task.verification_completed"
+	TypeVerificationIntercepted Type = "task.verification_intercepted"
 
 	// Approval policy.
 	TypeApprovalRequired Type = "task.approval_required"
@@ -56,6 +57,7 @@ func AllTypes() []Type {
 		TypeWorktreeCreated, TypeWorktreeRemoved, TypeWorktreeRetained,
 		TypeWorkerStarted, TypeWorkerCompleted,
 		TypeVerificationStarted, TypeVerificationStepRan, TypeVerificationCompleted,
+		TypeVerificationIntercepted,
 		TypeApprovalRequired, TypeApprovalGranted, TypeApprovalDenied,
 	}
 }
