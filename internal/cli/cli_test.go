@@ -3,16 +3,11 @@ package cli
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"flag"
 	"strings"
 	"testing"
-	"time"
-
-	"github.com/google/uuid"
 
 	"aidev/internal/task"
-	"aidev/internal/worker"
 )
 
 func runCLI(t *testing.T, args ...string) (stdout, stderr string, err error) {
@@ -173,101 +168,6 @@ func TestRepeatableFlag(t *testing.T) {
 	}
 }
 
-// The JSON shape is an interface that scripts and the MCP layer depend on, so the
-// field names are asserted rather than left to derive from the domain struct.
-func TestTaskViewJSONShape(t *testing.T) {
-	tk := task.Task{
-		ID:               uuid.Must(uuid.NewV7()),
-		Ref:              "TASK-000007",
-		ProjectID:        uuid.Must(uuid.NewV7()),
-		Title:            "Add a Greet function",
-		Status:           task.StatusSucceeded,
-		Agent:            "build",
-		Priority:         10,
-		RequiresApproval: true,
-		Timeout:          90 * time.Second,
-		Verification: []task.VerificationStep{
-			{Command: "go", Args: []string{"test", "./..."}},
-		},
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}
-
-	encoded, err := json.Marshal(newTaskView(tk))
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	var decoded map[string]any
-	if err := json.Unmarshal(encoded, &decoded); err != nil {
-		t.Fatal(err)
-	}
-
-	for _, key := range []string{"ref", "id", "status", "title", "agent", "priority", "verification", "requires_approval", "created_at"} {
-		if _, ok := decoded[key]; !ok {
-			t.Errorf("JSON is missing %q: %s", key, encoded)
-		}
-	}
-	if decoded["status"] != "SUCCEEDED" {
-		t.Errorf("status = %v", decoded["status"])
-	}
-	if got := decoded["verification"].([]any); len(got) != 1 || got[0] != "go test ./..." {
-		t.Errorf("verification = %v, want the rendered command", got)
-	}
-	if decoded["timeout_seconds"].(float64) != 90 {
-		t.Errorf("timeout_seconds = %v, want 90", decoded["timeout_seconds"])
-	}
-}
-
-// A failing step's output is included even in the compact view: it is the first
-// thing anyone wants after a failure.
-func TestVerificationViewIncludesFailureOutput(t *testing.T) {
-	exit := 1
-	runs := []task.VerificationRun{
-		{StepIndex: 0, Command: "go test ./...", Status: task.VerificationPassed, Stdout: "ok"},
-		{StepIndex: 1, Command: "go vet ./...", Status: task.VerificationFailed, ExitCode: &exit, Stderr: "vet: something is wrong"},
-		{StepIndex: 2, Command: "true", Status: task.VerificationSkipped},
-	}
-
-	compact := newVerificationViews(runs, false)
-	if compact[0].Stdout != "" {
-		t.Errorf("a passing step's output should be omitted in the compact view, got %q", compact[0].Stdout)
-	}
-	if !strings.Contains(compact[1].Stderr, "something is wrong") {
-		t.Errorf("the failing step's stderr was omitted: %+v", compact[1])
-	}
-	if compact[2].Status != "SKIPPED" {
-		t.Errorf("step 2 status = %q", compact[2].Status)
-	}
-
-	full := newVerificationViews(runs, true)
-	if full[0].Stdout != "ok" {
-		t.Errorf("--logs should include a passing step's output, got %q", full[0].Stdout)
-	}
-}
-
-func TestResultViewOmitsAbsentSections(t *testing.T) {
-	view := buildResultView(worker.Outcome{
-		Task:    task.Task{Ref: "TASK-000001", Status: task.StatusPending},
-		Message: "not run yet",
-	}, nil, false)
-
-	encoded, err := json.Marshal(view)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Only the top level is checked: the task object legitimately carries its own
-	// "verification" field, which is the declared commands rather than results.
-	var top map[string]json.RawMessage
-	if err := json.Unmarshal(encoded, &top); err != nil {
-		t.Fatal(err)
-	}
-	for _, absent := range []string{"attempt", "worker", "verification", "worktree", "approval"} {
-		if _, present := top[absent]; present {
-			t.Errorf("result JSON has a %q section for a task that has not run: %s", absent, encoded)
-		}
-	}
-}
-
 func TestTaskDetailMentionsWhoRunsVerification(t *testing.T) {
 	var buf bytes.Buffer
 	writeTaskDetail(&buf, task.Task{
@@ -299,19 +199,12 @@ func TestExitErrorCarriesAStatus(t *testing.T) {
 	}
 }
 
-func TestTruncateAndTail(t *testing.T) {
+func TestTruncate(t *testing.T) {
 	if got := truncate("abcdef", 4); got != "abc…" {
 		t.Errorf("truncate = %q", got)
 	}
 	if got := truncate("abc", 10); got != "abc" {
 		t.Errorf("truncate should leave short input alone, got %q", got)
-	}
-	// tail keeps the end, which is where a failure's explanation usually is.
-	if got := tail("0123456789", 4); got != "…6789" {
-		t.Errorf("tail = %q", got)
-	}
-	if got := tail("abc", 10); got != "abc" {
-		t.Errorf("tail should leave short input alone, got %q", got)
 	}
 }
 

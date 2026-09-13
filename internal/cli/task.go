@@ -11,6 +11,7 @@ import (
 
 	"aidev/internal/store"
 	"aidev/internal/task"
+	"aidev/internal/view"
 	"aidev/internal/worker"
 )
 
@@ -175,10 +176,10 @@ flags:
 	}
 
 	if *asJSON {
-		return writeJSON(env.Stdout, newTaskView(created))
+		return writeJSON(env.Stdout, view.NewTask(created))
 	}
 	fmt.Fprintf(env.Stdout, "created %s  %s\n", created.Ref, created.Title)
-	fmt.Fprintf(env.Stdout, "  verification: %s\n", strings.Join(newTaskView(created).Verification, ", "))
+	fmt.Fprintf(env.Stdout, "  verification: %s\n", strings.Join(view.NewTask(created).Verification, ", "))
 	if created.RequiresApproval {
 		fmt.Fprintf(env.Stdout, "  approval required before it can run: aidev task approve %s\n", created.Ref)
 	} else {
@@ -227,7 +228,7 @@ func taskList(ctx context.Context, env *Env, args []string) error {
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				if *asJSON {
-					return writeJSON(env.Stdout, []taskView{})
+					return writeJSON(env.Stdout, []view.Task{})
 				}
 				fmt.Fprintf(env.Stdout, "no tasks for %s yet\n", repository.Path)
 				return nil
@@ -243,9 +244,9 @@ func taskList(ctx context.Context, env *Env, args []string) error {
 	}
 
 	if *asJSON {
-		views := make([]taskView, 0, len(tasks))
+		views := make([]view.Task, 0, len(tasks))
 		for _, t := range tasks {
-			views = append(views, newTaskView(t))
+			views = append(views, view.NewTask(t))
 		}
 		return writeJSON(env.Stdout, views)
 	}
@@ -284,7 +285,7 @@ func taskGet(ctx context.Context, env *Env, args []string) error {
 	}
 
 	if *asJSON {
-		return writeJSON(env.Stdout, newTaskView(t))
+		return writeJSON(env.Stdout, view.NewTask(t))
 	}
 	writeTaskDetail(env.Stdout, t)
 	return nil
@@ -412,16 +413,16 @@ func taskResult(ctx context.Context, env *Env, args []string) error {
 	}
 
 	if *asJSON {
-		view := buildResultView(outcome, runs, *withLogs)
+		resultView := buildResultView(outcome, runs, *withLogs)
 		if *withLogs {
 			return writeJSON(env.Stdout, struct {
-				resultView
+				view.Result
 				Stdout string `json:"agent_stdout,omitempty"`
 				Stderr string `json:"agent_stderr,omitempty"`
 				Diff   string `json:"diff,omitempty"`
-			}{resultView: view, Stdout: stdout, Stderr: stderr, Diff: diff})
+			}{Result: resultView, Stdout: stdout, Stderr: stderr, Diff: diff})
 		}
-		return writeJSON(env.Stdout, view)
+		return writeJSON(env.Stdout, resultView)
 	}
 
 	writeResult(env, outcome, runs)
@@ -467,9 +468,9 @@ func taskEvents(ctx context.Context, env *Env, args []string) error {
 	}
 
 	if *asJSON {
-		views := make([]eventView, 0, len(events))
+		views := make([]view.Event, 0, len(events))
 		for _, e := range events {
-			views = append(views, newEventView(e, true))
+			views = append(views, view.NewEvent(e, true))
 		}
 		return writeJSON(env.Stdout, views)
 	}
@@ -583,24 +584,8 @@ func statusNames() []string {
 	return names
 }
 
-func buildResultView(outcome worker.Outcome, runs []task.VerificationRun, includeOutput bool) resultView {
-	view := resultView{Task: newTaskView(outcome.Task), Message: outcome.Message}
-	if outcome.Attempt != nil && outcome.Attempt.ID.String() != "00000000-0000-0000-0000-000000000000" {
-		view.Attempt = newAttemptView(*outcome.Attempt)
-	}
-	if outcome.WorkerRun != nil {
-		view.Worker = newWorkerView(*outcome.WorkerRun)
-	}
-	if len(runs) > 0 {
-		view.Verification = newVerificationViews(runs, includeOutput)
-	}
-	if outcome.Worktree != nil {
-		view.Worktree = newWorktreeView(*outcome.Worktree)
-	}
-	if outcome.Approval != nil {
-		view.Approval = newApprovalView(*outcome.Approval)
-	}
-	return view
+func buildResultView(outcome worker.Outcome, runs []task.VerificationRun, includeOutput bool) view.Result {
+	return view.NewResult(outcome.Task, outcome.Attempt, outcome.WorkerRun, runs, outcome.Worktree, outcome.Approval, outcome.Message, includeOutput)
 }
 
 // exitError carries a specific exit status without being an error message.
