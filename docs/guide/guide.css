@@ -153,37 +153,42 @@ th {
   max-width: 100%;
 }
 
-/* Narrow viewports (the content column is at most 46rem, so this never applies
-   at desktop widths): wide tables and long unbroken code strings would
-   otherwise force the whole page wider than the viewport. */
-@media (max-width: 46rem) {
-  /* A table cannot scroll with display: table, so it becomes a scroll
-     container here. Its width stays at 100% of the column; wider content
-     scrolls inside the table box instead of stretching the page. */
-  table {
-    display: block;
-    max-width: 100%;
-    overflow-x: auto;
-  }
+/* Overflow containment below is unconditional on purpose. Viewport width is
+   the wrong axis: what matters is whether the content is wider than the box
+   holding it, and CSS cannot express that as a media query. A 768px viewport
+   already has the content column at its 736px maximum while a table can still
+   need 1021px, so a max-width media query misses it. Where the content already
+   fits, an overflow rule changes nothing visible, which is why gating on
+   viewport width would be wrong here. (The only remaining media query above is
+   prefers-color-scheme, which is about user theme preference, not width, so
+   viewport width is irrelevant to it.) */
 
-  /* Keep cells readable inside the scroll container: without a floor the
-     columns would squeeze into narrow slivers to fit the column width instead
-     of overflowing into the table's own scroll area. */
-  th, td {
-    min-width: 6rem;
-  }
+/* A table cannot scroll with display: table, so it becomes a scroll
+   container here. Its width stays at 100% of the column; wider content
+   scrolls inside the table box instead of stretching the page. */
+table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
 
-  /* Long unbroken strings (URLs, paths, model names) in inline code would
-     otherwise force their paragraph or table cell wider than the viewport.
-     Breaking them lets the text wrap instead. */
-  code {
-    overflow-wrap: anywhere;
-  }
+/* Keep cells readable inside the scroll container: without a floor the
+   columns would squeeze into narrow slivers to fit the column width instead
+   of overflowing into the table's own scroll area. */
+th, td {
+  min-width: 6rem;
+}
 
-  /* Inside pre the box itself scrolls, so code there must keep its unbroken
-     lines rather than inheriting the inline wrapping above. */
-  pre code {
-    overflow-wrap: normal;
-    word-break: normal;
-  }
+/* Long unbroken strings (URLs, paths, model names) in inline code would
+   otherwise force their paragraph or table cell wider than the viewport.
+   Breaking them lets the text wrap instead. */
+code {
+  overflow-wrap: anywhere;
+}
+
+/* Inside pre the box itself scrolls, so code there must keep its unbroken
+   lines rather than inheriting the inline wrapping above. */
+pre code {
+  overflow-wrap: normal;
+  word-break: normal;
 }
