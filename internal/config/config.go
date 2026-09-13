@@ -72,6 +72,31 @@ func AllCleanupPolicies() []CleanupPolicy {
 	return []CleanupPolicy{CleanupOnSuccess, CleanupNever}
 }
 
+// Backend names the agent implementation that runs tasks.
+type Backend string
+
+const (
+	// BackendOpenCode runs tasks through the OpenCode CLI. This is the default.
+	BackendOpenCode Backend = "opencode"
+	// BackendCodex runs tasks through the Codex CLI.
+	BackendCodex Backend = "codex"
+)
+
+// DefaultCodexCommand is the executable name, resolved through PATH.
+const DefaultCodexCommand = "codex"
+
+// Valid reports whether b is a known backend.
+func (b Backend) Valid() bool {
+	return b == BackendOpenCode || b == BackendCodex
+}
+
+func (b Backend) String() string { return string(b) }
+
+// AllBackends lists every backend, for error messages and documentation.
+func AllBackends() []Backend {
+	return []Backend{BackendOpenCode, BackendCodex}
+}
+
 // Config is the fully resolved, validated configuration.
 type Config struct {
 	// DatabaseURL is the PostgreSQL connection string. Required.
@@ -100,6 +125,22 @@ type Config struct {
 	// one. Phase 0 found that OpenCode silently falls back to its default on
 	// an unknown agent name and still exits 0, so aidev validates this itself.
 	OpenCodeAgent string
+
+	// AgentBackend selects which agent implementation runs tasks.
+	AgentBackend Backend
+
+	// CodexCommand is the executable used by the Codex backend.
+	CodexCommand string
+
+	// CodexProfile is passed as --profile when set. On this installation a
+	// profile is required for codex to reach a model at all.
+	CodexProfile string
+
+	// CodexModel is passed as -m when set. Empty lets Codex choose.
+	CodexModel string
+
+	// CodexSandbox is passed as --sandbox when set.
+	CodexSandbox string
 
 	// MaxOutputBytes bounds each captured stdout/stderr stream. Output beyond
 	// it is discarded and flagged as truncated, so a runaway agent cannot
@@ -157,9 +198,14 @@ func Load(lookup Lookup) (Config, error) {
 		OpenCodeCommand:            DefaultOpenCodeCommand,
 		OpenCodeModel:              DefaultOpenCodeModel,
 		OpenCodeAgent:              DefaultOpenCodeAgent,
-		MaxOutputBytes:             DefaultMaxOutputBytes,
-		WorktreeCleanup:            DefaultCleanupPolicy,
-		LogLevel:                   slog.LevelInfo,
+		AgentBackend:               BackendOpenCode,
+		CodexCommand:               DefaultCodexCommand,
+		// The default sandbox must let the agent write in its worktree, or
+		// every task fails at the first file it creates.
+		CodexSandbox:    "workspace-write",
+		MaxOutputBytes:  DefaultMaxOutputBytes,
+		WorktreeCleanup: DefaultCleanupPolicy,
+		LogLevel:        slog.LevelInfo,
 	}
 
 	var problems []string
@@ -229,6 +275,28 @@ func Load(lookup Lookup) (Config, error) {
 	}
 	if v := strings.TrimSpace(get(resolved, "OPENCODE_AGENT")); v != "" {
 		cfg.OpenCodeAgent = v
+	}
+
+	if v := strings.TrimSpace(get(resolved, "AGENT_BACKEND")); v != "" {
+		backend := Backend(strings.ToLower(v))
+		if !backend.Valid() {
+			names := make([]string, 0, len(AllBackends()))
+			for _, b := range AllBackends() {
+				names = append(names, string(b))
+			}
+			fail("AGENT_BACKEND %q is not one of %s", v, strings.Join(names, ", "))
+		} else {
+			cfg.AgentBackend = backend
+		}
+	}
+
+	if v := strings.TrimSpace(get(resolved, "CODEX_COMMAND")); v != "" {
+		cfg.CodexCommand = v
+	}
+	cfg.CodexProfile = strings.TrimSpace(get(resolved, "CODEX_PROFILE"))
+	cfg.CodexModel = strings.TrimSpace(get(resolved, "CODEX_MODEL"))
+	if v := strings.TrimSpace(get(resolved, "CODEX_SANDBOX")); v != "" {
+		cfg.CodexSandbox = v
 	}
 
 	if v := strings.TrimSpace(get(resolved, "MAX_OUTPUT_BYTES")); v != "" {

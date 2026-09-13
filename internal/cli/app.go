@@ -58,7 +58,17 @@ func openApp(ctx context.Context) (*app, error) {
 	}
 	gitManager.MaxOutputBytes = cfg.MaxOutputBytes
 
-	backend := agent.NewOpenCode(cfg.OpenCodeCommand, cfg.OpenCodeModel)
+	// The backend is selectable so that the Codex implementation is reachable;
+	// OpenCode remains the default.
+	var backend agent.Backend = agent.NewOpenCode(cfg.OpenCodeCommand, cfg.OpenCodeModel)
+	if cfg.AgentBackend == config.BackendCodex {
+		backend = agent.NewCodex(agent.CodexOptions{
+			Command: cfg.CodexCommand,
+			Profile: cfg.CodexProfile,
+			Model:   cfg.CodexModel,
+			Sandbox: cfg.CodexSandbox,
+		})
+	}
 
 	// Tracing is wired here because this is the only place that knows a command is
 	// starting and ending. internal/worker creates spans against the global
