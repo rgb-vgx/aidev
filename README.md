@@ -344,6 +344,30 @@ aidev's own verification passed.
 
 Full schemas, errors and side effects: **[docs/mcp-tools.md](docs/mcp-tools.md)**.
 
+### This has been run, not only wired up
+
+Claude Code was given a repository with a test that did not compile, told to use
+only the aidev MCP tools, and explicitly denied `Edit`, `Write`, `Read` and `Bash` —
+so the work could not have come from anywhere but aidev. It created and ran the
+task, then reported back:
+
+```text
+The task is TASK-000008 and it succeeded (status SUCCEEDED, first attempt, about 9 seconds).
+
+| Command         | Exit code | Result                        |
+| go test ./...   | 0         | PASSED: ok  demo (cached)     |
+| go vet ./...    | 0         | PASSED, no output             |
+
+What changed: one new file, reverse.go. reverse_test.go was not modified.
+Where the work is: committed on branch aidev/TASK-000008 (commit 1aeca30).
+Nothing was merged into your branch, and the task's worktree has been removed.
+```
+
+Checked afterwards without trusting any of it: the task is in PostgreSQL with both
+verification steps at exit code 0, the repository's own working tree is clean and
+has no `reverse.go`, the branch has it, and `go clean -testcache && go test` run by
+hand on that branch passes `TestReverse`. The whole exchange took 35 seconds.
+
 ## Development and testing
 
 ```bash
