@@ -106,6 +106,11 @@ func englishPages() []page {
 				"WORKSPACE_ROOT",
 				"--verify",
 				"aidev/TASK-",
+				// A reader who closes the terminal must be able to come back
+				// tomorrow without repeating the setup, so the guide has to say
+				// where configuration lives and how aidev gets on the PATH.
+				"config.env",
+				"make install",
 			},
 			minBytes:      9000,
 			minCodeBlocks: 6,
@@ -146,6 +151,7 @@ func englishPages() []page {
 				"task.verification_completed",
 				"aidev_create_task", "aidev_run_task", "aidev_get_task_result",
 				"DEFAULT_TASK_TIMEOUT", "WORKTREE_CLEANUP", "OPENCODE_MODEL",
+				"AIDEV_CONFIG",
 			},
 			minBytes:      11000,
 			minCodeBlocks: 4,
