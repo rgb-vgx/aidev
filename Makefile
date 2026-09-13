@@ -18,7 +18,7 @@ TEST_DB_URL ?= postgres://aidev:aidev@127.0.0.1:$(DB_PORT)/aidev_test?sslmode=di
         db-up db-down db-reset db-logs migrate clean
 
 help: ## show this help
-	@grep -hE '^[a-z-]+:.*?##' $(MAKEFILE_LIST) | sort | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
+	@grep -hE '^[a-z0-9-]+:.*?##' $(MAKEFILE_LIST) | sort | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 
 build: ## build the aidev binary into bin/
 	$(GO) build -ldflags "-X main.version=$(VERSION)" -o $(BIN) ./cmd/aidev
