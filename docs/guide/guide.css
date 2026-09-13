@@ -106,6 +106,9 @@ pre {
   border-radius: 6px;
   padding: 1rem;
   overflow-x: auto;
+  /* Constrain the box to the content column so long lines scroll inside the
+     block instead of pushing the whole page wider. */
+  max-width: 100%;
   line-height: 1.5;
 }
 
@@ -146,4 +149,41 @@ th {
 .diagram {
   white-space: pre;
   overflow-x: auto;
+  /* Same as pre: the box stays within the column and scrolls internally. */
+  max-width: 100%;
+}
+
+/* Narrow viewports (the content column is at most 46rem, so this never applies
+   at desktop widths): wide tables and long unbroken code strings would
+   otherwise force the whole page wider than the viewport. */
+@media (max-width: 46rem) {
+  /* A table cannot scroll with display: table, so it becomes a scroll
+     container here. Its width stays at 100% of the column; wider content
+     scrolls inside the table box instead of stretching the page. */
+  table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  /* Keep cells readable inside the scroll container: without a floor the
+     columns would squeeze into narrow slivers to fit the column width instead
+     of overflowing into the table's own scroll area. */
+  th, td {
+    min-width: 6rem;
+  }
+
+  /* Long unbroken strings (URLs, paths, model names) in inline code would
+     otherwise force their paragraph or table cell wider than the viewport.
+     Breaking them lets the text wrap instead. */
+  code {
+    overflow-wrap: anywhere;
+  }
+
+  /* Inside pre the box itself scrolls, so code there must keep its unbroken
+     lines rather than inheriting the inline wrapping above. */
+  pre code {
+    overflow-wrap: normal;
+    word-break: normal;
+  }
 }
