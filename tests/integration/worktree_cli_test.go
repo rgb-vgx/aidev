@@ -18,16 +18,26 @@ import (
 	"aidev/internal/task"
 )
 
-// runCLI drives the real command surface, with the environment the commands read.
+// runCLI drives the real command surface, with the configuration file the commands read.
 // It exists because the worktree commands are the operator's only way to act on the
 // cleanup policy, and testing them below the CLI would leave the part an operator
 // actually touches unexercised.
 func (h *harness) runCLI(t *testing.T, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
 
-	t.Setenv("DATABASE_URL", os.Getenv(envDatabaseURL))
-	t.Setenv("WORKSPACE_ROOT", h.workspace)
-	t.Setenv("LOG_LEVEL", "error")
+	body, err := json.Marshal(map[string]any{
+		"database":       map[string]any{"url": os.Getenv(envDatabaseURL)},
+		"workspace_root": h.workspace,
+		"log_level":      "error",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conf := filepath.Join(t.TempDir(), "conf.json")
+	if err := os.WriteFile(conf, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AIDEV_CONFIG", conf)
 
 	var out, errOut bytes.Buffer
 	err = cli.Run(context.Background(), "test", args, &out, &errOut)
