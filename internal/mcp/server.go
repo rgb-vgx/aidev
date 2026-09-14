@@ -44,10 +44,17 @@ const (
 	shutdownGrace = 45 * time.Second
 )
 
+// Opener connects the server to its dependencies on first use, so that the
+// server can start and answer initialize and tools/list while the database is
+// still down, and only a tool call pays for connecting.
+type Opener func(ctx context.Context) (*worker.Orchestrator, *store.Store, error)
+
 // Server adapts the orchestrator to MCP.
 type Server struct {
 	orchestrator *worker.Orchestrator
 	store        *store.Store
+	open         Opener
+	connMu       sync.Mutex
 	logger       *slog.Logger
 	version      string
 
@@ -69,18 +76,46 @@ type backgroundRun struct {
 	err     error
 }
 
-// New builds a Server.
+// New builds a Server that is already connected.
 func New(orchestrator *worker.Orchestrator, st *store.Store, version string, logger *slog.Logger) *Server {
+	return NewDeferred(func(context.Context) (*worker.Orchestrator, *store.Store, error) {
+		return orchestrator, st, nil
+	}, version, logger)
+}
+
+// NewDeferred builds a Server that connects on the first tool call. The opener
+// is called at most once successfully; its result is kept for every later call.
+// Initialize and tools/list never trigger it, so a client can connect while the
+// database is still down.
+func NewDeferred(open Opener, version string, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = logging.Discard()
 	}
 	return &Server{
-		orchestrator: orchestrator,
-		store:        st,
-		logger:       logger,
-		version:      version,
-		runs:         map[uuid.UUID]*backgroundRun{},
+		open:    open,
+		logger:  logger,
+		version: version,
+		runs:    map[uuid.UUID]*backgroundRun{},
 	}
+}
+
+// connected returns the orchestrator and store, opening them on first use. The
+// mutex is held across the open so two concurrent first calls cannot open
+// twice; a failure is not kept, so the next call tries again. An opener error
+// is returned unchanged so the caller can report it as a tool error.
+func (s *Server) connected(ctx context.Context) (*worker.Orchestrator, *store.Store, error) {
+	s.connMu.Lock()
+	defer s.connMu.Unlock()
+	if s.orchestrator != nil && s.store != nil {
+		return s.orchestrator, s.store, nil
+	}
+	orchestrator, st, err := s.open(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	s.orchestrator = orchestrator
+	s.store = st
+	return orchestrator, st, nil
 }
 
 // MCPServer builds the protocol server with every tool registered.
