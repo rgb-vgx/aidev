@@ -1,20 +1,25 @@
 // Package config loads and validates aidev's runtime configuration.
 //
-// Configuration comes from the environment. Nothing else in aidev reads
-// environment variables directly: everything is funnelled through Load so that
-// an invalid configuration fails at startup with one clear message instead of
-// surfacing halfway through a task execution.
+// Every setting lives in one JSON file named by the AIDEV_CONFIG environment
+// variable. No other environment variable is read for configuration, and there
+// is no config.env: AIDEV_CONFIG must hold the absolute path of a conf.json
+// file. Everything is validated at startup and every problem is reported at
+// once, so an invalid configuration fails fast instead of surfacing halfway
+// through a task execution.
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strconv"
+	"sort"
 	"strings"
 	"time"
+
+	"aidev/internal/tracing"
 )
 
 // Defaults. The task timeout is deliberately generous: Phase 0 observed that
@@ -35,7 +40,7 @@ const (
 	// a marginally better model, because an unpredictable one turns a one-minute
 	// task into an eleven-minute one.
 	//
-	// Set OPENCODE_MODEL to an empty string to let OpenCode choose instead.
+	// agent.opencode.model set to an empty string lets OpenCode choose instead.
 	DefaultOpenCodeModel  = "opencode/muse-spark-1.3-contributor-free"
 	DefaultMaxOutputBytes = 1 << 20 // 1 MiB per captured stream
 	DefaultCleanupPolicy  = CleanupOnSuccess
@@ -118,7 +123,7 @@ type Config struct {
 
 	// OpenCodeModel is passed through as -m. Empty means "let OpenCode choose",
 	// which works with no credentials (docs/research.md §2.10), and is what an
-	// explicitly empty OPENCODE_MODEL selects.
+	// explicitly empty agent.opencode.model selects.
 	OpenCodeModel string
 
 	// OpenCodeAgent is the default OpenCode agent for tasks that do not name
@@ -154,45 +159,182 @@ type Config struct {
 	// LogLevel is the minimum level emitted by the structured logger.
 	LogLevel slog.Level
 
-	// ConfigFile is the path of the configuration file that was actually
-	// read. Empty when no file was read, so `aidev config` can report which
-	// file is in effect.
+	// Tracing holds the tracing section of the configuration file.
+	Tracing tracing.Settings
+
+	// ConfigFile is the path of the configuration file that was read, so
+	// `aidev config` can report which file is in effect.
 	ConfigFile string
 }
 
-// Lookup abstracts environment access so tests need no global state.
+// Lookup abstracts environment access so tests need no global state. Only
+// AIDEV_CONFIG is read from it; everything else lives in the file it names.
 type Lookup func(key string) (string, bool)
 
 // OSLookup reads the real process environment.
 func OSLookup(key string) (string, bool) { return os.LookupEnv(key) }
 
-// DefaultConfigPath reports the fixed location aidev reads its configuration
-// file from when AIDEV_CONFIG names no explicit file: under XDG_CONFIG_HOME
-// when set, otherwise under ~/.config. It touches nothing on disk, so
-// documentation and `aidev config` can tell a user where to create the file
-// without requiring one to exist.
-func DefaultConfigPath(lookup Lookup) (string, error) {
-	if lookup == nil {
-		lookup = OSLookup
-	}
-	if xdg, ok := lookup("XDG_CONFIG_HOME"); ok && strings.TrimSpace(xdg) != "" {
-		return filepath.Join(strings.TrimSpace(xdg), "aidev", "config.env"), nil
-	}
-	home, ok := lookup("HOME")
-	if !ok || strings.TrimSpace(home) == "" {
-		return "", errors.New("no XDG_CONFIG_HOME or HOME is set, so the default config file location cannot be determined (set AIDEV_CONFIG to name a file explicitly)")
-	}
-	return filepath.Join(strings.TrimSpace(home), ".config", "aidev", "config.env"), nil
+// configSchema is the vocabulary of conf.json: every key aidev understands.
+// SettingKeys and the unknown-key check are both derived from it, so the
+// schema is stated once and cannot drift between the two.
+var configSchema = map[string]any{
+	"database": map[string]any{
+		"url": true,
+	},
+	"workspace_root": true,
+	"tasks": map[string]any{
+		"timeout":              true,
+		"verification_timeout": true,
+		"max_output_bytes":     true,
+		"worktree_cleanup":     true,
+	},
+	"agent": map[string]any{
+		"backend": true,
+		"opencode": map[string]any{
+			"command": true,
+			"model":   true,
+			"agent":   true,
+		},
+		"codex": map[string]any{
+			"command": true,
+			"profile": true,
+			"model":   true,
+			"sandbox": true,
+		},
+	},
+	"log_level": true,
+	"tracing": map[string]any{
+		"endpoint":        true,
+		"traces_endpoint": true,
+		"headers":         true,
+		"service_name":    true,
+		"sample_ratio":    true,
+	},
 }
 
-// Load resolves configuration from lookup, applying defaults and validating
-// the result. All problems are reported together rather than one per run.
+// SettingKeys returns the dotted paths of all 20 settings, sorted. It is
+// derived from configSchema rather than typed out separately, so adding a
+// setting to the schema teaches every consumer at once.
+func SettingKeys() []string {
+	var keys []string
+	var walk func(prefix string, node map[string]any)
+	walk = func(prefix string, node map[string]any) {
+		for k, v := range node {
+			key := k
+			if prefix != "" {
+				key = prefix + "." + k
+			}
+			if sub, ok := v.(map[string]any); ok {
+				walk(key, sub)
+				continue
+			}
+			keys = append(keys, key)
+		}
+	}
+	walk("", configSchema)
+	sort.Strings(keys)
+	return keys
+}
+
+// Load resolves configuration from the file named by AIDEV_CONFIG. Nothing
+// else in the environment is read: a variable left over in a shell profile
+// must not quietly win over the file someone is reading and editing.
 func Load(lookup Lookup) (Config, error) {
 	if lookup == nil {
 		lookup = OSLookup
 	}
+	raw, ok := lookup("AIDEV_CONFIG")
+	if !ok || strings.TrimSpace(raw) == "" {
+		return Config{}, errors.New("AIDEV_CONFIG is not set: set it to the absolute path of your conf.json (example: AIDEV_CONFIG=/home/you/aidev/conf/conf.json)")
+	}
+	path := strings.TrimSpace(raw)
+	if !filepath.IsAbs(path) {
+		return Config{}, fmt.Errorf("AIDEV_CONFIG %q must be absolute: set it to the absolute path of your conf.json", path)
+	}
+	return LoadFile(path)
+}
+
+// fileConfig mirrors conf.json with pointers throughout, so an absent key
+// (nil) keeps its default while an explicitly empty value stays expressible —
+// notably agent.opencode.model, where absent means the default model and
+// empty means let OpenCode choose.
+type fileConfig struct {
+	Database *struct {
+		URL *string `json:"url"`
+	} `json:"database"`
+	WorkspaceRoot *string `json:"workspace_root"`
+	Tasks         *struct {
+		Timeout             *string `json:"timeout"`
+		VerificationTimeout *string `json:"verification_timeout"`
+		MaxOutputBytes      *int    `json:"max_output_bytes"`
+		WorktreeCleanup     *string `json:"worktree_cleanup"`
+	} `json:"tasks"`
+	Agent *struct {
+		Backend  *string `json:"backend"`
+		OpenCode *struct {
+			Command *string `json:"command"`
+			Model   *string `json:"model"`
+			Agent   *string `json:"agent"`
+		} `json:"opencode"`
+		Codex *struct {
+			Command *string `json:"command"`
+			Profile *string `json:"profile"`
+			Model   *string `json:"model"`
+			Sandbox *string `json:"sandbox"`
+		} `json:"codex"`
+	} `json:"agent"`
+	LogLevel *string `json:"log_level"`
+	Tracing  *struct {
+		Endpoint       *string           `json:"endpoint"`
+		TracesEndpoint *string           `json:"traces_endpoint"`
+		Headers        map[string]string `json:"headers"`
+		ServiceName    *string           `json:"service_name"`
+		SampleRatio    *float64          `json:"sample_ratio"`
+	} `json:"tracing"`
+}
+
+// LoadFile reads the JSON configuration file at path. It reports every
+// problem in one error rather than one per run.
+func LoadFile(path string) (Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return Config{}, fmt.Errorf("read config file %s: %w", path, err)
+	}
+
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		if syn, ok := err.(*json.SyntaxError); ok {
+			return Config{}, fmt.Errorf("parse config file %s line %d: %v", path, lineOf(data, syn.Offset), err)
+		}
+		return Config{}, fmt.Errorf("parse config file %s: %w", path, err)
+	}
+	if doc == nil {
+		doc = map[string]any{}
+	}
+
+	var problems []string
+	fail := func(format string, args ...any) {
+		problems = append(problems, fmt.Sprintf(format, args...))
+	}
+
+	// A misspelt key would otherwise be ignored silently and the default used
+	// instead, which is exactly the kind of mistake nobody finds by reading
+	// the file again.
+	for _, unknown := range unknownKeys("", doc, configSchema) {
+		fail("unknown setting %q", unknown)
+	}
+
+	var file fileConfig
+	if err := json.Unmarshal(data, &file); err != nil {
+		if terr, ok := err.(*json.UnmarshalTypeError); ok {
+			fail("setting %s has the wrong type: cannot use %s as %s", terr.Field, terr.Value, terr.Type)
+		} else {
+			fail("parse config file %s: %v", path, err)
+		}
+	}
 
 	cfg := Config{
+		ConfigFile:                 path,
 		DefaultTaskTimeout:         DefaultTaskTimeout,
 		DefaultVerificationTimeout: DefaultVerificationTimeout,
 		OpenCodeCommand:            DefaultOpenCodeCommand,
@@ -208,124 +350,118 @@ func Load(lookup Lookup) (Config, error) {
 		LogLevel:        slog.LevelInfo,
 	}
 
-	var problems []string
-	fail := func(format string, args ...any) {
-		problems = append(problems, fmt.Sprintf(format, args...))
+	if file.Database == nil || file.Database.URL == nil || strings.TrimSpace(*file.Database.URL) == "" {
+		fail("database.url is required (example: postgres://aidev:aidev@127.0.0.1:5434/aidev?sslmode=disable)")
+	} else {
+		cfg.DatabaseURL = strings.TrimSpace(*file.Database.URL)
 	}
 
-	// A file lets a new shell reuse yesterday's settings instead of starting
-	// from a blank environment. Real variables still win, so one command can
-	// run differently without editing anything.
-	fileValues := map[string]string{}
-	if path := configFilePath(lookup); path != "" {
-		values, found, err := readConfigFile(path)
-		if err != nil {
-			fail("%v", err)
-		} else if found {
-			cfg.ConfigFile = path
-		}
-		if values != nil {
-			fileValues = values
-		}
-	}
-	resolved := overlayLookup(lookup, fileValues)
-
-	cfg.DatabaseURL = strings.TrimSpace(get(resolved, "DATABASE_URL"))
-	if cfg.DatabaseURL == "" {
-		fail("DATABASE_URL is required (example: postgres://aidev:aidev@127.0.0.1:5434/aidev?sslmode=disable)")
-	}
-
-	root := strings.TrimSpace(get(resolved, "WORKSPACE_ROOT"))
-	if root == "" {
+	if file.WorkspaceRoot == nil || strings.TrimSpace(*file.WorkspaceRoot) == "" {
 		def, err := defaultWorkspaceRoot()
 		if err != nil {
-			fail("WORKSPACE_ROOT is required: %v", err)
+			fail("workspace_root is required: %v", err)
+		} else {
+			cfg.WorkspaceRoot = def
 		}
-		root = def
-	}
-	if root != "" {
+	} else {
+		root := strings.TrimSpace(*file.WorkspaceRoot)
+		// The MCP server runs with the working directory of whatever
+		// repository is open, so a relative workspace_root can only mean
+		// relative to the file that states it.
+		if !filepath.IsAbs(root) {
+			root = filepath.Join(filepath.Dir(path), root)
+		}
 		abs, err := filepath.Abs(root)
 		if err != nil {
-			fail("WORKSPACE_ROOT %q is not a usable path: %v", root, err)
+			fail("workspace_root %q is not a usable path: %v", strings.TrimSpace(*file.WorkspaceRoot), err)
 		} else {
 			cfg.WorkspaceRoot = filepath.Clean(abs)
 		}
 	}
 
-	if d, ok, err := duration(resolved, "DEFAULT_TASK_TIMEOUT"); err != nil {
-		fail("%v", err)
-	} else if ok {
-		cfg.DefaultTaskTimeout = d
-	}
-
-	if d, ok, err := duration(resolved, "DEFAULT_VERIFICATION_TIMEOUT"); err != nil {
-		fail("%v", err)
-	} else if ok {
-		cfg.DefaultVerificationTimeout = d
-	}
-
-	if v := strings.TrimSpace(get(resolved, "OPENCODE_COMMAND")); v != "" {
-		cfg.OpenCodeCommand = v
-	}
-	// An unset OPENCODE_MODEL takes the default; setting it to an empty string is
-	// how a caller asks OpenCode to choose, which is a different intent and must
-	// stay expressible.
-	if raw, set := resolved("OPENCODE_MODEL"); set {
-		cfg.OpenCodeModel = strings.TrimSpace(raw)
-	}
-	if v := strings.TrimSpace(get(resolved, "OPENCODE_AGENT")); v != "" {
-		cfg.OpenCodeAgent = v
-	}
-
-	if v := strings.TrimSpace(get(resolved, "AGENT_BACKEND")); v != "" {
-		backend := Backend(strings.ToLower(v))
-		if !backend.Valid() {
-			names := make([]string, 0, len(AllBackends()))
-			for _, b := range AllBackends() {
-				names = append(names, string(b))
+	if file.Tasks != nil {
+		if file.Tasks.Timeout != nil && strings.TrimSpace(*file.Tasks.Timeout) != "" {
+			d, err := parseDuration("tasks.timeout", strings.TrimSpace(*file.Tasks.Timeout))
+			if err != nil {
+				fail("%v", err)
+			} else {
+				cfg.DefaultTaskTimeout = d
 			}
-			fail("AGENT_BACKEND %q is not one of %s", v, strings.Join(names, ", "))
-		} else {
-			cfg.AgentBackend = backend
 		}
-	}
-
-	if v := strings.TrimSpace(get(resolved, "CODEX_COMMAND")); v != "" {
-		cfg.CodexCommand = v
-	}
-	cfg.CodexProfile = strings.TrimSpace(get(resolved, "CODEX_PROFILE"))
-	cfg.CodexModel = strings.TrimSpace(get(resolved, "CODEX_MODEL"))
-	if v := strings.TrimSpace(get(resolved, "CODEX_SANDBOX")); v != "" {
-		cfg.CodexSandbox = v
-	}
-
-	if v := strings.TrimSpace(get(resolved, "MAX_OUTPUT_BYTES")); v != "" {
-		n, err := strconv.Atoi(v)
-		switch {
-		case err != nil:
-			fail("MAX_OUTPUT_BYTES %q is not an integer", v)
-		case n < 1024:
-			fail("MAX_OUTPUT_BYTES must be at least 1024, got %d", n)
-		default:
-			cfg.MaxOutputBytes = n
-		}
-	}
-
-	if v := strings.TrimSpace(get(resolved, "WORKTREE_CLEANUP")); v != "" {
-		policy := CleanupPolicy(strings.ToLower(v))
-		if !policy.Valid() {
-			names := make([]string, 0, len(AllCleanupPolicies()))
-			for _, p := range AllCleanupPolicies() {
-				names = append(names, string(p))
+		if file.Tasks.VerificationTimeout != nil && strings.TrimSpace(*file.Tasks.VerificationTimeout) != "" {
+			d, err := parseDuration("tasks.verification_timeout", strings.TrimSpace(*file.Tasks.VerificationTimeout))
+			if err != nil {
+				fail("%v", err)
+			} else {
+				cfg.DefaultVerificationTimeout = d
 			}
-			fail("WORKTREE_CLEANUP %q is not one of %s", v, strings.Join(names, ", "))
-		} else {
-			cfg.WorktreeCleanup = policy
+		}
+		if file.Tasks.MaxOutputBytes != nil {
+			if *file.Tasks.MaxOutputBytes < 1024 {
+				fail("tasks.max_output_bytes must be at least 1024, got %d", *file.Tasks.MaxOutputBytes)
+			} else {
+				cfg.MaxOutputBytes = *file.Tasks.MaxOutputBytes
+			}
+		}
+		if file.Tasks.WorktreeCleanup != nil && strings.TrimSpace(*file.Tasks.WorktreeCleanup) != "" {
+			policy := CleanupPolicy(strings.ToLower(strings.TrimSpace(*file.Tasks.WorktreeCleanup)))
+			if !policy.Valid() {
+				names := make([]string, 0, len(AllCleanupPolicies()))
+				for _, p := range AllCleanupPolicies() {
+					names = append(names, string(p))
+				}
+				fail("tasks.worktree_cleanup %q is not one of %s", strings.TrimSpace(*file.Tasks.WorktreeCleanup), strings.Join(names, ", "))
+			} else {
+				cfg.WorktreeCleanup = policy
+			}
 		}
 	}
 
-	if v := strings.TrimSpace(get(resolved, "LOG_LEVEL")); v != "" {
-		lvl, err := ParseLevel(v)
+	if file.Agent != nil {
+		if file.Agent.Backend != nil && strings.TrimSpace(*file.Agent.Backend) != "" {
+			backend := Backend(strings.ToLower(strings.TrimSpace(*file.Agent.Backend)))
+			if !backend.Valid() {
+				names := make([]string, 0, len(AllBackends()))
+				for _, b := range AllBackends() {
+					names = append(names, string(b))
+				}
+				fail("agent.backend %q is not one of %s", strings.TrimSpace(*file.Agent.Backend), strings.Join(names, ", "))
+			} else {
+				cfg.AgentBackend = backend
+			}
+		}
+		if file.Agent.OpenCode != nil {
+			if file.Agent.OpenCode.Command != nil && strings.TrimSpace(*file.Agent.OpenCode.Command) != "" {
+				cfg.OpenCodeCommand = strings.TrimSpace(*file.Agent.OpenCode.Command)
+			}
+			// An absent model takes the default; an explicitly empty one is
+			// how a user asks OpenCode to choose. The file must keep both
+			// intents expressible.
+			if file.Agent.OpenCode.Model != nil {
+				cfg.OpenCodeModel = strings.TrimSpace(*file.Agent.OpenCode.Model)
+			}
+			if file.Agent.OpenCode.Agent != nil && strings.TrimSpace(*file.Agent.OpenCode.Agent) != "" {
+				cfg.OpenCodeAgent = strings.TrimSpace(*file.Agent.OpenCode.Agent)
+			}
+		}
+		if file.Agent.Codex != nil {
+			if file.Agent.Codex.Command != nil && strings.TrimSpace(*file.Agent.Codex.Command) != "" {
+				cfg.CodexCommand = strings.TrimSpace(*file.Agent.Codex.Command)
+			}
+			if file.Agent.Codex.Profile != nil {
+				cfg.CodexProfile = strings.TrimSpace(*file.Agent.Codex.Profile)
+			}
+			if file.Agent.Codex.Model != nil {
+				cfg.CodexModel = strings.TrimSpace(*file.Agent.Codex.Model)
+			}
+			if file.Agent.Codex.Sandbox != nil && strings.TrimSpace(*file.Agent.Codex.Sandbox) != "" {
+				cfg.CodexSandbox = strings.TrimSpace(*file.Agent.Codex.Sandbox)
+			}
+		}
+	}
+
+	if file.LogLevel != nil && strings.TrimSpace(*file.LogLevel) != "" {
+		lvl, err := ParseLevel(strings.TrimSpace(*file.LogLevel))
 		if err != nil {
 			fail("%v", err)
 		} else {
@@ -333,11 +469,32 @@ func Load(lookup Lookup) (Config, error) {
 		}
 	}
 
-	if cfg.DefaultTaskTimeout <= 0 {
-		fail("DEFAULT_TASK_TIMEOUT must be positive")
-	}
-	if cfg.DefaultVerificationTimeout <= 0 {
-		fail("DEFAULT_VERIFICATION_TIMEOUT must be positive")
+	if file.Tracing != nil {
+		if file.Tracing.Endpoint != nil {
+			cfg.Tracing.Endpoint = strings.TrimSpace(*file.Tracing.Endpoint)
+		}
+		if file.Tracing.TracesEndpoint != nil {
+			cfg.Tracing.TracesEndpoint = strings.TrimSpace(*file.Tracing.TracesEndpoint)
+		}
+		if file.Tracing.Headers != nil {
+			cfg.Tracing.Headers = file.Tracing.Headers
+			for name := range file.Tracing.Headers {
+				if strings.TrimSpace(name) == "" {
+					fail("tracing.headers has an empty name: header names must not be empty")
+					break
+				}
+			}
+		}
+		if file.Tracing.ServiceName != nil {
+			cfg.Tracing.ServiceName = strings.TrimSpace(*file.Tracing.ServiceName)
+		}
+		if file.Tracing.SampleRatio != nil {
+			if *file.Tracing.SampleRatio < 0 || *file.Tracing.SampleRatio > 1 {
+				fail("tracing.sample_ratio %v is outside 0..1", *file.Tracing.SampleRatio)
+			} else {
+				cfg.Tracing.SampleRatio = file.Tracing.SampleRatio
+			}
+		}
 	}
 
 	if len(problems) > 0 {
@@ -346,7 +503,54 @@ func Load(lookup Lookup) (Config, error) {
 	return cfg, nil
 }
 
-// ParseLevel maps a LOG_LEVEL string onto a slog level.
+// unknownKeys walks doc against the schema, naming every key that is not in
+// it by its full dotted path.
+func unknownKeys(prefix string, doc map[string]any, schema map[string]any) []string {
+	var unknown []string
+	for k, v := range doc {
+		key := k
+		if prefix != "" {
+			key = prefix + "." + k
+		}
+		// tracing.headers maps arbitrary header names to values, so its
+		// contents are values rather than further settings.
+		if key == "tracing.headers" {
+			continue
+		}
+		node, ok := schema[k]
+		if !ok {
+			unknown = append(unknown, key)
+			continue
+		}
+		sub, isMap := node.(map[string]any)
+		if !isMap {
+			continue
+		}
+		obj, isObj := v.(map[string]any)
+		if !isObj {
+			// Not an object: the typed decode reports the wrong type, so
+			// there is no unknown key to add here.
+			continue
+		}
+		unknown = append(unknown, unknownKeys(key, obj, sub)...)
+	}
+	sort.Strings(unknown)
+	return unknown
+}
+
+// lineOf computes the 1-based line of a byte offset, so a malformed file can
+// be located without opening an editor at the wrong place.
+func lineOf(data []byte, offset int64) int64 {
+	var line int64 = 1
+	for i := int64(0); i < offset && i < int64(len(data)); i++ {
+		if data[i] == '\n' {
+			line++
+		}
+	}
+	return line
+}
+
+// ParseLevel maps a log_level string onto a slog level.
 func ParseLevel(s string) (slog.Level, error) {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "debug":
@@ -358,14 +562,21 @@ func ParseLevel(s string) (slog.Level, error) {
 	case "error":
 		return slog.LevelError, nil
 	default:
-		return 0, fmt.Errorf("LOG_LEVEL %q is not one of debug, info, warn, error", s)
+		return 0, fmt.Errorf("log_level %q is not one of debug, info, warn, error", s)
 	}
 }
 
-// Redacted returns the configuration with the database password removed, for
-// logging. aidev never logs a connection string verbatim.
+// Redacted returns the configuration with secrets removed, for logging. aidev
+// never logs a connection string or a tracing credential verbatim.
 func (c Config) Redacted() Config {
 	c.DatabaseURL = RedactURL(c.DatabaseURL)
+	if c.Tracing.Headers != nil {
+		redacted := make(map[string]string, len(c.Tracing.Headers))
+		for k := range c.Tracing.Headers {
+			redacted[k] = "***"
+		}
+		c.Tracing.Headers = redacted
+	}
 	return c
 }
 
@@ -396,103 +607,24 @@ func RedactURL(raw string) string {
 	return scheme + user + ":***@" + rest[at+1:]
 }
 
-func get(lookup Lookup, key string) string {
-	v, _ := lookup(key)
-	return v
-}
-
-// configFilePath resolves which file to attempt from the environment alone,
-// so a file can never redirect aidev to a different file. AIDEV_CONFIG names
-// an explicit file; otherwise the default location applies. Empty means no
-// file should be attempted.
-func configFilePath(env Lookup) string {
-	if p, ok := env("AIDEV_CONFIG"); ok && strings.TrimSpace(p) != "" {
-		return strings.TrimSpace(p)
-	}
-	def, err := DefaultConfigPath(env)
-	if err != nil {
-		return ""
-	}
-	return def
-}
-
-// overlayLookup lets real environment variables override the config file:
-// anything set in the environment wins, and the file fills the gaps. A value
-// present in the file counts as set, so an explicitly empty OPENCODE_MODEL in
-// the file still means "let OpenCode choose".
-func overlayLookup(env Lookup, file map[string]string) Lookup {
-	return func(key string) (string, bool) {
-		if v, ok := env(key); ok {
-			return v, true
-		}
-		v, ok := file[key]
-		return v, ok
-	}
-}
-
-// readConfigFile parses path into KEY=value pairs without executing anything.
-// A file that does not exist is normal for someone who exports variables, and
-// reports found=false with no error; anything else wrong is an error, so that
-// a setting that is plainly present is never silently ignored.
-func readConfigFile(path string) (values map[string]string, found bool, err error) {
-	data, rerr := os.ReadFile(path)
-	if rerr != nil {
-		if os.IsNotExist(rerr) {
-			return nil, false, nil
-		}
-		return nil, false, fmt.Errorf("read config file %s: %w", path, rerr)
-	}
-	values = make(map[string]string)
-	for n, line := range strings.Split(string(data), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-		key, value, ok := strings.Cut(line, "=")
-		if key = strings.TrimSpace(key); !ok || key == "" {
-			return values, true, fmt.Errorf("config file %s line %d: expected KEY=value, got %q", path, n+1, trimmed)
-		}
-		values[key] = unquoteConfigValue(strings.TrimSpace(value))
-	}
-	return values, true, nil
-}
-
-// unquoteConfigValue strips one matching pair of surrounding quotes, the
-// convention people expect in these files. Nothing inside is interpreted:
-// there is no shell here, so a value is taken literally.
-func unquoteConfigValue(v string) string {
-	if len(v) >= 2 {
-		if first, last := v[0], v[len(v)-1]; (first == '"' || first == '\'') && first == last {
-			return v[1 : len(v)-1]
-		}
-	}
-	return v
-}
-
-func duration(lookup Lookup, key string) (time.Duration, bool, error) {
-	raw := strings.TrimSpace(get(lookup, key))
-	if raw == "" {
-		return 0, false, nil
-	}
+func parseDuration(key, raw string) (time.Duration, error) {
 	d, err := time.ParseDuration(raw)
 	if err != nil {
-		return 0, false, fmt.Errorf("%s %q is not a duration (examples: 90s, 30m, 2h)", key, raw)
+		return 0, fmt.Errorf("%s %q is not a duration (examples: 90s, 30m, 2h)", key, raw)
 	}
 	if d <= 0 {
-		return 0, false, fmt.Errorf("%s must be positive, got %s", key, raw)
+		return 0, fmt.Errorf("%s must be positive, got %s", key, raw)
 	}
-	return d, true, nil
+	return d, nil
 }
 
 // defaultWorkspaceRoot derives a per-user location instead of hard-coding a
-// machine-specific path, honouring XDG_DATA_HOME when set.
+// machine-specific path. Only the home directory is consulted: no other
+// environment variable participates in configuration.
 func defaultWorkspaceRoot() (string, error) {
-	if x := strings.TrimSpace(os.Getenv("XDG_DATA_HOME")); x != "" {
-		return filepath.Join(x, "aidev", "worktrees"), nil
-	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", errors.New("no WORKSPACE_ROOT set and the user's home directory could not be determined")
+		return "", errors.New("no workspace_root set and the user's home directory could not be determined")
 	}
 	return filepath.Join(home, ".local", "share", "aidev", "worktrees"), nil
 }

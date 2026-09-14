@@ -10,6 +10,9 @@
 .env
 .env.local
 
+# conf.json holds the database password and possibly tracing credentials
+/conf/conf.json
+
 # generated Langfuse secrets
 /deployments/langfuse/.env
 
