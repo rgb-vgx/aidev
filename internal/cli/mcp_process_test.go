@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -55,6 +56,25 @@ func isolatedEnv(t *testing.T, vars ...string) []string {
 // failure a client meets while Docker is still starting.
 const unreachableDatabase = "postgres://aidev:aidev@127.0.0.1:1/aidev?sslmode=disable"
 
+// writeConfFile writes the only configuration aidev reads, a conf.json that
+// AIDEV_CONFIG names, with a workspace inside the test's own directory.
+func writeConfFile(t *testing.T, settings map[string]any) string {
+	t.Helper()
+	dir := t.TempDir()
+	if _, ok := settings["workspace_root"]; !ok {
+		settings["workspace_root"] = filepath.Join(dir, "workspaces")
+	}
+	body, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "conf.json")
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 func toolText(res *sdk.CallToolResult) string {
 	var parts []string
 	for _, c := range res.Content {
@@ -72,9 +92,9 @@ func TestMCPServerStartsWhileTheDatabaseIsDown(t *testing.T) {
 
 	var stderr bytes.Buffer
 	cmd := exec.Command(bin, "mcp")
-	cmd.Env = isolatedEnv(t,
-		"DATABASE_URL="+unreachableDatabase,
-		"WORKSPACE_ROOT="+filepath.Join(t.TempDir(), "workspaces"))
+	cmd.Env = isolatedEnv(t, "AIDEV_CONFIG="+writeConfFile(t, map[string]any{
+		"database": map[string]any{"url": unreachableDatabase},
+	}))
 	cmd.Stderr = &stderr
 
 	client := sdk.NewClient(&sdk.Implementation{Name: "test-client", Version: "1"}, nil)
@@ -126,22 +146,41 @@ func TestMCPServerStartsWhileTheDatabaseIsDown(t *testing.T) {
 // it, so the server must still refuse to start and say why.
 func TestMCPServerStillRefusesAnInvalidConfiguration(t *testing.T) {
 	bin := buildAidev(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	var stderr bytes.Buffer
-	cmd := exec.CommandContext(ctx, bin, "mcp")
-	cmd.Env = isolatedEnv(t) // no DATABASE_URL at all
-	cmd.Stdin = strings.NewReader("")
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
-	var exit *exec.ExitError
-	if !errors.As(err, &exit) || exit.ExitCode() == 0 {
-		t.Fatalf("aidev mcp without DATABASE_URL: err = %v, want a non-zero exit\nstderr:\n%s", err, stderr.String())
+	cases := []struct {
+		name  string
+		env   func(t *testing.T) []string
+		names string
+	}{
+		// Subtest names become part of t.TempDir() paths, and error messages quote the
+		// configuration file's path, so a name must never contain what is being matched.
+		{"variable unset", func(t *testing.T) []string { return isolatedEnv(t) }, "AIDEV_CONFIG"},
+		{"file without a database", func(t *testing.T) []string {
+			return isolatedEnv(t, "AIDEV_CONFIG="+writeConfFile(t, map[string]any{}))
+		}, "database.url is required"},
+		// The old variable is ignored, so it cannot rescue a file without a database.
+		{"database only in the old variable", func(t *testing.T) []string {
+			return isolatedEnv(t, "AIDEV_CONFIG="+writeConfFile(t, map[string]any{}), "DATABASE_URL="+unreachableDatabase)
+		}, "database.url is required"},
 	}
-	if !strings.Contains(stderr.String(), "DATABASE_URL") {
-		t.Errorf("stderr does not name the missing variable:\n%s", stderr.String())
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			var stderr bytes.Buffer
+			cmd := exec.CommandContext(ctx, bin, "mcp")
+			cmd.Env = tc.env(t)
+			cmd.Stdin = strings.NewReader("")
+			cmd.Stderr = &stderr
+
+			err := cmd.Run()
+			var exit *exec.ExitError
+			if !errors.As(err, &exit) || exit.ExitCode() == 0 {
+				t.Fatalf("err = %v, want a non-zero exit\nstderr:\n%s", err, stderr.String())
+			}
+			if !strings.Contains(stderr.String(), tc.names) {
+				t.Errorf("stderr does not name %s:\n%s", tc.names, stderr.String())
+			}
+		})
 	}
 }
 

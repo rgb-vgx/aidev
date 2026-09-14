@@ -35,18 +35,18 @@ import (
 //
 //	make langfuse-up
 //	eval "$(make langfuse-env)"
-//	AIDEV_TEST_OTLP=1 go test ./internal/tracing/ -run TestExportReachesTheBackend -v
+//	AIDEV_TEST_OTLP=http://localhost:4318 go test ./internal/tracing/ -run TestExportReachesTheBackend -v
 //
 // It is deliberately vendor-neutral: any OTLP endpoint will do, and nothing here
 // knows about Langfuse.
 func TestExportReachesTheBackend(t *testing.T) {
 	if os.Getenv("AIDEV_TEST_OTLP") == "" {
-		t.Skip("set AIDEV_TEST_OTLP=1 and an OTLP endpoint to exercise a real export")
+		t.Skip("set AIDEV_TEST_OTLP to an OTLP base endpoint to exercise a real export")
 	}
 
-	cfg, err := FromEnv(os.LookupEnv)
+	cfg, err := FromSettings(Settings{Endpoint: os.Getenv("AIDEV_TEST_OTLP")})
 	if err != nil {
-		t.Fatalf("FromEnv: %v", err)
+		t.Fatalf("FromSettings: %v", err)
 	}
 	if !cfg.Enabled {
 		t.Skip("OTEL_EXPORTER_OTLP_ENDPOINT is not set")
