@@ -493,3 +493,56 @@ func TestLocalConfigFileIsIgnoredByGit(t *testing.T) {
 	}
 	t.Error(".gitignore does not ignore /conf/conf.json")
 }
+
+// Found in review of TASK-000033, against the built binary. A value of the wrong type
+// produced a second, false complaint about a value nobody wrote ("must be at least
+// 1024, got 0"), and only the first type error was reported, contrary to reporting
+// every problem in one pass.
+func TestEveryWrongTypeIsReportedWithoutInventedValues(t *testing.T) {
+	_, err := load(t, `{"database": {"url": "`+testDSN+`"}, "tasks": {"max_output_bytes": "lots"}, "tracing": {"sample_ratio": "high"}}`)
+	if err == nil {
+		t.Fatal("wrongly typed values were accepted")
+	}
+	for _, want := range []string{"tasks.max_output_bytes", "tracing.sample_ratio"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %v, want it to name %s", err, want)
+		}
+	}
+	for _, invented := range []string{"at least 1024", "got 0", "outside 0..1"} {
+		if strings.Contains(err.Error(), invented) {
+			t.Errorf("error = %v, it complains about a value the file does not contain (%q)", err, invented)
+		}
+	}
+}
+
+// The file is edited by hand, often by someone who does not read Go. A message
+// about "Go value of type map[string]interface {}" tells them nothing.
+func TestTheFileMustBeAJSONObject(t *testing.T) {
+	for name, body := range map[string]string{"array": `[]`, "string": `"conf"`, "number": `42`} {
+		t.Run(name, func(t *testing.T) {
+			path := writeConf(t, body)
+			_, err := LoadFile(path)
+			if err == nil {
+				t.Fatal("a non-object file was accepted")
+			}
+			if !strings.Contains(err.Error(), path) || !strings.Contains(err.Error(), "JSON object") {
+				t.Errorf("error = %v, want the file named and that it must be a JSON object", err)
+			}
+			if strings.Contains(err.Error(), "Go value") || strings.Contains(err.Error(), "interface") {
+				t.Errorf("error = %v, it describes Go types instead of the file", err)
+			}
+		})
+	}
+}
+
+func TestAnEmptyFileSaysItIsEmpty(t *testing.T) {
+	for name, body := range map[string]string{"zero bytes": "", "whitespace": " \n\t\n"} {
+		t.Run(name, func(t *testing.T) {
+			path := writeConf(t, body)
+			_, err := LoadFile(path)
+			if err == nil || !strings.Contains(err.Error(), path) || !strings.Contains(err.Error(), "empty") {
+				t.Errorf("error = %v, want the file named and that it is empty", err)
+			}
+		})
+	}
+}

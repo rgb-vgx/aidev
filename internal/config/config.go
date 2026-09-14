@@ -9,10 +9,12 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -174,43 +176,53 @@ type Lookup func(key string) (string, bool)
 // OSLookup reads the real process environment.
 func OSLookup(key string) (string, bool) { return os.LookupEnv(key) }
 
-// configSchema is the vocabulary of conf.json: every key aidev understands.
-// SettingKeys and the unknown-key check are both derived from it, so the
-// schema is stated once and cannot drift between the two.
+// configSchema is the vocabulary of conf.json: every key aidev understands and
+// the kind of value it takes. SettingKeys, the unknown-key check and the type
+// check are all derived from it, so the schema is stated once for them.
 var configSchema = map[string]any{
 	"database": map[string]any{
-		"url": true,
+		"url": kindString,
 	},
-	"workspace_root": true,
+	"workspace_root": kindString,
 	"tasks": map[string]any{
-		"timeout":              true,
-		"verification_timeout": true,
-		"max_output_bytes":     true,
-		"worktree_cleanup":     true,
+		"timeout":              kindString,
+		"verification_timeout": kindString,
+		"max_output_bytes":     kindInteger,
+		"worktree_cleanup":     kindString,
 	},
 	"agent": map[string]any{
-		"backend": true,
+		"backend": kindString,
 		"opencode": map[string]any{
-			"command": true,
-			"model":   true,
-			"agent":   true,
+			"command": kindString,
+			"model":   kindString,
+			"agent":   kindString,
 		},
 		"codex": map[string]any{
-			"command": true,
-			"profile": true,
-			"model":   true,
-			"sandbox": true,
+			"command": kindString,
+			"profile": kindString,
+			"model":   kindString,
+			"sandbox": kindString,
 		},
 	},
-	"log_level": true,
+	"log_level": kindString,
 	"tracing": map[string]any{
-		"endpoint":        true,
-		"traces_endpoint": true,
-		"headers":         true,
-		"service_name":    true,
-		"sample_ratio":    true,
+		"endpoint":        kindString,
+		"traces_endpoint": kindString,
+		"headers":         kindStringMap,
+		"service_name":    kindString,
+		"sample_ratio":    kindNumber,
 	},
 }
+
+// valueKind is the kind of JSON value a setting takes.
+type valueKind string
+
+const (
+	kindString    valueKind = "a string"
+	kindInteger   valueKind = "a whole number"
+	kindNumber    valueKind = "a number"
+	kindStringMap valueKind = "an object of strings"
+)
 
 // SettingKeys returns the dotted paths of all 20 settings, sorted. It is
 // derived from configSchema rather than typed out separately, so adding a
@@ -300,16 +312,25 @@ func LoadFile(path string) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("read config file %s: %w", path, err)
 	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return Config{}, fmt.Errorf("config file %s is empty: it must hold a JSON object, for example "+
+			`{"database": {"url": "postgres://aidev:aidev@127.0.0.1:5434/aidev?sslmode=disable"}}`, path)
+	}
 
-	var doc map[string]any
-	if err := json.Unmarshal(data, &doc); err != nil {
+	var parsed any
+	if err := json.Unmarshal(data, &parsed); err != nil {
 		if syn, ok := err.(*json.SyntaxError); ok {
 			return Config{}, fmt.Errorf("parse config file %s line %d: %v", path, lineOf(data, syn.Offset), err)
 		}
 		return Config{}, fmt.Errorf("parse config file %s: %w", path, err)
 	}
-	if doc == nil {
+	doc, isObject := parsed.(map[string]any)
+	switch {
+	case parsed == nil:
 		doc = map[string]any{}
+	case !isObject:
+		// Said about the file, not in Go's terms: the reader is editing JSON.
+		return Config{}, fmt.Errorf("config file %s must hold a JSON object ({ ... }), but it holds %s", path, describeJSON(parsed))
 	}
 
 	var problems []string
@@ -324,13 +345,23 @@ func LoadFile(path string) (Config, error) {
 		fail("unknown setting %q", unknown)
 	}
 
+	// Every wrongly typed value is reported, then removed, so the rest of the
+	// file is still validated in the same pass without a complaint about a
+	// value the file does not contain (a string where a number belongs used to
+	// read back as 0 and add "must be at least 1024, got 0").
+	wrongType := map[string]bool{}
+	for _, problem := range checkTypes("", doc, configSchema, wrongType) {
+		fail("%s", problem)
+	}
+
+	normalized, err := json.Marshal(doc)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse config file %s: %w", path, err)
+	}
 	var file fileConfig
-	if err := json.Unmarshal(data, &file); err != nil {
-		if terr, ok := err.(*json.UnmarshalTypeError); ok {
-			fail("setting %s has the wrong type: cannot use %s as %s", terr.Field, terr.Value, terr.Type)
-		} else {
-			fail("parse config file %s: %v", path, err)
-		}
+	if err := json.Unmarshal(normalized, &file); err != nil {
+		// checkTypes has already given every known value its expected kind.
+		fail("parse config file %s: %v", path, err)
 	}
 
 	cfg := Config{
@@ -351,7 +382,9 @@ func LoadFile(path string) (Config, error) {
 	}
 
 	if file.Database == nil || file.Database.URL == nil || strings.TrimSpace(*file.Database.URL) == "" {
-		fail("database.url is required (example: postgres://aidev:aidev@127.0.0.1:5434/aidev?sslmode=disable)")
+		if !wrongType["database"] && !wrongType["database.url"] {
+			fail("database.url is required (example: postgres://aidev:aidev@127.0.0.1:5434/aidev?sslmode=disable)")
+		}
 	} else {
 		cfg.DatabaseURL = strings.TrimSpace(*file.Database.URL)
 	}
@@ -536,6 +569,98 @@ func unknownKeys(prefix string, doc map[string]any, schema map[string]any) []str
 	}
 	sort.Strings(unknown)
 	return unknown
+}
+
+// checkTypes compares every known value in doc with the kind the schema expects.
+// Each mismatch is reported by its dotted path, recorded in wrong, and removed from
+// doc so that decoding and validating the rest cannot invent a value for it. A
+// whole number written for an integer setting in any JSON form (1048576 or 1e6)
+// is accepted and rewritten as an integer: JSON does not distinguish the two. A
+// null is left alone and means the setting is absent.
+func checkTypes(prefix string, doc map[string]any, schema map[string]any, wrong map[string]bool) []string {
+	var problems []string
+	for k, v := range doc {
+		node, known := schema[k]
+		if !known || v == nil {
+			continue
+		}
+		key := k
+		if prefix != "" {
+			key = prefix + "." + k
+		}
+		reject := func(want string) {
+			problems = append(problems, fmt.Sprintf("setting %s has the wrong type: want %s, got %s", key, want, describeJSON(v)))
+			wrong[key] = true
+			delete(doc, k)
+		}
+		switch want := node.(type) {
+		case map[string]any:
+			obj, ok := v.(map[string]any)
+			if !ok {
+				reject("an object")
+				continue
+			}
+			problems = append(problems, checkTypes(key, obj, want, wrong)...)
+		case valueKind:
+			fixed, ok := matchKind(want, v)
+			if !ok {
+				reject(string(want))
+				continue
+			}
+			doc[k] = fixed
+		}
+	}
+	sort.Strings(problems)
+	return problems
+}
+
+// matchKind reports whether v is of kind, returning the value to keep.
+func matchKind(kind valueKind, v any) (any, bool) {
+	switch kind {
+	case kindString:
+		_, ok := v.(string)
+		return v, ok
+	case kindNumber:
+		_, ok := v.(float64)
+		return v, ok
+	case kindInteger:
+		f, ok := v.(float64)
+		if !ok || f != math.Trunc(f) || math.Abs(f) > 1<<53 {
+			return nil, false
+		}
+		return int64(f), true
+	case kindStringMap:
+		m, ok := v.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		for _, value := range m {
+			if _, isString := value.(string); !isString {
+				return nil, false
+			}
+		}
+		return v, true
+	}
+	return nil, false
+}
+
+// describeJSON names a decoded JSON value's kind the way someone editing the file
+// would, with the value itself when it is short enough to recognise.
+func describeJSON(v any) string {
+	switch x := v.(type) {
+	case string:
+		return fmt.Sprintf("the string %q", x)
+	case float64:
+		return fmt.Sprintf("the number %v", x)
+	case bool:
+		return fmt.Sprintf("%v", x)
+	case []any:
+		return "an array"
+	case map[string]any:
+		return "an object"
+	default:
+		return "null"
+	}
 }
 
 // lineOf computes the 1-based line of a byte offset, so a malformed file can
