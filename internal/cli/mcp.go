@@ -4,9 +4,19 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"sync"
+	"time"
 
 	aidevmcp "aidev/internal/mcp"
+	"aidev/internal/store"
+	"aidev/internal/worker"
 )
+
+// mcpConnectTimeout bounds one deferred connection attempt. A tool call waits
+// on it while the client watches, so it is shorter than the one-shot
+// connectTimeout: a database that is still starting must surface as a quick
+// tool error the client can retry, not a long stall that looks like a hang.
+const mcpConnectTimeout = 5 * time.Second
 
 // runMCPServer starts the MCP server on stdio.
 //
@@ -22,7 +32,7 @@ func runMCPServer(ctx context.Context, env *Env, args []string) error {
 Starts the MCP server on stdin/stdout for a client such as Claude Code. It is not
 meant to be run by hand: a client launches it. Register it with
 
-  claude mcp add --scope project aidev -- %s mcp
+  claude mcp add --scope user aidev -- %s mcp
 
 Logs go to stderr. Nothing else is written to stdout, which belongs to the
 protocol.
@@ -35,13 +45,40 @@ protocol.
 		return usagef("aidev mcp takes no arguments")
 	}
 
-	app, err := openApp(ctx)
+	cfg, logger, err := loadAppConfig()
 	if err != nil {
 		return err
 	}
-	defer app.close()
 
-	logger := app.orchestrator.Logger
-	server := aidevmcp.New(app.orchestrator, app.store, env.Version, logger)
-	return server.Serve(ctx)
+	// The database is connected on first use, so the server stays up while it
+	// is still starting and a client that never retries a launch stays usable.
+	logger.InfoContext(ctx, "mcp server starting; the database connects on first tool use")
+
+	var mu sync.Mutex
+	var current *app
+	open := aidevmcp.Opener(func(toolCtx context.Context) (*worker.Orchestrator, *store.Store, error) {
+		connectCtx, cancel := context.WithTimeout(toolCtx, mcpConnectTimeout)
+		defer cancel()
+		a, err := connectApp(connectCtx, cfg, logger)
+		if err != nil {
+			logger.WarnContext(toolCtx, "mcp database connection failed; will retry on the next tool call", "error", err.Error())
+			return nil, nil, err
+		}
+		mu.Lock()
+		current = a
+		mu.Unlock()
+		logger.InfoContext(toolCtx, "mcp database connected")
+		return a.orchestrator, a.store, nil
+	})
+
+	server := aidevmcp.NewDeferred(open, env.Version, logger)
+	err = server.Serve(ctx)
+
+	mu.Lock()
+	opened := current
+	mu.Unlock()
+	if opened != nil {
+		opened.close()
+	}
+	return err
 }

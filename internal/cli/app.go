@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"aidev/internal/agent"
@@ -37,11 +38,29 @@ const tracingFlushTimeout = 5 * time.Second
 // Logs go to stderr while command output goes to stdout, so that `aidev task get
 // --json | jq` works while diagnostics remain visible in the terminal.
 func openApp(ctx context.Context) (*app, error) {
-	cfg, err := config.Load(config.OSLookup)
+	cfg, logger, err := loadAppConfig()
 	if err != nil {
 		return nil, err
 	}
-	logger := logging.New(cfg.LogLevel)
+	return connectApp(ctx, cfg, logger)
+}
+
+// loadAppConfig resolves the configuration without touching the network, so a
+// misconfiguration fails at once even when the database is reached lazily.
+func loadAppConfig() (config.Config, *slog.Logger, error) {
+	cfg, err := config.Load(config.OSLookup)
+	if err != nil {
+		return config.Config{}, nil, err
+	}
+	return cfg, logging.New(cfg.LogLevel), nil
+}
+
+// connectApp wires everything that needs the database. It is the connection
+// stage of openApp, reused by the MCP server's deferred opener.
+func connectApp(ctx context.Context, cfg config.Config, logger *slog.Logger) (*app, error) {
+	if logger == nil {
+		logger = logging.New(cfg.LogLevel)
+	}
 
 	connectCtx, cancel := context.WithTimeout(ctx, connectTimeout)
 	defer cancel()

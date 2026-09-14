@@ -110,12 +110,17 @@ type CreateTaskOutput struct {
 }
 
 func (s *Server) createTask(ctx context.Context, _ *sdk.CallToolRequest, in CreateTaskInput) (*sdk.CallToolResult, CreateTaskOutput, error) {
+	orchestrator, _, err := s.connected(ctx)
+	if err != nil {
+		return nil, CreateTaskOutput{}, err
+	}
+
 	steps, err := task.ParseVerificationSteps(in.Verification)
 	if err != nil {
 		return nil, CreateTaskOutput{}, err
 	}
 
-	created, err := s.orchestrator.CreateTask(ctx, worker.CreateTaskInput{
+	created, err := orchestrator.CreateTask(ctx, worker.CreateTaskInput{
 		RepoPath:           in.RepoPath,
 		Title:              in.Title,
 		Description:        in.Description,
@@ -149,7 +154,11 @@ type TaskOutput struct {
 }
 
 func (s *Server) getTask(ctx context.Context, _ *sdk.CallToolRequest, in TaskInput) (*sdk.CallToolResult, TaskOutput, error) {
-	t, err := s.resolve(ctx, in.Task)
+	_, st, err := s.connected(ctx)
+	if err != nil {
+		return nil, TaskOutput{}, err
+	}
+	t, err := s.resolve(ctx, st, in.Task)
 	if err != nil {
 		return nil, TaskOutput{}, err
 	}
@@ -170,6 +179,10 @@ type ListTasksOutput struct {
 }
 
 func (s *Server) listTasks(ctx context.Context, _ *sdk.CallToolRequest, in ListTasksInput) (*sdk.CallToolResult, ListTasksOutput, error) {
+	orchestrator, st, err := s.connected(ctx)
+	if err != nil {
+		return nil, ListTasksOutput{}, err
+	}
 	filter := store.TaskFilter{Limit: in.Limit}
 
 	for _, raw := range in.Statuses {
@@ -185,11 +198,11 @@ func (s *Server) listTasks(ctx context.Context, _ *sdk.CallToolRequest, in ListT
 	}
 
 	if strings.TrimSpace(in.RepoPath) != "" {
-		repo, err := s.orchestrator.Git.OpenRepository(ctx, in.RepoPath)
+		repo, err := orchestrator.Git.OpenRepository(ctx, in.RepoPath)
 		if err != nil {
 			return nil, ListTasksOutput{}, err
 		}
-		project, err := s.store.GetProjectByPath(ctx, repo.Path)
+		project, err := st.GetProjectByPath(ctx, repo.Path)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				// A repository with no tasks yet is an empty result, not an error.
@@ -200,7 +213,7 @@ func (s *Server) listTasks(ctx context.Context, _ *sdk.CallToolRequest, in ListT
 		filter.ProjectID = project.ID
 	}
 
-	tasks, err := s.store.ListTasks(ctx, filter)
+	tasks, err := st.ListTasks(ctx, filter)
 	if err != nil {
 		return nil, ListTasksOutput{}, err
 	}
@@ -230,7 +243,11 @@ type RunTaskOutput struct {
 }
 
 func (s *Server) runTask(ctx context.Context, _ *sdk.CallToolRequest, in RunTaskInput) (*sdk.CallToolResult, RunTaskOutput, error) {
-	t, err := s.resolve(ctx, in.Task)
+	orchestrator, st, err := s.connected(ctx)
+	if err != nil {
+		return nil, RunTaskOutput{}, err
+	}
+	t, err := s.resolve(ctx, st, in.Task)
 	if err != nil {
 		return nil, RunTaskOutput{}, err
 	}
@@ -246,7 +263,7 @@ func (s *Server) runTask(ctx context.Context, _ *sdk.CallToolRequest, in RunTask
 		wait = MaxWaitSeconds
 	}
 
-	run, started := s.startRun(t.ID)
+	run, started := s.startRun(orchestrator, t.ID)
 	if started {
 		s.logger.InfoContext(ctx, "task run started from mcp",
 			"task_ref", t.Ref, "wait_seconds", wait)
@@ -254,12 +271,12 @@ func (s *Server) runTask(ctx context.Context, _ *sdk.CallToolRequest, in RunTask
 
 	select {
 	case <-run.done:
-		return s.finishedRunOutput(ctx, t.ID, run)
+		return s.finishedRunOutput(ctx, st, t.ID, run)
 
 	case <-time.After(time.Duration(wait) * time.Second):
 		// Still going. Report where it has got to rather than an error: a long
 		// task is the normal case, not a failure.
-		result, err := s.buildResult(ctx, t.ID, false)
+		result, err := s.buildResult(ctx, st, t.ID, false)
 		if err != nil {
 			return nil, RunTaskOutput{}, err
 		}
@@ -279,12 +296,12 @@ func (s *Server) runTask(ctx context.Context, _ *sdk.CallToolRequest, in RunTask
 }
 
 // finishedRunOutput builds the output for a run that has completed.
-func (s *Server) finishedRunOutput(ctx context.Context, taskID uuid.UUID, run *backgroundRun) (*sdk.CallToolResult, RunTaskOutput, error) {
+func (s *Server) finishedRunOutput(ctx context.Context, st *store.Store, taskID uuid.UUID, run *backgroundRun) (*sdk.CallToolResult, RunTaskOutput, error) {
 	if run.err != nil {
 		// An approval gate is reported as a result, not an error: the planner
 		// needs to know a human is required, which is not a malfunction.
 		if errors.Is(run.err, worker.ErrApprovalRequired) {
-			result, err := s.buildResult(ctx, taskID, false)
+			result, err := s.buildResult(ctx, st, taskID, false)
 			if err != nil {
 				return nil, RunTaskOutput{}, err
 			}
@@ -297,7 +314,7 @@ func (s *Server) finishedRunOutput(ctx context.Context, taskID uuid.UUID, run *b
 		return nil, RunTaskOutput{}, run.err
 	}
 
-	result, err := s.buildResult(ctx, taskID, false)
+	result, err := s.buildResult(ctx, st, taskID, false)
 	if err != nil {
 		return nil, RunTaskOutput{}, err
 	}
@@ -337,20 +354,24 @@ type GetResultOutput struct {
 }
 
 func (s *Server) getResult(ctx context.Context, _ *sdk.CallToolRequest, in GetResultInput) (*sdk.CallToolResult, GetResultOutput, error) {
-	t, err := s.resolve(ctx, in.Task)
+	_, st, err := s.connected(ctx)
+	if err != nil {
+		return nil, GetResultOutput{}, err
+	}
+	t, err := s.resolve(ctx, st, in.Task)
 	if err != nil {
 		return nil, GetResultOutput{}, err
 	}
 
-	result, err := s.buildResult(ctx, t.ID, in.IncludeLogs)
+	result, err := s.buildResult(ctx, st, t.ID, in.IncludeLogs)
 	if err != nil {
 		return nil, GetResultOutput{}, err
 	}
 	out := GetResultOutput{Result: result, StillRunning: t.Status.Active()}
 
 	if in.IncludeLogs {
-		if attempt, err := s.store.LatestAttempt(ctx, t.ID); err == nil {
-			if runs, err := s.store.ListWorkerRuns(ctx, attempt.ID); err == nil && len(runs) > 0 {
+		if attempt, err := st.LatestAttempt(ctx, t.ID); err == nil {
+			if runs, err := st.ListWorkerRuns(ctx, attempt.ID); err == nil && len(runs) > 0 {
 				latest := runs[len(runs)-1]
 				out.AgentStdout = latest.Stdout
 				out.AgentStderr = latest.Stderr
@@ -376,12 +397,16 @@ type GetEventsOutput struct {
 }
 
 func (s *Server) getEvents(ctx context.Context, _ *sdk.CallToolRequest, in GetEventsInput) (*sdk.CallToolResult, GetEventsOutput, error) {
-	t, err := s.resolve(ctx, in.Task)
+	_, st, err := s.connected(ctx)
+	if err != nil {
+		return nil, GetEventsOutput{}, err
+	}
+	t, err := s.resolve(ctx, st, in.Task)
 	if err != nil {
 		return nil, GetEventsOutput{}, err
 	}
 
-	events, err := s.store.ListEvents(ctx, store.EventFilter{
+	events, err := st.ListEvents(ctx, store.EventFilter{
 		TaskID:   t.ID,
 		AfterSeq: in.AfterSeq,
 		Limit:    in.Limit,
@@ -412,11 +437,15 @@ type CancelTaskOutput struct {
 }
 
 func (s *Server) cancelTask(ctx context.Context, _ *sdk.CallToolRequest, in CancelTaskInput) (*sdk.CallToolResult, CancelTaskOutput, error) {
+	orchestrator, _, err := s.connected(ctx)
+	if err != nil {
+		return nil, CancelTaskOutput{}, err
+	}
 	reason := strings.TrimSpace(in.Reason)
 	if reason == "" {
 		reason = "cancelled through MCP"
 	}
-	outcome, err := s.orchestrator.Cancel(ctx, in.Task, reason)
+	outcome, err := orchestrator.Cancel(ctx, in.Task, reason)
 	if err != nil {
 		return nil, CancelTaskOutput{}, err
 	}
@@ -443,11 +472,15 @@ type ApproveTaskOutput struct {
 }
 
 func (s *Server) approveTask(ctx context.Context, _ *sdk.CallToolRequest, in ApproveTaskInput) (*sdk.CallToolResult, ApproveTaskOutput, error) {
+	orchestrator, _, err := s.connected(ctx)
+	if err != nil {
+		return nil, ApproveTaskOutput{}, err
+	}
 	decidedBy := strings.TrimSpace(in.DecidedBy)
 	if decidedBy == "" {
 		decidedBy = "mcp client"
 	}
-	outcome, err := s.orchestrator.Approve(ctx, in.Task, in.Approve, decidedBy, in.Reason)
+	outcome, err := orchestrator.Approve(ctx, in.Task, in.Approve, decidedBy, in.Reason)
 	if err != nil {
 		return nil, ApproveTaskOutput{}, err
 	}
@@ -459,8 +492,8 @@ func (s *Server) approveTask(ctx context.Context, _ *sdk.CallToolRequest, in App
 }
 
 // resolve looks a task up by reference or id.
-func (s *Server) resolve(ctx context.Context, identifier string) (task.Task, error) {
-	t, err := s.store.ResolveTask(ctx, identifier)
+func (s *Server) resolve(ctx context.Context, st *store.Store, identifier string) (task.Task, error) {
+	t, err := st.ResolveTask(ctx, identifier)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return task.Task{}, fmt.Errorf("no task %q; list tasks with %s", identifier, ToolListTasks)
@@ -472,8 +505,8 @@ func (s *Server) resolve(ctx context.Context, identifier string) (task.Task, err
 
 // buildResult assembles the current state of a task from the database, so that a
 // poll after a background run sees the same thing a fresh process would.
-func (s *Server) buildResult(ctx context.Context, taskID uuid.UUID, includeOutput bool) (view.Result, error) {
-	t, err := s.store.GetTask(ctx, taskID)
+func (s *Server) buildResult(ctx context.Context, st *store.Store, taskID uuid.UUID, includeOutput bool) (view.Result, error) {
+	t, err := st.GetTask(ctx, taskID)
 	if err != nil {
 		return view.Result{}, err
 	}
@@ -486,15 +519,15 @@ func (s *Server) buildResult(ctx context.Context, taskID uuid.UUID, includeOutpu
 		runs      []task.VerificationRun
 	)
 
-	latest, err := s.store.LatestAttempt(ctx, taskID)
+	latest, err := st.LatestAttempt(ctx, taskID)
 	switch {
 	case err == nil:
 		attempt = &latest
-		runs, _ = s.store.ListVerificationRuns(ctx, latest.ID)
-		if workerRuns, err := s.store.ListWorkerRuns(ctx, latest.ID); err == nil && len(workerRuns) > 0 {
+		runs, _ = st.ListVerificationRuns(ctx, latest.ID)
+		if workerRuns, err := st.ListWorkerRuns(ctx, latest.ID); err == nil && len(workerRuns) > 0 {
 			workerRun = &workerRuns[len(workerRuns)-1]
 		}
-		if wt, err := s.store.GetWorktreeByAttempt(ctx, latest.ID); err == nil {
+		if wt, err := st.GetWorktreeByAttempt(ctx, latest.ID); err == nil {
 			worktree = &wt
 		}
 	case errors.Is(err, store.ErrNotFound):
@@ -503,7 +536,7 @@ func (s *Server) buildResult(ctx context.Context, taskID uuid.UUID, includeOutpu
 		return view.Result{}, err
 	}
 
-	if a, err := s.store.LatestApproval(ctx, taskID); err == nil {
+	if a, err := st.LatestApproval(ctx, taskID); err == nil {
 		approval = &a
 	}
 
@@ -519,7 +552,7 @@ func (s *Server) buildResult(ctx context.Context, taskID uuid.UUID, includeOutpu
 // Joining rather than starting a second is what makes a repeated aidev_run_task
 // call harmless: the orchestrator would reject the second anyway, but reporting
 // the progress of the first is more useful than an error.
-func (s *Server) startRun(taskID uuid.UUID) (*backgroundRun, bool) {
+func (s *Server) startRun(orchestrator *worker.Orchestrator, taskID uuid.UUID) (*backgroundRun, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -542,8 +575,10 @@ func (s *Server) startRun(taskID uuid.UUID) (*backgroundRun, bool) {
 		defer close(run.done)
 
 		// Bound to the server's context, not a tool call's: the run must outlive
-		// the call that started it, and must stop when the server stops.
-		outcome, err := s.orchestrator.RunTask(s.baseCtx, taskID.String())
+		// the call that started it, and must stop when the server stops. The
+		// kept orchestrator is used so a run started after a deferred connect
+		// records against the same connection.
+		outcome, err := orchestrator.RunTask(s.baseCtx, taskID.String())
 		run.outcome = outcome
 		run.err = err
 	}()
