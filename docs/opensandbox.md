@@ -2,6 +2,8 @@
 
 *Vietnamese version: [opensandbox.vi.md](opensandbox.vi.md).*
 
+*Status (2026-09-15): parked. Sandboxing is a future feature, to revisit when tasks become complex enough to need it; nothing in this document is planned work.*
+
 Question: whether OpenSandbox (https://github.com/opensandbox-group/OpenSandbox)
 can be applied to aidev — to isolate the coding agent, the verification step, or
 both. This note answers it from source code only, at OpenSandbox commit

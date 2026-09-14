@@ -2,6 +2,8 @@
 
 *Bản tiếng Việt của [opensandbox.md](opensandbox.md). Trích dẫn, lệnh, đường dẫn và khóa cấu hình được giữ nguyên, để người đọc tự mở ra kiểm tra.*
 
+*Trạng thái (15/09/2026): tạm gác. Sandbox là một tính năng tương lai, sẽ xem lại khi task đủ phức tạp để cần tới; hiện không có việc nào trong tài liệu này được lên kế hoạch.*
+
 Câu hỏi: OpenSandbox (https://github.com/opensandbox-group/OpenSandbox) có áp dụng được cho aidev không — để cô lập agent viết code, bước verification, hay cả hai.
 Tài liệu này trả lời chỉ dựa trên mã nguồn, tại commit OpenSandbox `d8cfce39dc1d846e580510ca44f44c495cbe95c4`, đối chiếu với mã aidev trong worktree này.
 
