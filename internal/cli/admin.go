@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"aidev/internal/config"
@@ -12,6 +14,42 @@ import (
 	"aidev/internal/store"
 	"aidev/migrations"
 )
+
+// valueOrNone shows a setting that is empty when unset, so that an absent
+// value is visible rather than a blank line that looks like missing output.
+func valueOrNone(v string) string {
+	if v == "" {
+		return "(none)"
+	}
+	return v
+}
+
+// formatHeaders renders tracing headers with their redacted values, sorted so
+// the output is stable. The values are already redacted by Config.Redacted.
+func formatHeaders(headers map[string]string) string {
+	if len(headers) == 0 {
+		return "(none)"
+	}
+	names := make([]string, 0, len(headers))
+	for name := range headers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	pairs := make([]string, 0, len(names))
+	for _, name := range names {
+		pairs = append(pairs, name+"="+headers[name])
+	}
+	return strings.Join(pairs, ", ")
+}
+
+// formatSampleRatio shows the configured ratio, or that none is set and the
+// tracing default of 1 applies.
+func formatSampleRatio(ratio *float64) string {
+	if ratio == nil {
+		return "(none)"
+	}
+	return fmt.Sprintf("%v", *ratio)
+}
 
 // runConfig prints the resolved configuration so that a developer can see what
 // aidev actually read, rather than what they believe the environment contains.
@@ -47,6 +85,11 @@ func runConfig(_ context.Context, env *Env, args []string) error {
 			"max_output_bytes":             cfg.MaxOutputBytes,
 			"worktree_cleanup":             cfg.WorktreeCleanup.String(),
 			"log_level":                    cfg.LogLevel.String(),
+			"tracing_endpoint":             cfg.Tracing.Endpoint,
+			"tracing_traces_endpoint":      cfg.Tracing.TracesEndpoint,
+			"tracing_headers":              cfg.Tracing.Headers,
+			"tracing_service_name":         cfg.Tracing.ServiceName,
+			"tracing_sample_ratio":         cfg.Tracing.SampleRatio,
 		})
 	}
 
@@ -66,18 +109,7 @@ func runConfig(_ context.Context, env *Env, args []string) error {
 	if codexSandbox == "" {
 		codexSandbox = "(none)"
 	}
-	// A user who exports variables has no file; say so plainly and point at
-	// the location a file could be created, so the next shell is not a fresh
-	// setup.
-	configFile := cfg.ConfigFile
-	if configFile == "" {
-		if def, err := config.DefaultConfigPath(config.OSLookup); err == nil {
-			configFile = fmt.Sprintf("(none; create %s to persist settings)", def)
-		} else {
-			configFile = "(none)"
-		}
-	}
-	fmt.Fprintf(env.Stdout, "config file                   %s\n", configFile)
+	fmt.Fprintf(env.Stdout, "config file                   %s\n", cfg.ConfigFile)
 	fmt.Fprintf(env.Stdout, "database url                  %s\n", cfg.DatabaseURL)
 	fmt.Fprintf(env.Stdout, "workspace root                %s\n", cfg.WorkspaceRoot)
 	fmt.Fprintf(env.Stdout, "default task timeout          %s\n", cfg.DefaultTaskTimeout)
@@ -93,6 +125,11 @@ func runConfig(_ context.Context, env *Env, args []string) error {
 	fmt.Fprintf(env.Stdout, "max output bytes              %d\n", cfg.MaxOutputBytes)
 	fmt.Fprintf(env.Stdout, "worktree cleanup              %s\n", cfg.WorktreeCleanup)
 	fmt.Fprintf(env.Stdout, "log level                     %s\n", cfg.LogLevel)
+	fmt.Fprintf(env.Stdout, "tracing endpoint              %s\n", valueOrNone(cfg.Tracing.Endpoint))
+	fmt.Fprintf(env.Stdout, "tracing traces endpoint       %s\n", valueOrNone(cfg.Tracing.TracesEndpoint))
+	fmt.Fprintf(env.Stdout, "tracing headers               %s\n", formatHeaders(cfg.Tracing.Headers))
+	fmt.Fprintf(env.Stdout, "tracing service name          %s\n", valueOrNone(cfg.Tracing.ServiceName))
+	fmt.Fprintf(env.Stdout, "tracing sample ratio          %s\n", formatSampleRatio(cfg.Tracing.SampleRatio))
 	return nil
 }
 

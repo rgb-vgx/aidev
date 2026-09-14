@@ -96,7 +96,7 @@ func connectApp(ctx context.Context, cfg config.Config, logger *slog.Logger) (*a
 	// tests passed because they install their own provider, and a real run produced
 	// no trace at all.
 	stopTracing := func(context.Context) error { return nil }
-	tracingCfg, err := tracing.FromEnv(config.OSLookup)
+	tracingCfg, err := tracing.FromSettings(cfg.Tracing)
 	if err != nil {
 		// A misconfigured exporter must not stop aidev from doing its job, but it
 		// must be visible rather than silently disabling observability.

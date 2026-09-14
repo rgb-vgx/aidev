@@ -15,6 +15,10 @@ DB_CONTAINER ?= $(or $(AIDEV_DB_CONTAINER),aidev-postgres)
 DB_URL  ?= postgres://aidev:aidev@127.0.0.1:$(DB_PORT)/aidev?sslmode=disable
 TEST_DB_URL ?= postgres://aidev:aidev@127.0.0.1:$(DB_PORT)/aidev_test?sslmode=disable
 
+# Every aidev setting lives in the conf.json file this names. Copy
+# conf/conf.example.json to conf/conf.json and edit it to match the database.
+AIDEV_CONFIG ?= $(CURDIR)/conf/conf.json
+
 .PHONY: help build install test test-integration test-e2e test-db-create fmt fmt-check vet lint check \
         db-up db-down db-reset db-logs migrate clean \
         langfuse-up langfuse-down langfuse-reset langfuse-logs langfuse-env langfuse-credentials \
@@ -190,7 +194,7 @@ db-logs: ## follow PostgreSQL logs
 	docker compose logs -f postgres
 
 migrate: build ## apply pending migrations to the development database
-	DATABASE_URL="$(DB_URL)" $(BIN) migrate
+	AIDEV_CONFIG="$(AIDEV_CONFIG)" $(BIN) migrate
 
 test-e2e: ## run the end-to-end test against the real opencode (slow, needs postgres)
 	TEST_DATABASE_URL="$(TEST_DB_URL)" AIDEV_TEST_OPENCODE=1 \

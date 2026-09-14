@@ -10,8 +10,6 @@ import (
 	"context"
 	"fmt"
 	"net/url"
-	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -25,7 +23,7 @@ import (
 	"go.opentelemetry.io/otel/trace/noop"
 )
 
-// DefaultServiceName is used when OTEL_SERVICE_NAME is unset so that spans
+// DefaultServiceName is used when no service name is configured so that spans
 // from every aidev process share one service identity in the backend.
 const DefaultServiceName = "aidev"
 
@@ -34,40 +32,42 @@ const DefaultServiceName = "aidev"
 // deadline on top of this.
 const exporterTimeout = 10 * time.Second
 
-// Config is read from the environment by FromEnv.
+// Settings carries the tracing section of conf.json. It is a plain data
+// transfer type so that configuration stays in internal/config; the defaults
+// and validation live here with the code that uses them.
+type Settings struct {
+	Endpoint       string
+	TracesEndpoint string
+	Headers        map[string]string
+	ServiceName    string
+	SampleRatio    *float64
+}
+
+// Config is built from Settings by FromSettings.
 type Config struct {
 	Enabled        bool
-	Endpoint       string            // base OTLP HTTP URL from OTEL_EXPORTER_OTLP_ENDPOINT
-	TracesEndpoint string            // full URL the traces exporter posts to (<base>/v1/traces, or OTEL_EXPORTER_OTLP_TRACES_ENDPOINT as given)
+	Endpoint       string            // base OTLP HTTP URL
+	TracesEndpoint string            // full URL the traces exporter posts to (<base>/v1/traces, or TracesEndpoint as given)
 	Headers        map[string]string // extra OTLP headers, e.g. Authorization
 	ServiceName    string            // defaults to "aidev"
 	SampleRatio    float64           // 0..1, defaults to 1
 }
 
-// FromEnv reads OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_EXPORTER_OTLP_TRACES_ENDPOINT,
-// OTEL_EXPORTER_OTLP_HEADERS, OTEL_SERVICE_NAME and OTEL_TRACES_SAMPLER_ARG.
-// Enabled is true when either endpoint variable sets a non-empty value.
-// OTEL_EXPORTER_OTLP_TRACES_ENDPOINT is the full signal-specific URL and is used
-// as given; otherwise TracesEndpoint appends /v1/traces to the base endpoint, as
-// the OpenTelemetry specification defines the base variable without a signal
-// path. OTEL_EXPORTER_OTLP_HEADERS is a comma-separated list of key=value pairs.
-// Returns an error for a malformed header list or a sample ratio outside 0..1.
-func FromEnv(lookup func(string) (string, bool)) (Config, error) {
-	if lookup == nil {
-		lookup = os.LookupEnv
-	}
-	get := func(key string) string {
-		v, _ := lookup(key)
-		return v
-	}
-
+// FromSettings resolves Settings into a Config. Enabled is true when either
+// endpoint sets a non-empty value. TracesEndpoint is the full
+// signal-specific URL and is used as given; otherwise TracesEndpoint appends
+// /v1/traces to the base endpoint, as the OpenTelemetry specification defines
+// the base URL without a signal path. A nil SampleRatio means 1; an explicit
+// 0 stays 0. Returns an error for an empty header name or a sample ratio
+// outside 0..1.
+func FromSettings(s Settings) (Config, error) {
 	cfg := Config{
 		ServiceName: DefaultServiceName,
 		SampleRatio: 1,
 	}
 
-	cfg.Endpoint = strings.TrimSpace(get("OTEL_EXPORTER_OTLP_ENDPOINT"))
-	tracesEndpoint := strings.TrimSpace(get("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"))
+	cfg.Endpoint = strings.TrimSpace(s.Endpoint)
+	tracesEndpoint := strings.TrimSpace(s.TracesEndpoint)
 	switch {
 	case tracesEndpoint != "":
 		// Signal-specific URL takes precedence and is used verbatim.
@@ -77,29 +77,24 @@ func FromEnv(lookup func(string) (string, bool)) (Config, error) {
 	}
 	cfg.Enabled = cfg.Endpoint != "" || cfg.TracesEndpoint != ""
 
-	if v := strings.TrimSpace(get("OTEL_SERVICE_NAME")); v != "" {
+	if v := strings.TrimSpace(s.ServiceName); v != "" {
 		cfg.ServiceName = v
 	}
 
-	rawHeaders := strings.TrimSpace(get("OTEL_EXPORTER_OTLP_HEADERS"))
-	if rawHeaders != "" {
-		headers, err := parseHeaders(rawHeaders)
-		if err != nil {
-			return Config{}, fmt.Errorf("parse OTEL_EXPORTER_OTLP_HEADERS: %w", err)
+	if s.Headers != nil {
+		for name := range s.Headers {
+			if strings.TrimSpace(name) == "" {
+				return Config{}, fmt.Errorf("tracing header name must not be empty")
+			}
 		}
-		cfg.Headers = headers
+		cfg.Headers = s.Headers
 	}
 
-	rawRatio := strings.TrimSpace(get("OTEL_TRACES_SAMPLER_ARG"))
-	if rawRatio != "" {
-		ratio, err := strconv.ParseFloat(rawRatio, 64)
-		if err != nil {
-			return Config{}, fmt.Errorf("parse OTEL_TRACES_SAMPLER_ARG %q as a number: %w", rawRatio, err)
+	if s.SampleRatio != nil {
+		if *s.SampleRatio < 0 || *s.SampleRatio > 1 {
+			return Config{}, fmt.Errorf("tracing sample ratio %v is outside 0..1", *s.SampleRatio)
 		}
-		if ratio < 0 || ratio > 1 {
-			return Config{}, fmt.Errorf("OTEL_TRACES_SAMPLER_ARG %q is outside 0..1", rawRatio)
-		}
-		cfg.SampleRatio = ratio
+		cfg.SampleRatio = *s.SampleRatio
 	}
 
 	return cfg, nil
@@ -115,27 +110,6 @@ func resolveTracesEndpoint(base string) string {
 	}
 	u.Path = strings.TrimSuffix(u.Path, "/") + "/v1/traces"
 	return u.String()
-}
-
-// parseHeaders splits a comma-separated key=value list. Entries without a
-// separator or with an empty key are rejected rather than silently dropped, so
-// a typo in authentication headers fails at startup instead of producing
-// unauthenticated exports.
-func parseHeaders(raw string) (map[string]string, error) {
-	headers := make(map[string]string)
-	for _, part := range strings.Split(raw, ",") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		key, value, ok := strings.Cut(part, "=")
-		key = strings.TrimSpace(key)
-		if !ok || key == "" {
-			return nil, fmt.Errorf("malformed header entry %q: want key=value", part)
-		}
-		headers[key] = strings.TrimSpace(value)
-	}
-	return headers, nil
 }
 
 // Start returns a tracer and a shutdown function. When cfg.Enabled is false it
