@@ -2,6 +2,7 @@ package git
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -196,5 +197,71 @@ func TestDiffIncludesWorkTheAgentCommitted(t *testing.T) {
 	}
 	if diff.ChangedFiles != 1 {
 		t.Errorf("ChangedFiles = %d, want 1", diff.ChangedFiles)
+	}
+}
+
+// Interception decides what aidev must NOT run from this list, so an incomplete
+// list lets a changed runner judge the agent that changed it: truncation must be
+// an error, never a shorter answer. The same package already carries truncation
+// for Diff (Diff.Truncated), and procexec reports it per stream, so the
+// information is there to be used; ChangedPaths is the caller that cannot afford
+// to ignore it. An attempt that unpacks a dependency tree with no .gitignore
+// produces tens of thousands of untracked paths, which is how a real run reaches
+// the 4 MiB cap.
+func TestChangedPathsFailsClosedWhenGitOutputIsTruncated(t *testing.T) {
+	ctx := context.Background()
+	m := newManager(t)
+	repoPath := newRepo(t)
+	write(t, filepath.Join(repoPath, ".gitignore"), "*.ignored\n")
+	gitIn(t, repoPath, "add", "-A")
+	gitIn(t, repoPath, "commit", "-qm", "ignore rules")
+
+	repo, err := m.OpenRepository(ctx, repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Each case caps output after the worktree exists, so only the two commands
+	// ChangedPaths itself runs are capped, and fills the stream that case needs:
+	// the diff against the base commit, or the listing of ignored files.
+	cases := []struct {
+		name  string
+		files func(worktree string)
+	}{
+		{"the diff against the base commit", func(worktree string) {
+			for i := 0; i < 60; i++ {
+				write(t, filepath.Join(worktree, fmt.Sprintf("a-changed-file-with-a-long-name-%02d.txt", i)), "x\n")
+			}
+		}},
+		// Ignored files are listed one by one unless they sit under an ignored
+		// directory, which is collapsed to a single entry, so top-level ignored
+		// files are what fills this stream.
+		{"the listing of ignored files", func(worktree string) {
+			for i := 0; i < 60; i++ {
+				write(t, filepath.Join(worktree, fmt.Sprintf("an-ignored-file-with-a-long-name-%02d.ignored", i)), "x\n")
+			}
+		}},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			name := fmt.Sprintf("truncation-probe-%d", i)
+			wt, err := m.Create(ctx, CreateRequest{Repository: repo, Name: name, Branch: "aidev/" + name})
+			if err != nil {
+				t.Fatal(err)
+			}
+			tc.files(wt.Path)
+
+			m.MaxOutputBytes = 256 // far smaller than 60 long path names
+			defer func() { m.MaxOutputBytes = DefaultMaxOutputBytes }()
+
+			changed, err := wt.ChangedPaths(ctx)
+			if err == nil {
+				t.Fatalf("ChangedPaths returned %d paths built from truncated output of %s; "+
+					"a short list makes interception miss a changed runner", len(changed), tc.name)
+			}
+			if !strings.Contains(strings.ToLower(err.Error()), "truncat") {
+				t.Errorf("err = %v, want it to say the output was truncated so the cause is obvious", err)
+			}
+		})
 	}
 }

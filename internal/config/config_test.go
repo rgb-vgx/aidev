@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -576,5 +577,50 @@ func TestAnEmptyFileSaysItIsEmpty(t *testing.T) {
 				t.Errorf("error = %v, want the file named and that it is empty", err)
 			}
 		})
+	}
+}
+
+// Every other tracing string is trimmed on the way in, and the env loader this
+// file replaced trimmed both sides of every header (parseHeaders, tracing.go
+// before bba2de2). A conf.json is hand-edited, so " x-api-key " is what a person
+// types; an HTTP header name cannot contain a space, so keeping it verbatim ships
+// a request the collector rejects, with nothing in aidev's output to explain it —
+// `aidev config` prints the name with its spaces and the endpoint without.
+func TestTracingHeadersAreTrimmed(t *testing.T) {
+	cfg := mustLoad(t, `{"database": {"url": "`+testDSN+`"},
+		"tracing": {"headers": {"  x-api-key  ": "  secret  ", "authorization": "Basic abc"}}}`)
+	want := map[string]string{"x-api-key": "secret", "authorization": "Basic abc"}
+	if !reflect.DeepEqual(cfg.Tracing.Headers, want) {
+		t.Errorf("headers = %#v, want names and values trimmed: %#v", cfg.Tracing.Headers, want)
+	}
+}
+
+// A header whose name is only spaces is still rejected: trimming must not turn a
+// nameless header into a header named "".
+func TestATracingHeaderNameOfOnlySpacesIsRejected(t *testing.T) {
+	_, err := load(t, `{"database": {"url": "`+testDSN+`"}, "tracing": {"headers": {"   ": "x"}}}`)
+	if err == nil || !strings.Contains(err.Error(), "tracing.headers") {
+		t.Fatalf("error = %v, want tracing.headers named as having an empty header name", err)
+	}
+}
+
+// The message a person has to act on must name the header they typed wrong. It
+// says "want an object of strings, got an object" today, which is both
+// self-contradictory and silent about which of five headers to fix.
+func TestAWrongTypedHeaderValueNamesTheHeader(t *testing.T) {
+	_, err := load(t, `{"database": {"url": "`+testDSN+`"},
+		"tracing": {"headers": {"authorization": "Basic abc", "x-retries": 3}}}`)
+	if err == nil {
+		t.Fatal("a header whose value is a number was accepted")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "x-retries") {
+		t.Errorf("error = %v, want the header with the wrong type named", err)
+	}
+	if strings.Contains(msg, "got an object") {
+		t.Errorf("error = %v: the value is a number, not an object; the message describes the wrong value", err)
+	}
+	if strings.Contains(msg, "authorization") {
+		t.Errorf("error = %v, want only the wrong header named, not the one that is fine", err)
 	}
 }
