@@ -293,6 +293,26 @@ SQL. The duplication is real, so `TestEnumsMatchMigrationConstraints` reads the
 migration and fails on drift. The test was verified to fail when a value is removed
 from the constraint.
 
+### A task states how hard it is; configuration picks the model
+
+A task carries an optional `model` and an optional `hardness` (`TRIVIAL`, `STANDARD`,
+`HARD` — a closed vocabulary, because a number invites false precision and free text
+cannot be routed). The worker resolves the model for a run in one place: the task's own
+model, then `agent.routing[hardness]` from conf.json, then nothing at all. "Nothing" is
+not a gap — it hands the choice to the backend, which was built from configuration and
+holds its own model, so `agent.opencode.model` and `agent.codex.model` each apply to
+their own backend rather than one standing in for the other.
+
+The run record does not repeat that calculation. `agent.Result.Model` is what the
+backend reports it actually used, and that is what `worker_runs.model` stores, next to
+`worker_runs.agent`. The distinction matters as soon as two backends disagree: before
+`Result.Model` existed, the worker recomputed the fallback and would have filed a Codex
+run under an OpenCode model — a history that reads plausibly and is wrong.
+
+This is the routing half of "task hardness → agent/model routing → isolated execution →
+independent verification". Nothing here decides hardness on a task's behalf: a person
+states it, and the recorded history is what makes the policy checkable.
+
 ### An agent's account of itself is recorded, never trusted
 
 `worker_runs.summary` stores what the agent said it did, verbatim, because it is
