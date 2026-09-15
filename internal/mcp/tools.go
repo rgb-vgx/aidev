@@ -110,12 +110,18 @@ type CreateTaskOutput struct {
 }
 
 func (s *Server) createTask(ctx context.Context, _ *sdk.CallToolRequest, in CreateTaskInput) (*sdk.CallToolResult, CreateTaskOutput, error) {
-	orchestrator, _, err := s.connected(ctx)
+	// Checked before connecting: a request that cannot work should be answered with
+	// what is wrong with it, not with "the database is not reachable", and it should
+	// not spend a connection attempt.
+	steps, err := task.ParseVerificationSteps(in.Verification)
 	if err != nil {
 		return nil, CreateTaskOutput{}, err
 	}
+	if len(steps) == 0 {
+		return nil, CreateTaskOutput{}, task.ErrVerificationRequired
+	}
 
-	steps, err := task.ParseVerificationSteps(in.Verification)
+	orchestrator, _, err := s.connected(ctx)
 	if err != nil {
 		return nil, CreateTaskOutput{}, err
 	}
@@ -179,12 +185,10 @@ type ListTasksOutput struct {
 }
 
 func (s *Server) listTasks(ctx context.Context, _ *sdk.CallToolRequest, in ListTasksInput) (*sdk.CallToolResult, ListTasksOutput, error) {
-	orchestrator, st, err := s.connected(ctx)
-	if err != nil {
-		return nil, ListTasksOutput{}, err
-	}
 	filter := store.TaskFilter{Limit: in.Limit}
 
+	// An unknown status is the caller's mistake, and naming it is more use than a
+	// connection error: checked before connecting.
 	for _, raw := range in.Statuses {
 		trimmed := strings.ToUpper(strings.TrimSpace(raw))
 		if trimmed == "" {
@@ -195,6 +199,11 @@ func (s *Server) listTasks(ctx context.Context, _ *sdk.CallToolRequest, in ListT
 			return nil, ListTasksOutput{}, err
 		}
 		filter.Statuses = append(filter.Statuses, parsed)
+	}
+
+	orchestrator, st, err := s.connected(ctx)
+	if err != nil {
+		return nil, ListTasksOutput{}, err
 	}
 
 	if strings.TrimSpace(in.RepoPath) != "" {
@@ -243,6 +252,18 @@ type RunTaskOutput struct {
 }
 
 func (s *Server) runTask(ctx context.Context, _ *sdk.CallToolRequest, in RunTaskInput) (*sdk.CallToolResult, RunTaskOutput, error) {
+	wait := DefaultWaitSeconds
+	if in.WaitSeconds != nil {
+		wait = *in.WaitSeconds
+	}
+	switch {
+	case wait < 0:
+		// Checked before connecting: no database can make a negative wait valid.
+		return nil, RunTaskOutput{}, fmt.Errorf("wait_seconds must not be negative")
+	case wait > MaxWaitSeconds:
+		wait = MaxWaitSeconds
+	}
+
 	orchestrator, st, err := s.connected(ctx)
 	if err != nil {
 		return nil, RunTaskOutput{}, err
@@ -250,17 +271,6 @@ func (s *Server) runTask(ctx context.Context, _ *sdk.CallToolRequest, in RunTask
 	t, err := s.resolve(ctx, st, in.Task)
 	if err != nil {
 		return nil, RunTaskOutput{}, err
-	}
-
-	wait := DefaultWaitSeconds
-	if in.WaitSeconds != nil {
-		wait = *in.WaitSeconds
-	}
-	switch {
-	case wait < 0:
-		return nil, RunTaskOutput{}, fmt.Errorf("wait_seconds must not be negative")
-	case wait > MaxWaitSeconds:
-		wait = MaxWaitSeconds
 	}
 
 	run, started := s.startRun(orchestrator, t.ID)

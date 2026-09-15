@@ -22,6 +22,8 @@ import (
 	"time"
 
 	"aidev/internal/tracing"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Defaults. The task timeout is deliberately generous: Phase 0 observed that
@@ -387,6 +389,14 @@ func LoadFile(path string) (Config, error) {
 		}
 	} else {
 		cfg.DatabaseURL = strings.TrimSpace(*file.Database.URL)
+		// PostgreSQL's own parser is the only authority on what it accepts, and a
+		// URL it cannot parse will never connect: accepting it here turns a typo
+		// into "the database is not reachable", advice that sends a person to
+		// `make db-up` for a problem starting the database cannot fix. Parsing
+		// neither resolves names nor connects.
+		if _, err := pgxpool.ParseConfig(cfg.DatabaseURL); err != nil {
+			fail("database.url is not a connection string PostgreSQL can parse: %v", err)
+		}
 	}
 
 	if file.WorkspaceRoot == nil || strings.TrimSpace(*file.WorkspaceRoot) == "" {

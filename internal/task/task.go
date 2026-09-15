@@ -5,6 +5,7 @@
 package task
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -102,6 +103,13 @@ func (e *ValidationError) Error() string {
 	return "invalid task:\n  - " + strings.Join(e.Problems, "\n  - ")
 }
 
+// ErrVerificationRequired is the product's central rule as an error: a task aidev
+// cannot verify is a task aidev cannot honestly report on, so it is not accepted at
+// all. It is exported because the MCP server refuses such a request before it
+// reaches the database, and both refusals must say the same thing.
+var ErrVerificationRequired = errors.New("at least one verification command is required, because only aidev's own " +
+	"verification can mark a task succeeded (for example: go test ./...)")
+
 // New validates input and returns a task in StatusPending. Ref is left empty
 // for the store to assign.
 func New(input NewTaskInput, defaultAgent string) (Task, error) {
@@ -145,8 +153,7 @@ func New(input NewTaskInput, defaultAgent string) (Task, error) {
 	// task aidev cannot honestly report on, so it is not accepted at all.
 	switch {
 	case len(input.Verification) == 0:
-		add("at least one verification command is required, because only aidev's own " +
-			"verification can mark a task succeeded (for example: go test ./...)")
+		add("%s", ErrVerificationRequired)
 	case len(input.Verification) > MaxVerificationSteps:
 		add("%d verification commands exceed the limit of %d", len(input.Verification), MaxVerificationSteps)
 	}

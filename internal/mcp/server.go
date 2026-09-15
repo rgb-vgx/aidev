@@ -55,6 +55,7 @@ type Server struct {
 	store        *store.Store
 	open         Opener
 	connMu       sync.Mutex
+	attempt      *connectAttempt
 	logger       *slog.Logger
 	version      string
 
@@ -99,23 +100,63 @@ func NewDeferred(open Opener, version string, logger *slog.Logger) *Server {
 	}
 }
 
-// connected returns the orchestrator and store, opening them on first use. The
-// mutex is held across the open so two concurrent first calls cannot open
-// twice; a failure is not kept, so the next call tries again. An opener error
-// is returned unchanged so the caller can report it as a tool error.
+// connectAttempt is one attempt to open the database, shared by every call waiting
+// on it.
+type connectAttempt struct {
+	done         chan struct{}
+	orchestrator *worker.Orchestrator
+	store        *store.Store
+	err          error
+}
+
+// connected returns the orchestrator and store, opening them on first use.
+//
+// Calls that arrive together share one attempt rather than queueing: holding the
+// mutex across the open made five concurrent first calls cost five sequential
+// attempts, five seconds each against a database that is still starting, and a
+// waiter could not give up because a mutex cannot observe a context. A failure is
+// not kept, so the next call tries again. An opener error is returned unchanged so
+// the caller can report it as a tool error.
 func (s *Server) connected(ctx context.Context) (*worker.Orchestrator, *store.Store, error) {
 	s.connMu.Lock()
-	defer s.connMu.Unlock()
 	if s.orchestrator != nil && s.store != nil {
-		return s.orchestrator, s.store, nil
+		orchestrator, st := s.orchestrator, s.store
+		s.connMu.Unlock()
+		return orchestrator, st, nil
 	}
-	orchestrator, st, err := s.open(ctx)
-	if err != nil {
-		return nil, nil, err
+	attempt := s.attempt
+	if attempt == nil {
+		attempt = &connectAttempt{done: make(chan struct{})}
+		s.attempt = attempt
+		go s.connect(attempt)
 	}
-	s.orchestrator = orchestrator
-	s.store = st
-	return orchestrator, st, nil
+	s.connMu.Unlock()
+
+	select {
+	case <-attempt.done:
+		return attempt.orchestrator, attempt.store, attempt.err
+	case <-ctx.Done():
+		// The attempt belongs to every waiter, so giving up here does not cancel
+		// what the others are waiting for.
+		return nil, nil, ctx.Err()
+	}
+}
+
+// connect runs one attempt. Its context is not any single caller's, because the
+// result is shared; the opener applies its own bound.
+func (s *Server) connect(attempt *connectAttempt) {
+	orchestrator, st, err := s.open(context.Background())
+
+	s.connMu.Lock()
+	attempt.orchestrator, attempt.store, attempt.err = orchestrator, st, err
+	if err == nil {
+		s.orchestrator, s.store = orchestrator, st
+	}
+	// A failure is not remembered: the next call starts a new attempt.
+	s.attempt = nil
+	s.connMu.Unlock()
+
+	close(attempt.done)
 }
 
 // MCPServer builds the protocol server with every tool registered.

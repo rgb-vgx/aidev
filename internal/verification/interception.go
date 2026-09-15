@@ -154,7 +154,9 @@ func shellScript(args []string) (string, bool) {
 		case len(a) > 1 && (a[0] == '-' || a[0] == '+'):
 			for j := 1; j < len(a); j++ {
 				switch a[j] {
-				case 'c':
+				case 'c', 's':
+					// -c takes the command from the next argument and -s from
+					// stdin: either way no operand is a script to shadow.
 					return "", false
 				case 'o':
 					if j == len(a)-1 {

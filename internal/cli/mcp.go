@@ -4,7 +4,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"sync"
 	"time"
 
 	aidevmcp "aidev/internal/mcp"
@@ -54,31 +53,27 @@ protocol.
 	// is still starting and a client that never retries a launch stays usable.
 	logger.InfoContext(ctx, "mcp server starting; the database connects on first tool use")
 
-	var mu sync.Mutex
-	var current *app
-	open := aidevmcp.Opener(func(toolCtx context.Context) (*worker.Orchestrator, *store.Store, error) {
-		connectCtx, cancel := context.WithTimeout(toolCtx, mcpConnectTimeout)
+	lazy := newLazyApp(func(attemptCtx context.Context) (*app, error) {
+		connectCtx, cancel := context.WithTimeout(attemptCtx, mcpConnectTimeout)
 		defer cancel()
 		a, err := connectApp(connectCtx, cfg, logger)
 		if err != nil {
-			logger.WarnContext(toolCtx, "mcp database connection failed; will retry on the next tool call", "error", err.Error())
+			logger.WarnContext(ctx, "mcp database connection failed; will retry on the next tool call", "error", err.Error())
+			return nil, err
+		}
+		logger.InfoContext(ctx, "mcp database connected")
+		return a, nil
+	})
+	defer lazy.close()
+
+	open := aidevmcp.Opener(func(toolCtx context.Context) (*worker.Orchestrator, *store.Store, error) {
+		a, err := lazy.get(toolCtx)
+		if err != nil {
 			return nil, nil, err
 		}
-		mu.Lock()
-		current = a
-		mu.Unlock()
-		logger.InfoContext(toolCtx, "mcp database connected")
 		return a.orchestrator, a.store, nil
 	})
 
 	server := aidevmcp.NewDeferred(open, env.Version, logger)
-	err = server.Serve(ctx)
-
-	mu.Lock()
-	opened := current
-	mu.Unlock()
-	if opened != nil {
-		opened.close()
-	}
-	return err
+	return server.Serve(ctx)
 }
