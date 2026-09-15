@@ -11,16 +11,16 @@ official Go SDK v1.7.0, protocol version **2025-06-18**.
 
 ## Registering the server with Claude Code
 
-Build the binary first, then add it. Both variables are required, and Claude Code
-launches the server itself, so they must be given to the registration rather than
-exported in your shell:
+Build the binary first, then add it. aidev reads nothing but the conf.json that
+`AIDEV_CONFIG` names, so the registration has to carry it: Claude Code launches the
+server itself, and a variable exported in your shell is not present in that launch.
 
 ```bash
 make install                                          # aidev on your PATH
-claude mcp add --scope user aidev -- "$(go env GOPATH)/bin/aidev" mcp
+claude mcp add --scope user -e AIDEV_CONFIG=/abs/path/conf.json aidev -- /abs/path/aidev mcp
 
 claude mcp list
-# aidev: /home/you/go/bin/aidev mcp - ✔ Connected
+# aidev: /abs/path/aidev mcp - ✔ Connected
 ```
 
 **`--scope user` is the one to use.** It registers aidev for every project, which
@@ -30,9 +30,10 @@ one project directory — useful only for trying it out. `--scope project` write
 shareable `.mcp.json` in a repository root, and needs a one-time approval in the
 Claude Code UI before it is connected to.
 
-Nothing secret goes on the registration. aidev reads its own configuration from
-`~/.config/aidev/config.env`, so `~/.claude.json` holds no connection string and the
-registration is the same on every machine.
+Nothing secret goes on the registration: `AIDEV_CONFIG` names the conf.json, and
+aidev reads the database password out of it, so `~/.claude.json` holds no connection
+string and the registration is the same on every machine. Use the same conf.json the
+terminal commands use — the one `aidev config` reports.
 
 The `.mcp.json` form, if you prefer to write it by hand:
 
@@ -44,8 +45,7 @@ The `.mcp.json` form, if you prefer to write it by hand:
       "command": "/absolute/path/to/aidev",
       "args": ["mcp"],
       "env": {
-        "DATABASE_URL": "postgres://aidev:aidev@127.0.0.1:5434/aidev?sslmode=disable",
-        "WORKSPACE_ROOT": "/home/you/.local/share/aidev/worktrees"
+        "AIDEV_CONFIG": "/abs/path/conf.json"
       }
     }
   }
@@ -54,6 +54,15 @@ The `.mcp.json` form, if you prefer to write it by hand:
 
 Both shapes were confirmed by writing them with `claude mcp add` and reading the
 files back (docs/research.md §3.2); neither was copied from documentation.
+
+**Which settings affect the tools.** The server is the same aidev binary, so all of
+conf.json applies, but the ones that shape the tools are `database.url` (every call
+reads or writes PostgreSQL), `workspace_root` (where a run isolates its worktree),
+`tasks.timeout` and `tasks.verification_timeout` (bound a run and its verification;
+`timeout_seconds` on `aidev_run_task` overrides them for one task),
+`tasks.max_output_bytes` (caps the streams a result can return), `agent.backend`
+(opencode or codex), `agent.routing` (which model a task's hardness deserves), and
+`tasks.worktree_cleanup` (whether a finished worktree stays).
 
 **stdout belongs to the protocol.** aidev writes nothing to it in this mode; every
 log line goes to stderr. A test asserts the logger cannot break that rule, because
@@ -168,7 +177,7 @@ has not finished.
 
 ### Side effects
 
-Creates a git worktree under `WORKSPACE_ROOT` and a branch `aidev/<ref>`; runs the
+Creates a git worktree under `workspace_root` and a branch `aidev/<ref>`; runs the
 agent, which writes files there; moves the task through `RUNNING`, `VERIFYING` and a
 terminal state; appends events throughout. On success, commits the work to the task's
 branch and removes the worktree. On failure, keeps the worktree for inspection. The
@@ -348,7 +357,7 @@ appending `task.approval_granted` or `task.approval_denied`.
   terminal.
 - **No merge, and no push.** A successful task leaves a commit on its own branch;
   what happens to that branch is a human's call.
-- **No configuration surface.** A planner cannot change `WORKSPACE_ROOT`, the model,
+- **No configuration surface.** A planner cannot change `workspace_root`, the model,
   the agent command, or a timeout default.
 - **No project or event writes.** Projects are registered as a side effect of
   creating a task, and the event log is append-only by construction.
