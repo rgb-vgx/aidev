@@ -32,6 +32,8 @@ func TestEnumsMatchMigrationConstraints(t *testing.T) {
 		{"worktrees_status_valid", strs(task.AllWorktreeStatuses())},
 		{"approvals_status_valid", strs(task.AllApprovalStatuses())},
 		{"events_type_valid", strs(event.AllTypes())},
+		// "" is allowed: a task need not state a hardness.
+		{"tasks_hardness_valid", append([]string{""}, strs(task.AllHardnesses())...)},
 	}
 
 	for _, tc := range cases {

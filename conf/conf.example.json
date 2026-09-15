@@ -21,7 +21,8 @@
       "profile": "",
       "model": "",
       "sandbox": "workspace-write"
-    }
+    },
+    "routing": {}
   },
   "log_level": "info",
   "tracing": {

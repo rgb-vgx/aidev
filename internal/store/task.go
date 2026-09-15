@@ -13,7 +13,7 @@ import (
 	"aidev/internal/task"
 )
 
-const taskColumns = `id, ref, project_id, title, description, agent, model, priority, status,
+const taskColumns = `id, ref, project_id, title, description, agent, model, hardness, priority, status,
 	acceptance_criteria, verification, max_retries, requires_approval, base_ref,
 	timeout_seconds, created_at, updated_at`
 
@@ -27,12 +27,12 @@ func (s *Store) CreateTask(ctx context.Context, t task.Task) (task.Task, error) 
 
 	row := s.db.QueryRow(ctx, `
 		INSERT INTO tasks (
-			id, project_id, title, description, agent, model, priority, status,
+			id, project_id, title, description, agent, model, hardness, priority, status,
 			acceptance_criteria, verification, max_retries, requires_approval,
 			base_ref, timeout_seconds
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 		RETURNING `+taskColumns,
-		t.ID, t.ProjectID, t.Title, t.Description, t.Agent, t.Model, t.Priority, string(t.Status),
+		t.ID, t.ProjectID, t.Title, t.Description, t.Agent, t.Model, string(t.Hardness), t.Priority, string(t.Status),
 		t.AcceptanceCriteria, verification, t.MaxRetries, t.RequiresApproval,
 		t.BaseRef, int(t.Timeout.Seconds()))
 
@@ -181,11 +181,12 @@ func scanTask(row scanner) (task.Task, error) {
 	var (
 		t              task.Task
 		status         string
+		hardness       string
 		verification   []byte
 		timeoutSeconds int
 	)
 	err := row.Scan(
-		&t.ID, &t.Ref, &t.ProjectID, &t.Title, &t.Description, &t.Agent, &t.Model, &t.Priority,
+		&t.ID, &t.Ref, &t.ProjectID, &t.Title, &t.Description, &t.Agent, &t.Model, &hardness, &t.Priority,
 		&status, &t.AcceptanceCriteria, &verification, &t.MaxRetries, &t.RequiresApproval,
 		&t.BaseRef, &timeoutSeconds, &t.CreatedAt, &t.UpdatedAt)
 	if err != nil {
@@ -199,6 +200,16 @@ func scanTask(row scanner) (task.Task, error) {
 		return task.Task{}, fmt.Errorf("task %s has unrecognised status: %w", t.ID, err)
 	}
 	t.Status = parsed
+
+	if hardness != "" {
+		h, err := task.ParseHardness(hardness)
+		if err != nil {
+			// The CHECK constraint makes this unreachable unless the enum and
+			// the migration have diverged, which is worth reporting loudly.
+			return task.Task{}, fmt.Errorf("task %s has unrecognised hardness: %w", t.ID, err)
+		}
+		t.Hardness = h
+	}
 
 	if len(verification) > 0 {
 		if err := json.Unmarshal(verification, &t.Verification); err != nil {

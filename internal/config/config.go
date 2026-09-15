@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"aidev/internal/task"
 	"aidev/internal/tracing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -151,6 +152,12 @@ type Config struct {
 	// CodexSandbox is passed as --sandbox when set.
 	CodexSandbox string
 
+	// Routing maps a task hardness (TRIVIAL, STANDARD, HARD) to the model that
+	// hardness deserves, so a person states how hard a task is once and
+	// configuration decides which model that deserves. A hardness with no entry
+	// leaves the choice to the backend, as does a task with no hardness.
+	Routing map[string]string
+
 	// MaxOutputBytes bounds each captured stdout/stderr stream. Output beyond
 	// it is discarded and flagged as truncated, so a runaway agent cannot
 	// exhaust memory or the database.
@@ -205,6 +212,11 @@ var configSchema = map[string]any{
 			"model":   kindString,
 			"sandbox": kindString,
 		},
+		// The routing table maps hardness levels to models. Its keys are
+		// validated against the hardness vocabulary on load rather than
+		// enumerated here, but its values are plain strings like any other
+		// object-of-strings setting.
+		"routing": kindStringMap,
 	},
 	"log_level": kindString,
 	"tracing": map[string]any{
@@ -229,6 +241,10 @@ const (
 // SettingKeys returns the dotted paths of all 20 settings, sorted. It is
 // derived from configSchema rather than typed out separately, so adding a
 // setting to the schema teaches every consumer at once.
+//
+// agent.routing is the one exception: its keys are hardness levels rather than
+// further settings, so they are validated against the hardness vocabulary on
+// load instead of being enumerated here.
 func SettingKeys() []string {
 	var keys []string
 	var walk func(prefix string, node map[string]any)
@@ -237,6 +253,9 @@ func SettingKeys() []string {
 			key := k
 			if prefix != "" {
 				key = prefix + "." + k
+			}
+			if key == "agent.routing" {
+				continue
 			}
 			if sub, ok := v.(map[string]any); ok {
 				walk(key, sub)
@@ -296,6 +315,7 @@ type fileConfig struct {
 			Model   *string `json:"model"`
 			Sandbox *string `json:"sandbox"`
 		} `json:"codex"`
+		Routing map[string]string `json:"routing"`
 	} `json:"agent"`
 	LogLevel *string `json:"log_level"`
 	Tracing  *struct {
@@ -500,6 +520,34 @@ func LoadFile(path string) (Config, error) {
 			if file.Agent.Codex.Sandbox != nil && strings.TrimSpace(*file.Agent.Codex.Sandbox) != "" {
 				cfg.CodexSandbox = strings.TrimSpace(*file.Agent.Codex.Sandbox)
 			}
+		}
+		if file.Agent.Routing != nil {
+			// Routing is the point of hardness: a person states how hard a
+			// task is, and this table says which model that deserves. Keys
+			// are hardness levels, so a key outside the vocabulary would
+			// silently never match a task and is refused.
+			keys := make([]string, 0, len(file.Agent.Routing))
+			for k := range file.Agent.Routing {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			routing := make(map[string]string, len(keys))
+			for _, raw := range keys {
+				h, err := task.ParseHardness(raw)
+				if err != nil || h == "" {
+					fail("agent.routing key %q is not a hardness (want one of TRIVIAL, STANDARD, HARD)", raw)
+					continue
+				}
+				model := strings.TrimSpace(file.Agent.Routing[raw])
+				if model == "" {
+					// Leaving the entry out already means "let the backend
+					// choose", so an empty model is a mistake, not a choice.
+					fail("agent.routing %q has an empty model: remove the entry to let the backend choose", string(h))
+					continue
+				}
+				routing[string(h)] = model
+			}
+			cfg.Routing = routing
 		}
 	}
 

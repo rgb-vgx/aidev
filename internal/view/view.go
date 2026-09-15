@@ -29,6 +29,7 @@ type Task struct {
 	AcceptanceCriteria string   `json:"acceptance_criteria,omitempty" jsonschema:"what done looks like"`
 	Agent              string   `json:"agent" jsonschema:"agent used to implement the task"`
 	Model              string   `json:"model,omitempty" jsonschema:"model used to implement the task; empty means the configured default"`
+	Hardness           string   `json:"hardness,omitempty" jsonschema:"how hard the task stated it was: TRIVIAL, STANDARD or HARD; empty means none was stated"`
 	Priority           int      `json:"priority" jsonschema:"higher runs first"`
 	Verification       []string `json:"verification" jsonschema:"the commands aidev runs itself to decide whether the task succeeded"`
 	RequiresApproval   bool     `json:"requires_approval" jsonschema:"whether a human decision is required before the task may run"`
@@ -55,6 +56,7 @@ func NewTask(t task.Task) Task {
 		AcceptanceCriteria: t.AcceptanceCriteria,
 		Agent:              t.Agent,
 		Model:              t.Model,
+		Hardness:           t.Hardness.String(),
 		Priority:           t.Priority,
 		Verification:       commands,
 		RequiresApproval:   t.RequiresApproval,
