@@ -238,13 +238,13 @@ const (
 	kindStringMap valueKind = "an object of strings"
 )
 
-// SettingKeys returns the dotted paths of all 20 settings, sorted. It is
-// derived from configSchema rather than typed out separately, so adding a
-// setting to the schema teaches every consumer at once.
+// SettingKeys returns the dotted paths of every setting, sorted. It is derived
+// from configSchema rather than typed out separately, so adding a setting to the
+// schema teaches every consumer at once.
 //
-// agent.routing is the one exception: its keys are hardness levels rather than
-// further settings, so they are validated against the hardness vocabulary on
-// load instead of being enumerated here.
+// A setting whose value is an object of strings — tracing.headers, agent.routing
+// — is one key, not one per entry: its entries are values a person writes, not
+// further settings.
 func SettingKeys() []string {
 	var keys []string
 	var walk func(prefix string, node map[string]any)
@@ -253,9 +253,6 @@ func SettingKeys() []string {
 			key := k
 			if prefix != "" {
 				key = prefix + "." + k
-			}
-			if key == "agent.routing" {
-				continue
 			}
 			if sub, ok := v.(map[string]any); ok {
 				walk(key, sub)

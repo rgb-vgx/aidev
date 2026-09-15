@@ -439,6 +439,7 @@ var wantKeys = []string{
 	"agent.backend",
 	"agent.codex.command", "agent.codex.model", "agent.codex.profile", "agent.codex.sandbox",
 	"agent.opencode.agent", "agent.opencode.command", "agent.opencode.model",
+	"agent.routing",
 	"database.url",
 	"log_level",
 	"tasks.max_output_bytes", "tasks.timeout", "tasks.verification_timeout", "tasks.worktree_cleanup",

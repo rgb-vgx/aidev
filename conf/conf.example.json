@@ -22,7 +22,9 @@
       "model": "",
       "sandbox": "workspace-write"
     },
-    "routing": {}
+    "routing": {
+      "HARD": "opencode/big-pickle"
+    }
   },
   "log_level": "info",
   "tracing": {
