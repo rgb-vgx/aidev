@@ -203,3 +203,52 @@ func asValidation(err error, target **ValidationError) bool {
 	}
 	return ok
 }
+
+// A task carries the model it should run on, so that a hard task can be routed to a
+// stronger model than a trivial one, and so that a model that is down can be worked
+// around per task instead of by editing the configuration for everything. An empty
+// model means "whatever the configuration says", the same contract the agent name and
+// the timeout already have.
+func TestModelIsOptionalAndTrimmed(t *testing.T) {
+	in := validInput()
+	in.Model = "  opencode/mimo-v2.5-free  "
+	tk, err := New(in, "build")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if tk.Model != "opencode/mimo-v2.5-free" {
+		t.Errorf("model = %q, want it trimmed", tk.Model)
+	}
+
+	plain, err := New(validInput(), "build")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if plain.Model != "" {
+		t.Errorf("model = %q, want empty when the task did not ask for one", plain.Model)
+	}
+}
+
+// Unlike the agent name, a missing model is not an error anywhere: an empty
+// configured model means "let the backend choose", which is a supported setting.
+func TestEffectiveModel(t *testing.T) {
+	if got := (Task{}).EffectiveModel("cfg/model"); got != "cfg/model" {
+		t.Errorf("no task model = %q, want the configured one", got)
+	}
+	if got := (Task{Model: "task/model"}).EffectiveModel("cfg/model"); got != "task/model" {
+		t.Errorf("task model = %q, want the task's own to win", got)
+	}
+	if got := (Task{}).EffectiveModel(""); got != "" {
+		t.Errorf("nothing configured = %q, want empty so the backend chooses", got)
+	}
+}
+
+// A model name is passed to the backend as one argument, so whitespace inside it is
+// never a model: it is a typo, and it must be refused where the other input is.
+func TestModelWithWhitespaceIsRejected(t *testing.T) {
+	in := validInput()
+	in.Model = "opencode/two words"
+	if _, err := New(in, "build"); err == nil {
+		t.Fatal("a model name containing a space was accepted")
+	}
+}

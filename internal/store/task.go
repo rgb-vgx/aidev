@@ -13,7 +13,7 @@ import (
 	"aidev/internal/task"
 )
 
-const taskColumns = `id, ref, project_id, title, description, agent, priority, status,
+const taskColumns = `id, ref, project_id, title, description, agent, model, priority, status,
 	acceptance_criteria, verification, max_retries, requires_approval, base_ref,
 	timeout_seconds, created_at, updated_at`
 
@@ -27,12 +27,12 @@ func (s *Store) CreateTask(ctx context.Context, t task.Task) (task.Task, error) 
 
 	row := s.db.QueryRow(ctx, `
 		INSERT INTO tasks (
-			id, project_id, title, description, agent, priority, status,
+			id, project_id, title, description, agent, model, priority, status,
 			acceptance_criteria, verification, max_retries, requires_approval,
 			base_ref, timeout_seconds
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 		RETURNING `+taskColumns,
-		t.ID, t.ProjectID, t.Title, t.Description, t.Agent, t.Priority, string(t.Status),
+		t.ID, t.ProjectID, t.Title, t.Description, t.Agent, t.Model, t.Priority, string(t.Status),
 		t.AcceptanceCriteria, verification, t.MaxRetries, t.RequiresApproval,
 		t.BaseRef, int(t.Timeout.Seconds()))
 
@@ -185,7 +185,7 @@ func scanTask(row scanner) (task.Task, error) {
 		timeoutSeconds int
 	)
 	err := row.Scan(
-		&t.ID, &t.Ref, &t.ProjectID, &t.Title, &t.Description, &t.Agent, &t.Priority,
+		&t.ID, &t.Ref, &t.ProjectID, &t.Title, &t.Description, &t.Agent, &t.Model, &t.Priority,
 		&status, &t.AcceptanceCriteria, &verification, &t.MaxRetries, &t.RequiresApproval,
 		&t.BaseRef, &timeoutSeconds, &t.CreatedAt, &t.UpdatedAt)
 	if err != nil {

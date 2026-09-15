@@ -552,7 +552,7 @@ func (r *run) runAgent(ctx context.Context) error {
 		Prompt:         prompt,
 		WorkingDir:     r.worktree.Path,
 		Agent:          r.task.Agent,
-		Model:          r.o.Config.OpenCodeModel,
+		Model:          r.task.EffectiveModel(r.o.Config.OpenCodeModel),
 		Timeout:        r.task.EffectiveTimeout(r.o.Config.DefaultTaskTimeout),
 		MaxOutputBytes: r.o.Config.MaxOutputBytes,
 	}
@@ -642,6 +642,8 @@ func (r *run) persistWorkerRun(ctx context.Context, result agent.Result) *task.W
 		ID:              uuid.Must(uuid.NewV7()),
 		AttemptID:       r.attempt.ID,
 		Backend:         result.Backend,
+		Model:           r.task.EffectiveModel(r.o.Config.OpenCodeModel),
+		Agent:           r.task.Agent,
 		Status:          result.Status,
 		FailureKind:     result.FailureKind,
 		Command:         result.Command,

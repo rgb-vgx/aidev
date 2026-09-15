@@ -201,6 +201,11 @@ type WorkerRun struct {
 	// Backend names the implementation, for example "opencode" or "fake".
 	Backend string
 
+	// Model and Agent name what actually ran, resolved at run time so the
+	// record stays readable after the configured defaults change.
+	Model string
+	Agent string
+
 	Status      WorkerRunStatus
 	FailureKind FailureKind
 

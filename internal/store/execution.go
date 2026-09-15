@@ -297,7 +297,7 @@ func scanWorktree(row scanner) (task.Worktree, error) {
 	return w, nil
 }
 
-const workerRunColumns = `id, attempt_id, backend, status, failure_kind, command, working_dir,
+const workerRunColumns = `id, attempt_id, backend, model, agent, status, failure_kind, command, working_dir,
 	exit_code, stdout, stdout_truncated, stderr, stderr_truncated, session_id, summary,
 	finish_reason, tokens, cost, diff, diff_truncated, changed_files, started_at, finished_at`
 
@@ -309,13 +309,13 @@ func (s *Store) CreateWorkerRun(ctx context.Context, r task.WorkerRun) (task.Wor
 	}
 	row := s.db.QueryRow(ctx, `
 		INSERT INTO worker_runs (
-			id, attempt_id, backend, status, failure_kind, command, working_dir,
+			id, attempt_id, backend, model, agent, status, failure_kind, command, working_dir,
 			exit_code, stdout, stdout_truncated, stderr, stderr_truncated,
 			session_id, summary, finish_reason, tokens, cost, diff, diff_truncated,
 			changed_files, started_at, finished_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
 		RETURNING `+workerRunColumns,
-		r.ID, r.AttemptID, r.Backend, string(r.Status), string(r.FailureKind), r.Command,
+		r.ID, r.AttemptID, r.Backend, r.Model, r.Agent, string(r.Status), string(r.FailureKind), r.Command,
 		r.WorkingDir, r.ExitCode, r.Stdout, r.StdoutTruncated, r.Stderr, r.StderrTruncated,
 		r.SessionID, r.Summary, r.FinishReason, tokens, r.Cost, r.Diff, r.DiffTruncated,
 		r.ChangedFiles, r.StartedAt, r.FinishedAt)
@@ -358,7 +358,7 @@ func scanWorkerRun(row scanner) (task.WorkerRun, error) {
 		kind   string
 		tokens []byte
 	)
-	err := row.Scan(&r.ID, &r.AttemptID, &r.Backend, &status, &kind, &r.Command, &r.WorkingDir,
+	err := row.Scan(&r.ID, &r.AttemptID, &r.Backend, &r.Model, &r.Agent, &status, &kind, &r.Command, &r.WorkingDir,
 		&r.ExitCode, &r.Stdout, &r.StdoutTruncated, &r.Stderr, &r.StderrTruncated,
 		&r.SessionID, &r.Summary, &r.FinishReason, &tokens, &r.Cost, &r.Diff,
 		&r.DiffTruncated, &r.ChangedFiles, &r.StartedAt, &r.FinishedAt)

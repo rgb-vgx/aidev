@@ -658,3 +658,67 @@ func TestMultiStepVerificationRecordsEveryStep(t *testing.T) {
 		}
 	}
 }
+
+// Routing a task to a model is only useful if aidev remembers which model actually
+// ran it: the configured default changes over time, and a run recorded as "the
+// default" cannot be compared with anything later. The run record therefore holds
+// the resolved model and agent, not the task's blanks.
+func TestTheModelAndAgentThatRanAreRecorded(t *testing.T) {
+	h := newHarness(t, func(cfg *config.Config) { cfg.OpenCodeModel = "cfg/default-model" })
+
+	asked := h.createTask(func(in *worker.CreateTaskInput) {
+		in.Model = "opencode/mimo-v2.5-free"
+		in.Agent = "build"
+	})
+	h.backend.Work = doTheWork
+	outcome, err := h.orchestrator.RunTask(h.ctx, asked.Ref)
+	if err != nil {
+		t.Fatalf("RunTask: %v", err)
+	}
+
+	call, ok := h.backend.LastCall()
+	if !ok {
+		t.Fatal("the backend was never called")
+	}
+	if call.Model != "opencode/mimo-v2.5-free" {
+		t.Errorf("the agent was asked for model %q, want the task's own", call.Model)
+	}
+
+	runs, err := h.store.ListWorkerRuns(h.ctx, outcome.Attempt.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("got %d worker runs, want 1", len(runs))
+	}
+	if runs[0].Model != "opencode/mimo-v2.5-free" {
+		t.Errorf("recorded model = %q, want the model that ran", runs[0].Model)
+	}
+	if runs[0].Agent != "build" {
+		t.Errorf("recorded agent = %q, want the agent that ran", runs[0].Agent)
+	}
+}
+
+// A task that names no model runs on the configured one, and the record says which
+// that was — "" would make the history unreadable a month later.
+func TestATaskWithNoModelRecordsTheConfiguredOne(t *testing.T) {
+	h := newHarness(t, func(cfg *config.Config) { cfg.OpenCodeModel = "cfg/default-model" })
+
+	h.backend.Work = doTheWork
+	outcome, err := h.orchestrator.RunTask(h.ctx, h.createTask(nil).Ref)
+	if err != nil {
+		t.Fatalf("RunTask: %v", err)
+	}
+	call, _ := h.backend.LastCall()
+	if call.Model != "cfg/default-model" {
+		t.Errorf("the agent was asked for model %q, want the configured default", call.Model)
+	}
+
+	runs2, err := h.store.ListWorkerRuns(h.ctx, outcome.Attempt.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs2) != 1 || runs2[0].Model != "cfg/default-model" {
+		t.Errorf("recorded model = %+v, want the model that actually ran", runs2)
+	}
+}

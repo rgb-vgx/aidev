@@ -25,6 +25,7 @@ type CreateTaskInput struct {
 	AcceptanceCriteria string
 
 	Agent            string
+	Model            string
 	Priority         int
 	Verification     []task.VerificationStep
 	MaxRetries       int
@@ -84,6 +85,7 @@ func (o *Orchestrator) CreateTask(ctx context.Context, in CreateTaskInput) (task
 		Title:              in.Title,
 		Description:        in.Description,
 		Agent:              agentName,
+		Model:              in.Model,
 		Priority:           in.Priority,
 		AcceptanceCriteria: in.AcceptanceCriteria,
 		Verification:       in.Verification,
