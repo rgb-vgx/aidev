@@ -137,6 +137,16 @@ func TestInterceptions(t *testing.T) {
 			step("python3", "-BIm", "pytest"), []string{"pytest.py"}, nil},
 		{"-W at the end of a cluster takes the next argument",
 			step("python3", "-BW", "error", "-m", "pytest"), []string{"error", "pytest.py"}, []string{"pytest.py"}},
+		// Found by an OpenCode reviewer reading TASK-000027 (docs/research.md 7g).
+		// With -s a shell reads its commands from stdin; the operand becomes a
+		// positional argument, not a script to run. Intercepting it blocks honest
+		// work for a file the step never executes.
+		{"-s makes the operand an argument, not a script",
+			step("sh", "-s", "check.sh"), []string{"check.sh"}, nil},
+		{"-s inside a cluster",
+			step("bash", "-es", "check.sh"), []string{"check.sh"}, nil},
+		{"a shell reading stdin has no script to shadow",
+			step("sh", "-"), []string{"-"}, nil},
 		{"bash +o takes a value, like -o",
 			step("bash", "+o", "posix", "ci.sh"), []string{"ci.sh", "posix"}, []string{"ci.sh"}},
 	}
