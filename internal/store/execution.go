@@ -212,7 +212,7 @@ type WorktreeWithTask struct {
 // restricted to certain statuses.
 //
 // It exists because a worktree on disk is meaningless on its own: an operator
-// looking at WORKSPACE_ROOT needs to know which task left it there and how that
+// looking at workspace_root needs to know which task left it there and how that
 // task ended.
 func (s *Store) ListWorktrees(ctx context.Context, statuses []task.WorktreeStatus) ([]WorktreeWithTask, error) {
 	wanted := make([]string, 0, len(statuses))

@@ -124,6 +124,15 @@ func isPython(base string) bool {
 	if !ok || rest == "" {
 		return false
 	}
+	// A free-threaded build installs as python3.13t (PEP 703) and loads -m modules
+	// from the working directory exactly like the GIL build, so the suffix changes
+	// nothing about what can shadow the module.
+	if trimmed, cut := strings.CutSuffix(rest, "t"); cut {
+		if trimmed == "" {
+			return false
+		}
+		rest = trimmed
+	}
 	for _, part := range strings.Split(rest, ".") {
 		if part == "" {
 			return false

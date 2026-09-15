@@ -118,7 +118,7 @@ func (m *Manager) withinWorkspace(path string) error {
 //
 // Without this, a workspace root configured inside the repository would put the
 // agent's checkout in the main working tree — the exact situation worktrees exist
-// to prevent, and one that WORKSPACE_ROOT containment alone would not catch.
+// to prevent, and one that workspace_root containment alone would not catch.
 func validateIsolation(repoPath, worktreePath string) error {
 	repo := resolveExisting(filepath.Clean(repoPath))
 	wt := resolveExisting(filepath.Clean(worktreePath))

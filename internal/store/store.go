@@ -53,7 +53,7 @@ type Store struct {
 func Open(ctx context.Context, databaseURL string) (*Store, error) {
 	cfg, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
-		return nil, fmt.Errorf("parse DATABASE_URL: %w", err)
+		return nil, fmt.Errorf("parse database.url: %w", err)
 	}
 
 	// Keep the pool modest: aidev is a local-first single-operator tool, and an
