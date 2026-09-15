@@ -59,7 +59,10 @@ func newHarness(t *testing.T, mutate func(*config.Config)) *harness {
 		mutate(&cfg)
 	}
 
-	backend := &agent.Fake{}
+	// The real wiring builds the backend from configuration (internal/cli/app.go),
+	// and the backend is what knows which model it falls back to, so the harness
+	// mirrors that rather than letting the worker guess.
+	backend := &agent.Fake{Model: cfg.OpenCodeModel}
 	return &harness{
 		t:            t,
 		ctx:          ctx,

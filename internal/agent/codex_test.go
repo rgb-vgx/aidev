@@ -343,3 +343,22 @@ func TestAgainstRealCodex(t *testing.T) {
 		t.Error("no thread_id was recorded")
 	}
 }
+
+// Codex has its own model setting, so it is the one place that can say which model a
+// Codex run used.
+func TestCodexResultReportsTheModelThatRan(t *testing.T) {
+	command, _ := fakeCodex(t, "exit 0")
+	c := NewCodex(CodexOptions{Command: command, Model: "codex/model"})
+
+	res, _ := c.Run(context.Background(), codexRequest(t))
+	if res.Model != "codex/model" {
+		t.Errorf("model = %q, want Codex's own configured model, not another backend's", res.Model)
+	}
+
+	req := codexRequest(t)
+	req.Model = "asked/for"
+	res, _ = c.Run(context.Background(), req)
+	if res.Model != "asked/for" {
+		t.Errorf("model = %q, want the model the request asked for", res.Model)
+	}
+}

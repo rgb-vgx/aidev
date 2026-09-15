@@ -113,6 +113,10 @@ type Result struct {
 	// recorded.
 	FinishReason string
 
+	// Model is the model that actually ran: the request's when it names one,
+	// otherwise the backend's own configured model. Only the backend knows.
+	Model string
+
 	// Tokens is usage as reported by the backend, kept as raw JSON so aidev does
 	// not have to model every backend's accounting.
 	Tokens json.RawMessage

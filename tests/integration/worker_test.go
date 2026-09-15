@@ -699,9 +699,12 @@ func TestTheModelAndAgentThatRanAreRecorded(t *testing.T) {
 	}
 }
 
-// A task that names no model runs on the configured one, and the record says which
-// that was — "" would make the history unreadable a month later.
-func TestATaskWithNoModelRecordsTheConfiguredOne(t *testing.T) {
+// A task that names no model leaves the choice to the backend, which has its own
+// configured model — the worker must not substitute one setting for another. The
+// record still says which model ran: "" would make the history unreadable a month
+// later, and a second backend has a different setting entirely, so the answer can
+// only come back from the backend itself.
+func TestATaskWithNoModelLeavesTheChoiceToTheBackend(t *testing.T) {
 	h := newHarness(t, func(cfg *config.Config) { cfg.OpenCodeModel = "cfg/default-model" })
 
 	h.backend.Work = doTheWork
@@ -710,8 +713,8 @@ func TestATaskWithNoModelRecordsTheConfiguredOne(t *testing.T) {
 		t.Fatalf("RunTask: %v", err)
 	}
 	call, _ := h.backend.LastCall()
-	if call.Model != "cfg/default-model" {
-		t.Errorf("the agent was asked for model %q, want the configured default", call.Model)
+	if call.Model != "" {
+		t.Errorf("the agent was asked for model %q, want none: the backend's own setting decides", call.Model)
 	}
 
 	runs2, err := h.store.ListWorkerRuns(h.ctx, outcome.Attempt.ID)
@@ -719,6 +722,34 @@ func TestATaskWithNoModelRecordsTheConfiguredOne(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(runs2) != 1 || runs2[0].Model != "cfg/default-model" {
-		t.Errorf("recorded model = %+v, want the model that actually ran", runs2)
+		t.Errorf("recorded model = %+v, want the model the backend actually used", runs2)
+	}
+}
+
+// A backend configured with a different model than agent.opencode.model is what a
+// Codex run is: its model comes from agent.codex.model. Recording the OpenCode
+// setting for it would file the run under a model that never saw the work.
+func TestTheRecordFollowsTheBackendNotTheOpenCodeSetting(t *testing.T) {
+	h := newHarness(t, func(cfg *config.Config) { cfg.OpenCodeModel = "opencode/setting" })
+	h.backend.BackendName = "codex"
+	h.backend.Model = "codex/setting"
+	h.backend.Work = doTheWork
+
+	outcome, err := h.orchestrator.RunTask(h.ctx, h.createTask(nil).Ref)
+	if err != nil {
+		t.Fatalf("RunTask: %v", err)
+	}
+	runs, err := h.store.ListWorkerRuns(h.ctx, outcome.Attempt.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("got %d worker runs, want 1", len(runs))
+	}
+	if runs[0].Model != "codex/setting" {
+		t.Errorf("recorded model = %q, want the model this backend ran, not another backend's setting", runs[0].Model)
+	}
+	if runs[0].Backend != "codex" {
+		t.Errorf("recorded backend = %q", runs[0].Backend)
 	}
 }

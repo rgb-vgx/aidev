@@ -65,6 +65,15 @@ func (o *OpenCode) command() string {
 	return o.Command
 }
 
+// effectiveModel is the model that will actually run: the request's when it
+// names one, otherwise the backend's own configured model.
+func (o *OpenCode) effectiveModel(req Request) string {
+	if model := strings.TrimSpace(req.Model); model != "" {
+		return model
+	}
+	return strings.TrimSpace(o.Model)
+}
+
 // buildArgs assembles the argv. It is separate from Run so that a test can assert
 // the command line without launching anything.
 func (o *OpenCode) buildArgs(req Request) []string {
@@ -73,11 +82,7 @@ func (o *OpenCode) buildArgs(req Request) []string {
 	if agent := strings.TrimSpace(req.Agent); agent != "" {
 		args = append(args, "--agent", agent)
 	}
-	model := strings.TrimSpace(req.Model)
-	if model == "" {
-		model = o.Model
-	}
-	if model != "" {
+	if model := o.effectiveModel(req); model != "" {
 		args = append(args, "-m", model)
 	}
 	if session := strings.TrimSpace(req.SessionID); session != "" {
@@ -112,6 +117,7 @@ func (o *OpenCode) Run(ctx context.Context, req Request) (Result, error) {
 	}
 
 	args := o.buildArgs(req)
+	result.Model = o.effectiveModel(req)
 	scanner := newEventScanner()
 
 	spec := procexec.Spec{
