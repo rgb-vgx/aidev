@@ -834,6 +834,162 @@ through the shim, 1 of 3. Real replies always carried usage (input 2014). The sh
 that exact shape once for converted requests and returns a second empty reply unchanged, so
 a bad stretch cannot become a loop.
 
+## 7g. Can a second agent review the first one's work? **[OBSERVED]**
+
+The idea under test: pair every implementing OpenCode session with a second one whose role is to
+test, debug and review it. Before building that, the reviewer half was measured on work aidev had
+already delivered, where a human review had recorded what it found.
+
+### Method
+
+Three merged tasks, each reviewed blind in its own clone holding only that task's branch, with
+`origin` removed, so the reviewer could not read main, the review commit that fixed the defects, or
+any other branch:
+
+| Case | Task | What it is |
+|---|---|---|
+| A | TASK-000027 | verification interception; 4 defects found by the human review, fixed in 88b3f53 |
+| B | TASK-000033 | the conf.json loader; 5 defects found, fixed in d686399 |
+| C | TASK-000032 | `aidev mcp` with a deferred database; **no** defect found — the control |
+
+The ground truth and the rubric were written before any run (`.probe/review-experiment/ground_truth.md`),
+including one **pre-registered false positive** for the control: a claim that tool calls fail after the
+connect timeout, which the earlier probes had shown does not happen. The prompt gave the reviewer the
+original task text and the diff (`HEAD~1..HEAD`), told it to find what the tests do not catch, and told
+it not to change any file. Each report was then graded by reading or running the code, never by
+trusting the report. Model: the free muse-spark-1.3 through OpenCode's `plan` agent, which denies
+`edit:*` but allows bash — so the reviewer could compile and run probes, but not modify the clone.
+
+### Two operational faults, both worth more than the grades
+
+**A rejected permission ends the session and looks like success.** Rounds 0-2 told the reviewer to put
+temporary files under `/tmp/opencode/<case>/`. `opencode agent list` shows `external_directory` as `ask`
+with `/tmp/opencode/*` allowed, and that pattern matches **one level only**: creating the directory is
+allowed, writing a file inside it is not. In headless `opencode run` the auto-rejection **ends the
+session with exit 0**, no error event, and an empty final message. Three runs were lost that way, one of
+them while probing the exact defect it was supposed to find. From round 2b the runs add `--auto`
+(auto-approve what is not explicitly denied), which with the `plan` agent still cannot edit files.
+
+**Concurrent runs kill each other.** Running three reviews in parallel produced
+`Error: Unexpected error  database is locked`, exit 1 after one second, zero steps: OpenCode's own
+store. Two runs were lost this way. Reviews must be sequential, which is why the command now lives in
+`.probe/review-experiment/run-review.sh` instead of shell history.
+
+Both faults matter to aidev directly. For an implementing agent, aidev's own verification still judges
+the result, so a session cut short is caught. A reviewer produces text, and nothing checks text: a
+cut-short review returns an empty report that reads exactly like "no defects found". A reviewer stage
+must therefore detect it — last step reason, a rejected tool call, an empty report, a non-zero exit —
+and never report "clean" from a session it cannot prove ran to the end.
+
+### Recall of the known defects
+
+Nine runs were valid: three per case, after five were repeated. Grades are in
+`.probe/review-experiment/grades.md`, each finding recorded with the check made on it.
+
+| Case | Known defects | Found, per run | Union of three runs | Distinct valid extras | False positives |
+|---|---|---|---|---|---|
+| A TASK-000027 | 4 | 0, 1, 1 | A1 only | 6 | 0 |
+| B TASK-000033 | 5 | 2, 2, 2 | B1 and B2 | 4 | 0 |
+| C TASK-000032 | 0 (control) | — | — | 5 | 0 |
+
+Eight of 27 opportunities, so **30% per-run recall** of defects a human review had found, and the
+union of three runs on the same commit is no better than its best single run for case B but twice
+its worst for case A: the same prompt against the same diff found A1 in two runs out of three. One
+run's silence is therefore not evidence of a clean diff.
+
+What it never found is as consistent as what it did. It missed every defect that only shows when
+the code is run with an odd input — a non-object conf.json (`[]`, `42`), an empty file, a step
+number printed as 0 — although it ran probes freely for other claims. It missed the design-level
+one (the schema stated twice, in `configSchema` and `fileConfig`, free to drift). And on case A it
+missed the flag-cluster defect `python3 -Bm pytest` while finding a *different* cluster defect in
+the shell parser, which says it was reading for the shape of the bug, not enumerating the inputs.
+What it found, it found by reading for a mechanism: something loaded from a path that can change.
+
+### What it found that the human review had missed
+
+Fifteen distinct findings outside the ground truth were checked and held up, and **thirteen of them are
+still present on main** — the other two the later human review had happened to fix. Each is recorded with
+its check in `.probe/review-experiment/grades.md`. In severity order:
+
+- **`ChangedPaths` ignores truncated git output** (case A). Interception decides what aidev must not run
+  from that list; the list is capped at 4 MiB and never checked for truncation, so a worktree with tens
+  of thousands of untracked paths produces a short list and interception fails **open** — measured on
+  main with a 256-byte cap: 60 changed files came back as 7.
+- **The help still configures aidev through the environment** (case B). `--agent` says
+  "default: OPENCODE_AGENT", `--timeout` says "default: DEFAULT_TASK_TIMEOUT", the overview points at
+  `.env.example`, and a malformed DSN prints "parse DATABASE_URL"; aidev reads none of those.
+- **`make jaeger-env` / `make langfuse-env` print `export OTEL_*`** (case B, found by both valid runs).
+  Nothing reads OTEL_* for configuration any more, so the documented way to turn on tracing silently
+  does nothing.
+- **A malformed `database.url` is accepted** (case C, the control). The server starts and every tool
+  call fails with the "make db-up" remedy, which is false advice for a typo.
+- **Tracing headers are no longer trimmed** (case B). Every other tracing string is trimmed; the env
+  loader this replaced trimmed both sides of every header. `" x-api-key "` is not a valid header name.
+- **`python3.13t` is not recognised as python** (case A). The free-threaded build loads `-m` modules from
+  the working directory exactly like the GIL build (measured with a symlink named `python3.12t`), so
+  interception skips it: fail-open, the same class as the relative-interpreter defect.
+- **Input is validated after the connection attempt**, and **concurrent first calls serialise** behind
+  one mutex, 5 s each (case C, both reproduced against an unreachable address); a waiter cannot observe
+  its own cancelled context, and then opens with an expired one.
+- **`sh -s check.sh` is reported as an interception** although with `-s` the shell reads its commands
+  from stdin and the operand is an argument: honest work blocked over a file the step never runs. The
+  same over-matching appears in `python -m T`, which intercepts any top-level entry beginning `T.`,
+  measured not to shadow the module (`unittest.extra.py` does not shadow `unittest`).
+- **The MCP close reads the opened app once after Serve returns**, so an attempt that succeeds later is
+  never closed: the pool stays open and traces are never flushed (case C).
+- **A wrong-typed header value** is reported as "want an object of strings, got an object", naming no
+  header.
+
+Two of those are fail-open defects in the mechanism that exists to stop an agent from judging its own
+work: a truncated changed-path list, and an interpreter name that skips the python rules. Both were
+specified test-first and delegated back to aidev (`spec/reviewer-findings`,
+`spec/reviewer-findings-2`); `make *-env` belongs to the conf.json infrastructure phase, and the
+`python -m T.*` over-match is not specified yet because a fix has to keep matching the
+extension-suffixed `.so` names it exists for.
+
+### The control held
+
+Across nine valid runs, with a false positive pre-registered as a trap, **not one run claimed it**,
+and not one finding was a false positive. Seven findings were noise (a panic no production path can
+reach, claimed three times; an aliased map no caller mutates, twice; a stale comment; an unreachable
+absolute path), which is a low price for a human to skim. No run read a file outside its clone, ran
+git over other refs, or left a clone modified — the `plan` agent's `edit:*=deny` is what guarantees
+the last of those, not the prompt.
+
+One sub-claim was wrong without the finding being wrong: round 1 said the malformed connection string
+reaches the client, password and all. The finding (a malformed URL is accepted and then blamed on a
+database that is not up) reproduced; the leak did not. A reviewer's severity claims need checking as
+much as its conclusions.
+
+### What this says about the two-agent idea
+
+A reviewer cannot be a gate. 30% recall against a human review, and variance between
+runs on the same commit, means "the reviewer found nothing" carries almost no information — which is
+also why aidev's rule stands: only aidev's own verification commands move a task to SUCCEEDED, and a
+reviewer's opinion moves nothing.
+
+A reviewer is worth having anyway, as an advisory stage. Fifteen findings outside the ground truth
+held up under checking, and **thirteen are still present on main** — including two fail-open defects
+in the very mechanism that exists to stop an agent from judging its own work (a truncated changed-path
+list, and an interpreter name that skips the python rules). A human review at the merge had missed
+all of them. With no false positives in nine runs, the cost of reading its output is small.
+
+So the shape the measurements support:
+
+- The reviewer runs after verification, never instead of it, and produces findings for a human. It
+  cannot fail a task, and it cannot approve one.
+- Two or three runs, findings unioned, because recall varies per run on identical input.
+- The stage must prove its own session ran to the end (exit status, last step reason, a non-empty
+  report) and report "cut short" rather than "clean" when it cannot. A permission rejection ends a
+  headless session with exit 0.
+- The second session cannot share the first one's store: every OpenCode process uses one SQLite
+  database (`~/.local/share/opencode/opencode.db`, 345 MB with a 33 MB WAL here), and concurrent
+  `opencode run` processes killed each other with `database is locked` twice in this experiment. A
+  paired monitor session needs its own data directory, or it has to be sequential.
+- Findings are specifications, not patches: each one worth acting on became a failing test first
+  (`spec/reviewer-findings`, `spec/reviewer-findings-2`), which is also how a false positive gets
+  caught before any code changes.
+
 ## 8. Reproducing this research
 
 Probes ran in a gitignored `.probe/` directory inside the repository (scratch repo, worktrees,
