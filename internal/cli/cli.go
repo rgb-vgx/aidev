@@ -69,6 +69,11 @@ func Run(ctx context.Context, version string, args []string, stdout, stderr io.W
 			summary: "inspect and reclaim the worktrees tasks left behind",
 			run:     runWorktree,
 		},
+		"stats": {
+			name:    "stats",
+			summary: "show outcomes by model and task hardness",
+			run:     runStats,
+		},
 		"mcp": {
 			name:    "mcp",
 			summary: "run the MCP server on stdio, for Claude Code",

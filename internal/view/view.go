@@ -247,6 +247,23 @@ func NewEvent(e event.Event, includePayload bool) Event {
 	return v
 }
 
+// StatsRow is one model and hardness outcome: how many finished attempts the
+// model ran on that kind of work, and how they ended.
+type StatsRow struct {
+	Model        string         `json:"model" jsonschema:"the model that ran, as recorded on the worker run"`
+	Hardness     string         `json:"hardness" jsonschema:"how hard the task stated it was: TRIVIAL, STANDARD or HARD; empty means none was stated"`
+	Runs         int            `json:"runs" jsonschema:"finished attempts the model ran on this hardness"`
+	Succeeded    int            `json:"succeeded" jsonschema:"runs that succeeded"`
+	Failed       int            `json:"failed" jsonschema:"runs that did not succeed"`
+	FailureKinds map[string]int `json:"failure_kinds" jsonschema:"failures by kind, for example VERIFICATION; distinguishes code that failed verification from an agent that never ran"`
+}
+
+// StatsReport is the outcome history grouped by model and hardness, which is
+// what the routing table is checked against.
+type StatsReport struct {
+	Rows []StatsRow `json:"rows" jsonschema:"one row per model and hardness, ordered by model then hardness"`
+}
+
 // RawJSON passes stored JSONB through without re-encoding it.
 type RawJSON []byte
 
