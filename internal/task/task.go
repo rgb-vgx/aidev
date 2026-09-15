@@ -47,6 +47,7 @@ type Task struct {
 	Title              string
 	Description        string
 	Agent              string // agent name passed to the backend, e.g. "build"
+	Model              string // model passed to the backend; empty means "let the backend choose"
 	Priority           int    // higher runs first
 	Status             Status
 	AcceptanceCriteria string
@@ -81,6 +82,7 @@ type NewTaskInput struct {
 	Title              string
 	Description        string
 	Agent              string
+	Model              string
 	Priority           int
 	AcceptanceCriteria string
 	Verification       []VerificationStep
@@ -140,6 +142,11 @@ func New(input NewTaskInput, defaultAgent string) (Task, error) {
 		add("agent %q must not contain whitespace", agent)
 	}
 
+	model := strings.TrimSpace(input.Model)
+	if model != "" && strings.ContainsAny(model, " \t\n") {
+		add("model %q must not contain whitespace", model)
+	}
+
 	// At least one verification command is mandatory. This is the product's
 	// central rule expressed as a constraint: a task aidev cannot verify is a
 	// task aidev cannot honestly report on, so it is not accepted at all.
@@ -180,6 +187,7 @@ func New(input NewTaskInput, defaultAgent string) (Task, error) {
 		Title:              title,
 		Description:        input.Description,
 		Agent:              agent,
+		Model:              model,
 		Priority:           input.Priority,
 		Status:             StatusPending,
 		AcceptanceCriteria: input.AcceptanceCriteria,
@@ -203,6 +211,15 @@ func (t *Task) TransitionTo(next Status) error {
 	t.Status = next
 	t.UpdatedAt = time.Now().UTC()
 	return nil
+}
+
+// EffectiveModel returns the task's model, falling back to the default. An
+// empty result is valid and means "let the backend choose".
+func (t Task) EffectiveModel(def string) string {
+	if t.Model != "" {
+		return t.Model
+	}
+	return def
 }
 
 // EffectiveTimeout returns the task's timeout, falling back to the default.

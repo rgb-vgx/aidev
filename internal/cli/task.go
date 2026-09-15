@@ -108,6 +108,7 @@ func taskCreate(ctx context.Context, env *Env, args []string) error {
 	description := fs.String("description", "", "the full instruction for the agent")
 	acceptance := fs.String("acceptance", "", "what done looks like")
 	agentName := fs.String("agent", "", "agent to use (default: OPENCODE_AGENT)")
+	model := fs.String("model", "", "model to use (default: agent.opencode.model)")
 	priority := fs.Int("priority", 0, "higher runs first")
 	maxRetries := fs.Int("max-retries", 0, "recorded for a future retry feature; the MVP never retries")
 	requiresApproval := fs.Bool("requires-approval", false, "do not run until a human approves")
@@ -164,6 +165,7 @@ flags:
 		Description:        *description,
 		AcceptanceCriteria: *acceptance,
 		Agent:              *agentName,
+		Model:              *model,
 		Priority:           *priority,
 		Verification:       steps,
 		MaxRetries:         *maxRetries,
