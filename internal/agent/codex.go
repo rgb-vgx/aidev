@@ -76,6 +76,15 @@ func (c *Codex) executable() string {
 	return c.command
 }
 
+// effectiveModel is the model that will actually run: the request's when it
+// names one, otherwise the backend's own configured model.
+func (c *Codex) effectiveModel(req Request) string {
+	if model := strings.TrimSpace(req.Model); model != "" {
+		return model
+	}
+	return strings.TrimSpace(c.model)
+}
+
 // buildArgs assembles the argv. It is separate from Run so that a test can
 // assert the command line without launching anything.
 func (c *Codex) buildArgs(req Request, lastMessagePath string) []string {
@@ -84,11 +93,7 @@ func (c *Codex) buildArgs(req Request, lastMessagePath string) []string {
 	if c.profile != "" {
 		args = append(args, "--profile", c.profile)
 	}
-	model := strings.TrimSpace(req.Model)
-	if model == "" {
-		model = c.model
-	}
-	if model != "" {
+	if model := c.effectiveModel(req); model != "" {
 		args = append(args, "-m", model)
 	}
 	if c.sandbox != "" {
@@ -133,6 +138,7 @@ func (c *Codex) Run(ctx context.Context, req Request) (Result, error) {
 	defer func() { _ = os.Remove(lastMessagePath) }()
 
 	args := c.buildArgs(req, lastMessagePath)
+	result.Model = c.effectiveModel(req)
 	scanner := newCodexScanner()
 
 	spec := procexec.Spec{

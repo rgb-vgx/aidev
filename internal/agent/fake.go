@@ -35,6 +35,10 @@ type Fake struct {
 	// FailureKind accompanies a non-success Status.
 	FailureKind task.FailureKind
 
+	// Model is the backend's configured model, reported when the request names
+	// none. It has the same meaning as Result.Model.
+	Model string
+
 	// Summary, SessionID, FinishReason, Tokens and Cost populate the result, so
 	// a test can assert that the orchestrator persists what the backend reports.
 	Summary      string
@@ -97,8 +101,13 @@ func (f *Fake) Run(ctx context.Context, req Request) (Result, error) {
 	f.mu.Unlock()
 
 	started := time.Now().UTC()
+	model := strings.TrimSpace(req.Model)
+	if model == "" {
+		model = strings.TrimSpace(f.Model)
+	}
 	result := Result{
 		Backend:      f.Name(),
+		Model:        model,
 		Command:      fmt.Sprintf("fake-agent --dir %s", req.WorkingDir),
 		WorkingDir:   req.WorkingDir,
 		Stdout:       f.Stdout,
