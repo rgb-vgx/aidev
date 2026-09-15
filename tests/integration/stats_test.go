@@ -1,9 +1,11 @@
 package integration
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"aidev/internal/config"
 	"aidev/internal/worker"
@@ -120,5 +122,55 @@ func TestStatsWithNoHistorySaysSo(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(stdout), "no") {
 		t.Errorf("stats with no history printed %q, want it to say there is nothing recorded yet", stdout)
+	}
+}
+
+// A cancelled attempt is not a failure of the model: a person stopped it, and nobody's
+// code was judged. Counting it as one distorts the very number the routing table is
+// decided on, so it is reported as its own outcome.
+func TestStatsDoesNotBlameTheModelForACancellation(t *testing.T) {
+	h := newHarness(t, func(cfg *config.Config) {
+		cfg.Routing = map[string]string{"HARD": "strong/model"}
+	})
+	h.backend.Delay = time.Hour // the agent is still working when the caller gives up
+
+	created := h.createTask(func(in *worker.CreateTaskInput) { in.Hardness = "hard" })
+	ctx, cancel := context.WithCancel(h.ctx)
+	go func() {
+		time.Sleep(400 * time.Millisecond)
+		cancel()
+	}()
+	if _, err := h.orchestrator.RunTask(ctx, created.Ref); err != nil {
+		t.Fatalf("RunTask: %v", err)
+	}
+
+	stdout, stderr, err := h.runCLI(t, "stats", "--json")
+	if err != nil {
+		t.Fatalf("aidev stats --json: %v\nstderr: %s", err, stderr)
+	}
+	var report struct {
+		Rows []struct {
+			Model     string `json:"model"`
+			Runs      int    `json:"runs"`
+			Succeeded int    `json:"succeeded"`
+			Failed    int    `json:"failed"`
+			Cancelled int    `json:"cancelled"`
+		} `json:"rows"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
+		t.Fatalf("stats --json is not JSON: %v\n%s", err, stdout)
+	}
+	if len(report.Rows) != 1 {
+		t.Fatalf("got %d rows, want 1:\n%s", len(report.Rows), stdout)
+	}
+	row := report.Rows[0]
+	if row.Cancelled != 1 {
+		t.Errorf("row = %+v, want the cancellation counted as cancelled", row)
+	}
+	if row.Failed != 0 {
+		t.Errorf("row = %+v: a cancellation was counted as a failure of the model", row)
+	}
+	if row.Runs != 1 || row.Succeeded != 0 {
+		t.Errorf("row = %+v, want one run that neither succeeded nor failed", row)
 	}
 }

@@ -55,6 +55,7 @@ task: how many runs each model did on each kind of work, and how they ended.
 			Runs:         r.Runs,
 			Succeeded:    r.Succeeded,
 			Failed:       r.Failed,
+			Cancelled:    r.Cancelled,
 			FailureKinds: kinds,
 		})
 	}
@@ -68,11 +69,11 @@ task: how many runs each model did on each kind of work, and how they ended.
 		return nil
 	}
 
-	fmt.Fprintf(env.Stdout, "%-32s  %-8s  %4s  %9s  %6s  %s\n",
-		"model", "hardness", "runs", "succeeded", "failed", "failure kinds")
+	fmt.Fprintf(env.Stdout, "%-32s  %-8s  %4s  %9s  %6s  %9s  %s\n",
+		"model", "hardness", "runs", "succeeded", "failed", "cancelled", "failure kinds")
 	for _, r := range views {
-		fmt.Fprintf(env.Stdout, "%-32s  %-8s  %4d  %9d  %6d  %s\n",
-			r.Model, r.Hardness, r.Runs, r.Succeeded, r.Failed, formatFailureKinds(r.FailureKinds))
+		fmt.Fprintf(env.Stdout, "%-32s  %-8s  %4d  %9d  %6d  %9d  %s\n",
+			r.Model, r.Hardness, r.Runs, r.Succeeded, r.Failed, r.Cancelled, formatFailureKinds(r.FailureKinds))
 	}
 	return nil
 }

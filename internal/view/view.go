@@ -254,7 +254,8 @@ type StatsRow struct {
 	Hardness     string         `json:"hardness" jsonschema:"how hard the task stated it was: TRIVIAL, STANDARD or HARD; empty means none was stated"`
 	Runs         int            `json:"runs" jsonschema:"finished attempts the model ran on this hardness"`
 	Succeeded    int            `json:"succeeded" jsonschema:"runs that succeeded"`
-	Failed       int            `json:"failed" jsonschema:"runs that did not succeed"`
+	Failed       int            `json:"failed" jsonschema:"runs whose work was judged and did not pass"`
+	Cancelled    int            `json:"cancelled" jsonschema:"runs a person stopped; counted apart because no code was judged"`
 	FailureKinds map[string]int `json:"failure_kinds" jsonschema:"failures by kind, for example VERIFICATION; distinguishes code that failed verification from an agent that never ran"`
 }
 

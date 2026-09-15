@@ -3,16 +3,24 @@ package store
 import (
 	"context"
 	"fmt"
+
+	"aidev/internal/task"
 )
 
 // StatsRow aggregates finished attempts by the model that ran them and the
 // hardness of their task, so routing can be checked against what happened.
 type StatsRow struct {
-	Model        string
-	Hardness     string
-	Runs         int
-	Succeeded    int
-	Failed       int
+	Model     string
+	Hardness  string
+	Runs      int
+	Succeeded int
+	Failed    int
+
+	// Cancelled is counted apart from Failed: a person stopped the run, so
+	// nobody's code was judged, and blaming the model for it would distort the
+	// number the routing table is decided on.
+	Cancelled int
+
 	FailureKinds map[string]int
 }
 
@@ -27,9 +35,9 @@ func (s *Store) StatsByModelAndHardness(ctx context.Context) ([]StatsRow, error)
 		FROM task_attempts a
 		JOIN tasks t ON t.id = a.task_id
 		JOIN worker_runs w ON w.attempt_id = a.id
-		WHERE a.status <> 'RUNNING'
+		WHERE a.status <> $1
 		GROUP BY w.model, t.hardness, a.status, a.failure_kind
-		ORDER BY w.model, t.hardness`)
+		ORDER BY w.model, t.hardness`, string(task.AttemptRunning))
 	if err != nil {
 		return nil, fmt.Errorf("stats by model and hardness: %w", classify(err))
 	}
@@ -55,12 +63,17 @@ func (s *Store) StatsByModelAndHardness(ctx context.Context) ([]StatsRow, error)
 			})
 		}
 		out[i].Runs += int(n)
-		if status == "SUCCEEDED" {
+		switch task.AttemptStatus(status) {
+		case task.AttemptSucceeded:
 			out[i].Succeeded += int(n)
-		} else {
+		case task.AttemptCancelled:
+			out[i].Cancelled += int(n)
+		default:
 			out[i].Failed += int(n)
 		}
-		if failureKind != "" {
+		// A cancellation's kind is CANCELLED, which is already its own count and
+		// is not a way code can fail.
+		if failureKind != "" && task.AttemptStatus(status) != task.AttemptCancelled {
 			out[i].FailureKinds[failureKind] += int(n)
 		}
 	}
