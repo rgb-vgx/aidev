@@ -41,6 +41,13 @@ func (w *Worktree) ChangedPaths(ctx context.Context) ([]string, error) {
 	if !diffRes.Succeeded() {
 		return nil, fmt.Errorf("git diff in %s: %s", w.Path, firstLine(diffRes.Stderr))
 	}
+	// A short list is worse than no list: interception decides what aidev must not
+	// run from it, so a path lost to the output cap would let a changed runner judge
+	// the agent that changed it.
+	if diffRes.StdoutTruncated {
+		return nil, fmt.Errorf("changed paths in %s: git diff produced more output than aidev captures, "+
+			"so the list of changed files is truncated and cannot be trusted", w.Path)
+	}
 
 	lsRes, err := w.m.run(ctx, w.Path, nil, "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory")
 	if err != nil {
@@ -48,6 +55,10 @@ func (w *Worktree) ChangedPaths(ctx context.Context) ([]string, error) {
 	}
 	if !lsRes.Succeeded() {
 		return nil, fmt.Errorf("git ls-files in %s: %s", w.Path, firstLine(lsRes.Stderr))
+	}
+	if lsRes.StdoutTruncated {
+		return nil, fmt.Errorf("changed paths in %s: git ls-files produced more output than aidev captures, "+
+			"so the list of ignored files is truncated and cannot be trusted", w.Path)
 	}
 
 	seen := map[string]bool{}

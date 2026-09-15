@@ -4,7 +4,7 @@
 //
 // The package enforces aidev's central safety property: an agent never runs in
 // the repository's main working tree. Worktree paths are validated to resolve
-// inside WORKSPACE_ROOT and to lie outside the repository itself.
+// inside workspace_root and to lie outside the repository itself.
 package git
 
 import (
@@ -158,7 +158,7 @@ func (w *Worktree) Repository() Repository { return w.repo }
 // Create makes a new worktree on a new branch.
 //
 // The path is validated before git is invoked: it must resolve inside
-// WORKSPACE_ROOT and outside the repository. Those two checks are what make
+// workspace_root and outside the repository. Those two checks are what make
 // "the agent cannot touch the main working tree" a property of the code rather
 // than a convention.
 func (m *Manager) Create(ctx context.Context, req CreateRequest) (*Worktree, error) {

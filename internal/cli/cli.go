@@ -116,8 +116,9 @@ func writeUsage(w io.Writer, commands map[string]command) {
 	for _, n := range names {
 		fmt.Fprintf(&b, "  %-*s  %s\n", width, n, commands[n].summary)
 	}
-	b.WriteString("\nConfiguration comes from the environment; run `aidev config` to see what\n")
-	b.WriteString("aidev resolved. See .env.example for the available variables.\n")
+	b.WriteString("\nConfiguration is the conf.json named by the AIDEV_CONFIG environment variable,\n")
+	b.WriteString("and nothing else; run `aidev config` to see what aidev resolved from it. Every\n")
+	b.WriteString("setting is listed in conf/conf.example.json.\n")
 	fmt.Fprint(w, b.String())
 }
 

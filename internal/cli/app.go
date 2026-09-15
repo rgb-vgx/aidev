@@ -15,7 +15,7 @@ import (
 	"aidev/internal/worker"
 )
 
-// connectTimeout bounds startup so a wrong DATABASE_URL fails quickly instead of
+// connectTimeout bounds startup so a wrong database.url fails quickly instead of
 // appearing to hang.
 const connectTimeout = 15 * time.Second
 

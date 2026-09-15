@@ -520,13 +520,24 @@ func LoadFile(path string) (Config, error) {
 			cfg.Tracing.TracesEndpoint = strings.TrimSpace(*file.Tracing.TracesEndpoint)
 		}
 		if file.Tracing.Headers != nil {
-			cfg.Tracing.Headers = file.Tracing.Headers
-			for name := range file.Tracing.Headers {
-				if strings.TrimSpace(name) == "" {
-					fail("tracing.headers has an empty name: header names must not be empty")
-					break
+			// A conf.json is hand-edited, so "  x-api-key  " is what a person types,
+			// and a header name cannot contain a space: the collector rejects the
+			// request while aidev prints the name as if it were fine. The environment
+			// loader this replaced trimmed both sides of every header.
+			headers := make(map[string]string, len(file.Tracing.Headers))
+			empty := false
+			for name, value := range file.Tracing.Headers {
+				trimmed := strings.TrimSpace(name)
+				if trimmed == "" {
+					empty = true
+					continue
 				}
+				headers[trimmed] = strings.TrimSpace(value)
 			}
+			if empty {
+				fail("tracing.headers has an empty name: header names must not be empty")
+			}
+			cfg.Tracing.Headers = headers
 		}
 		if file.Tracing.ServiceName != nil {
 			cfg.Tracing.ServiceName = strings.TrimSpace(*file.Tracing.ServiceName)
@@ -612,6 +623,26 @@ func checkTypes(prefix string, doc map[string]any, schema map[string]any, wrong 
 			}
 			problems = append(problems, checkTypes(key, obj, want, wrong)...)
 		case valueKind:
+			if want == kindStringMap {
+				// Naming the map is not enough to act on: the person has to be told
+				// which of their headers is wrong, and what they actually wrote.
+				m, ok := v.(map[string]any)
+				if !ok {
+					reject(string(want))
+					continue
+				}
+				for _, name := range sortedKeys(m) {
+					if _, isString := m[name].(string); isString {
+						continue
+					}
+					problems = append(problems, fmt.Sprintf("setting %s.%s has the wrong type: want a string, got %s",
+						key, name, describeJSON(m[name])))
+					wrong[key+"."+name] = true
+					delete(m, name)
+				}
+				doc[k] = m
+				continue
+			}
 			fixed, ok := matchKind(want, v)
 			if !ok {
 				reject(string(want))
@@ -762,4 +793,15 @@ func defaultWorkspaceRoot() (string, error) {
 		return "", errors.New("no workspace_root set and the user's home directory could not be determined")
 	}
 	return filepath.Join(home, ".local", "share", "aidev", "worktrees"), nil
+}
+
+// sortedKeys returns a map's keys in order, so that problems are reported in the
+// same order however Go happens to walk the map on a given run.
+func sortedKeys(m map[string]any) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

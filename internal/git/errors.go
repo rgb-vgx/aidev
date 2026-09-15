@@ -29,7 +29,7 @@ var (
 	// ErrUnknownRevision means the requested base ref does not resolve.
 	ErrUnknownRevision = errors.New("revision does not exist")
 
-	// ErrOutsideWorkspace means a path would resolve outside WORKSPACE_ROOT.
+	// ErrOutsideWorkspace means a path would resolve outside the configured workspace_root.
 	ErrOutsideWorkspace = errors.New("path escapes the configured workspace root")
 
 	// ErrInsideRepository means a worktree path would land inside the

@@ -83,6 +83,21 @@ func TestInterceptions(t *testing.T) {
 			step("/usr/bin/python3.12", "-m", "pytest"), []string{"pytest.py"}, []string{"pytest.py"}},
 		{"plain python",
 			step("python", "-m", "pytest"), []string{"pytest.py"}, []string{"pytest.py"}},
+		// A free-threaded build installs as python3.13t (PEP 703, shipped since
+		// 3.13) and loads -m modules from the working directory exactly like the
+		// GIL build: measured with a symlink named python3.12t, which printed the
+		// module it found in the working directory. A name aidev fails to
+		// recognise as python skips the -m rules, so a changed pytest.py judges
+		// the agent that wrote it — interception fails open, the one direction
+		// the feature exists to prevent.
+		{"free-threaded interpreter",
+			step("python3.13t", "-m", "pytest"), []string{"pytest.py"}, []string{"pytest.py"}},
+		{"free-threaded interpreter by path",
+			step("/usr/local/bin/python3.14t", "-m", "pytest"), []string{"pytest.py"}, []string{"pytest.py"}},
+		{"a relative free-threaded interpreter is also its own runner",
+			step("venv/bin/python3.13t", "-m", "pytest"), []string{"venv/"}, []string{"venv/"}},
+		{"t is a suffix, not a version part",
+			step("python3.t", "-m", "pytest"), []string{"pytest.py"}, nil},
 		{"names that only resemble the module are not it",
 			step("python3", "-m", "pytest"), []string{".pytest_cache/", "pytest_plugin.py", "pytests.py", "sub/pytest.py"}, nil},
 		{"-P keeps the working directory off sys.path",
