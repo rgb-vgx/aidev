@@ -582,3 +582,31 @@ func contains(haystack []string, needle string) bool {
 	}
 	return false
 }
+
+// The history is only worth keeping if it says which model did the work, and only
+// the backend knows: the request may name none, in which case the backend falls back
+// to its own configured model. A caller that recomputes the fallback itself will be
+// wrong the moment the two disagree — which is exactly what happens with a second
+// backend, whose configured model is a different setting.
+func TestResultReportsTheModelThatRan(t *testing.T) {
+	command, _ := fakeOpenCode(t, emit(fixtureStepStart, fixtureText, fixtureStepFinishStop)+"exit 0")
+
+	o := NewOpenCode(command, "backend/model")
+	res, err := o.Run(context.Background(), openCodeRequest(t))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Model != "backend/model" {
+		t.Errorf("model = %q, want the backend's configured model when the request names none", res.Model)
+	}
+
+	req := openCodeRequest(t)
+	req.Model = "asked/for"
+	res, err = o.Run(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Model != "asked/for" {
+		t.Errorf("model = %q, want the model the request asked for", res.Model)
+	}
+}
