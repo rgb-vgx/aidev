@@ -753,3 +753,45 @@ func TestTheRecordFollowsTheBackendNotTheOpenCodeSetting(t *testing.T) {
 		t.Errorf("recorded backend = %q", runs[0].Backend)
 	}
 }
+
+// The whole point of stating a hardness: the model is chosen from configuration
+// rather than typed per task. Resolution is task's own model first (a person
+// overriding the policy), then the routing table, then nothing at all, which leaves
+// the choice to the backend.
+func TestHardnessRoutesToAModel(t *testing.T) {
+	routing := map[string]string{"HARD": "strong/model", "TRIVIAL": "cheap/model"}
+
+	cases := []struct {
+		name     string
+		hardness string
+		model    string
+		want     string
+	}{
+		{"a hard task takes the routed model", "hard", "", "strong/model"},
+		{"a trivial task takes the cheap one", "trivial", "", "cheap/model"},
+		{"an explicit model overrides the table", "hard", "asked/for", "asked/for"},
+		{"a hardness with no entry leaves it to the backend", "standard", "", ""},
+		{"no hardness leaves it to the backend", "", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, func(cfg *config.Config) { cfg.Routing = routing })
+			h.backend.Work = doTheWork
+
+			created := h.createTask(func(in *worker.CreateTaskInput) {
+				in.Hardness = tc.hardness
+				in.Model = tc.model
+			})
+			if _, err := h.orchestrator.RunTask(h.ctx, created.Ref); err != nil {
+				t.Fatalf("RunTask: %v", err)
+			}
+			call, ok := h.backend.LastCall()
+			if !ok {
+				t.Fatal("the backend was never called")
+			}
+			if call.Model != tc.want {
+				t.Errorf("the agent was asked for model %q, want %q", call.Model, tc.want)
+			}
+		})
+	}
+}

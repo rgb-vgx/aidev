@@ -624,3 +624,45 @@ func TestAWrongTypedHeaderValueNamesTheHeader(t *testing.T) {
 		t.Errorf("error = %v, want only the wrong header named, not the one that is fine", err)
 	}
 }
+
+// Routing is the point of hardness: a person states how hard a task is, and the
+// configuration says which model that deserves, so nobody types a model name per task.
+// The table is keyed by the hardness vocabulary, and a key outside it would silently
+// never match, which is why it is refused.
+func TestRoutingTableIsReadAndTrimmed(t *testing.T) {
+	cfg := mustLoad(t, `{"database": {"url": "`+testDSN+`"},
+		"agent": {"routing": {"hard": "  strong/model  ", "TRIVIAL": "cheap/model"}}}`)
+	if got := cfg.Routing["HARD"]; got != "strong/model" {
+		t.Errorf("routing[HARD] = %q, want the model trimmed and the key normalised", got)
+	}
+	if got := cfg.Routing["TRIVIAL"]; got != "cheap/model" {
+		t.Errorf("routing[TRIVIAL] = %q", got)
+	}
+}
+
+func TestRoutingTableRejectsAKeyThatIsNotAHardness(t *testing.T) {
+	_, err := load(t, `{"database": {"url": "`+testDSN+`"}, "agent": {"routing": {"quite hard": "x"}}}`)
+	if err == nil {
+		t.Fatal("a routing key that is not a hardness was accepted, and would never match")
+	}
+	if !strings.Contains(err.Error(), "quite hard") || !strings.Contains(err.Error(), "agent.routing") {
+		t.Errorf("error = %v, want it to name agent.routing and the key", err)
+	}
+}
+
+// An empty model is not the same as no entry: it would route a hardness to "let the
+// backend choose", which the absence of the entry already means, so it is a mistake.
+func TestRoutingTableRejectsAnEmptyModel(t *testing.T) {
+	_, err := load(t, `{"database": {"url": "`+testDSN+`"}, "agent": {"routing": {"hard": "   "}}}`)
+	if err == nil || !strings.Contains(err.Error(), "agent.routing") {
+		t.Fatalf("error = %v, want an empty routed model refused, naming agent.routing", err)
+	}
+}
+
+// Routing is optional: without the table nothing changes.
+func TestRoutingIsOptional(t *testing.T) {
+	cfg := mustLoad(t, `{"database": {"url": "`+testDSN+`"}}`)
+	if len(cfg.Routing) != 0 {
+		t.Errorf("routing = %v, want empty when the file has no table", cfg.Routing)
+	}
+}
