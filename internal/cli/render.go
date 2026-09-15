@@ -23,6 +23,9 @@ func writeTaskDetail(w io.Writer, t task.Task) {
 	if t.Model != "" {
 		fmt.Fprintf(w, "  model        %s\n", t.Model)
 	}
+	if t.Hardness != "" {
+		fmt.Fprintf(w, "  hardness     %s\n", t.Hardness)
+	}
 	fmt.Fprintf(w, "  priority     %d\n", t.Priority)
 	if t.RequiresApproval {
 		fmt.Fprintf(w, "  approval     required\n")

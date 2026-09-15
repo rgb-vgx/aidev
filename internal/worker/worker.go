@@ -552,7 +552,7 @@ func (r *run) runAgent(ctx context.Context) error {
 		Prompt:         prompt,
 		WorkingDir:     r.worktree.Path,
 		Agent:          r.task.Agent,
-		Model:          r.task.Model,
+		Model:          resolveModel(r.task, r.o.Config.Routing),
 		Timeout:        r.task.EffectiveTimeout(r.o.Config.DefaultTaskTimeout),
 		MaxOutputBytes: r.o.Config.MaxOutputBytes,
 	}
@@ -603,6 +603,19 @@ func (r *run) runAgent(ctx context.Context) error {
 		return fmt.Errorf("agent run %s", result.Status)
 	}
 	return nil
+}
+
+// resolveModel picks the model for a run: the task's own model first (a
+// person overriding the policy), then the routing table for the task's
+// hardness, then nothing at all, which leaves the choice to the backend.
+func resolveModel(t task.Task, routing map[string]string) string {
+	if t.Model != "" {
+		return t.Model
+	}
+	if model := routing[string(t.Hardness)]; model != "" {
+		return model
+	}
+	return ""
 }
 
 // setAgentUsageSpan records what the backend reported about the invocation.

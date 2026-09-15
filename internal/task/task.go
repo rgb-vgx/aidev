@@ -49,7 +49,8 @@ type Task struct {
 	Description        string
 	Agent              string // agent name passed to the backend, e.g. "build"
 	Model              string // model passed to the backend; empty means "let the backend choose"
-	Priority           int    // higher runs first
+	Hardness           Hardness
+	Priority           int // higher runs first
 	Status             Status
 	AcceptanceCriteria string
 
@@ -84,6 +85,7 @@ type NewTaskInput struct {
 	Description        string
 	Agent              string
 	Model              string
+	Hardness           string
 	Priority           int
 	AcceptanceCriteria string
 	Verification       []VerificationStep
@@ -155,6 +157,11 @@ func New(input NewTaskInput, defaultAgent string) (Task, error) {
 		add("model %q must not contain whitespace", model)
 	}
 
+	hardness, err := ParseHardness(input.Hardness)
+	if err != nil {
+		add("%v", err)
+	}
+
 	// At least one verification command is mandatory. This is the product's
 	// central rule expressed as a constraint: a task aidev cannot verify is a
 	// task aidev cannot honestly report on, so it is not accepted at all.
@@ -195,6 +202,7 @@ func New(input NewTaskInput, defaultAgent string) (Task, error) {
 		Description:        input.Description,
 		Agent:              agent,
 		Model:              model,
+		Hardness:           hardness,
 		Priority:           input.Priority,
 		Status:             StatusPending,
 		AcceptanceCriteria: input.AcceptanceCriteria,

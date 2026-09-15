@@ -42,6 +42,24 @@ func formatHeaders(headers map[string]string) string {
 	return strings.Join(pairs, ", ")
 }
 
+// formatRouting renders the hardness-to-model table, sorted so the output is
+// stable. The keys are the canonical hardness levels.
+func formatRouting(routing map[string]string) string {
+	if len(routing) == 0 {
+		return "(none)"
+	}
+	names := make([]string, 0, len(routing))
+	for name := range routing {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	pairs := make([]string, 0, len(names))
+	for _, name := range names {
+		pairs = append(pairs, name+"="+routing[name])
+	}
+	return strings.Join(pairs, ", ")
+}
+
 // formatSampleRatio shows the configured ratio, or that none is set and the
 // tracing default of 1 applies.
 func formatSampleRatio(ratio *float64) string {
@@ -82,6 +100,7 @@ func runConfig(_ context.Context, env *Env, args []string) error {
 			"codex_profile":                cfg.CodexProfile,
 			"codex_model":                  cfg.CodexModel,
 			"codex_sandbox":                cfg.CodexSandbox,
+			"agent_routing":                cfg.Routing,
 			"max_output_bytes":             cfg.MaxOutputBytes,
 			"worktree_cleanup":             cfg.WorktreeCleanup.String(),
 			"log_level":                    cfg.LogLevel.String(),
@@ -122,6 +141,7 @@ func runConfig(_ context.Context, env *Env, args []string) error {
 	fmt.Fprintf(env.Stdout, "codex profile                 %s\n", codexProfile)
 	fmt.Fprintf(env.Stdout, "codex model                   %s\n", codexModel)
 	fmt.Fprintf(env.Stdout, "codex sandbox                 %s\n", codexSandbox)
+	fmt.Fprintf(env.Stdout, "agent routing                 %s\n", formatRouting(cfg.Routing))
 	fmt.Fprintf(env.Stdout, "max output bytes              %d\n", cfg.MaxOutputBytes)
 	fmt.Fprintf(env.Stdout, "worktree cleanup              %s\n", cfg.WorktreeCleanup)
 	fmt.Fprintf(env.Stdout, "log level                     %s\n", cfg.LogLevel)

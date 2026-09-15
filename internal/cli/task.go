@@ -109,6 +109,7 @@ func taskCreate(ctx context.Context, env *Env, args []string) error {
 	acceptance := fs.String("acceptance", "", "what done looks like")
 	agentName := fs.String("agent", "", "agent to use (default: agent.opencode.agent in conf.json)")
 	model := fs.String("model", "", "model to use (default: agent.opencode.model in conf.json)")
+	hardness := fs.String("hardness", "", "how hard the task is: TRIVIAL, STANDARD or HARD (picks a model from agent.routing in conf.json)")
 	priority := fs.Int("priority", 0, "higher runs first")
 	maxRetries := fs.Int("max-retries", 0, "recorded for a future retry feature; the MVP never retries")
 	requiresApproval := fs.Bool("requires-approval", false, "do not run until a human approves")
@@ -166,6 +167,7 @@ flags:
 		AcceptanceCriteria: *acceptance,
 		Agent:              *agentName,
 		Model:              *model,
+		Hardness:           *hardness,
 		Priority:           *priority,
 		Verification:       steps,
 		MaxRetries:         *maxRetries,
