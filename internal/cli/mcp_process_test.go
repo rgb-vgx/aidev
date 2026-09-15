@@ -161,6 +161,14 @@ func TestMCPServerStillRefusesAnInvalidConfiguration(t *testing.T) {
 		{"database only in the old variable", func(t *testing.T) []string {
 			return isolatedEnv(t, "AIDEV_CONFIG="+writeConfFile(t, map[string]any{}), "DATABASE_URL="+unreachableDatabase)
 		}, "database.url is required"},
+		// A URL PostgreSQL cannot parse never becomes reachable, so it is a
+		// configuration error like any other rather than something to retry on
+		// every tool call (docs/research.md 7g).
+		{"unparseable database url", func(t *testing.T) []string {
+			return isolatedEnv(t, "AIDEV_CONFIG="+writeConfFile(t, map[string]any{
+				"database": map[string]any{"url": "postgres://u:p@127.0.0.1:5434/aidev?pool_max_conns=abc"},
+			}))
+		}, "database.url"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -302,6 +302,38 @@ func TestInvalidValuesAreRejected(t *testing.T) {
 	}
 }
 
+// A URL PostgreSQL cannot parse can never connect, so waiting does not help. An
+// OpenCode reviewer reading TASK-000032 found that such a URL passed configuration
+// and then failed on every tool call with the "make db-up" remedy, which is false
+// advice for a typo (docs/research.md 7g).
+func TestUnparseableDatabaseURLIsRejected(t *testing.T) {
+	_, err := load(t, `{"database": {"url": "postgres://u:p@127.0.0.1:5434/aidev?pool_max_conns=abc"}}`)
+	if err == nil {
+		t.Fatal("a database.url PostgreSQL cannot parse was accepted")
+	}
+	if !strings.Contains(err.Error(), "database.url") {
+		t.Errorf("error = %v, want it to name database.url", err)
+	}
+	if strings.Contains(err.Error(), "make db-up") {
+		t.Errorf("error = %v: starting the database cannot fix a URL it cannot parse", err)
+	}
+}
+
+// The forms people really use must keep working, including the key=value form and a
+// unix socket host.
+func TestUsableDatabaseURLsAreAccepted(t *testing.T) {
+	for _, url := range []string{
+		"postgres://aidev:aidev@127.0.0.1:5434/aidev?sslmode=disable",
+		"postgresql://aidev@127.0.0.1:5434/aidev",
+		"host=/var/run/postgresql dbname=aidev user=aidev",
+		"postgres://aidev:aidev@127.0.0.1:5434/aidev?pool_max_conns=8",
+	} {
+		if _, err := load(t, `{"database": {"url": "`+url+`"}}`); err != nil {
+			t.Errorf("Load with %q: %v", url, err)
+		}
+	}
+}
+
 func TestAllProblemsReportedTogether(t *testing.T) {
 	_, err := load(t, `{"tasks": {"timeout": "nope"}, "log_level": "loud"}`)
 	if err == nil {
