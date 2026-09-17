@@ -51,6 +51,10 @@ type Orchestrator struct {
 	Verifier *verification.Runner
 	Config   config.Config
 	Logger   *slog.Logger
+
+	// CancelPoll is how often a run reads its task's status to notice a Cancel
+	// made by another process. Zero means the default.
+	CancelPoll time.Duration
 }
 
 // New builds an Orchestrator, defaulting the logger and the verifier.
