@@ -210,7 +210,7 @@ func migrationsResult(ctx context.Context, deps Deps, cfg config.Config) Result 
 		return Result{
 			Name:    CheckMigrations,
 			Status:  StatusFail,
-			Summary: fmt.Sprintf("%d migrations are pending: %s.", len(pending), strings.Join(pending, ", ")),
+			Summary: fmt.Sprintf("%s pending: %s.", countMigrations(len(pending)), strings.Join(pending, ", ")),
 			Fix:     "Run `aidev migrate` to apply them.",
 		}
 	}
@@ -245,4 +245,12 @@ func redactDatabaseURL(msg, databaseURL string) string {
 		return msg
 	}
 	return strings.ReplaceAll(msg, databaseURL, config.RedactURL(databaseURL))
+}
+
+// countMigrations says "1 migration is" or "N migrations are".
+func countMigrations(n int) string {
+	if n == 1 {
+		return "1 migration is"
+	}
+	return fmt.Sprintf("%d migrations are", n)
 }

@@ -252,3 +252,16 @@ func TestFailedIgnoresWarningsAndSkips(t *testing.T) {
 		t.Error("a failed check must be reported")
 	}
 }
+
+// Read by people who may not be developers: one pending migration is "1 migration
+// is pending", not "1 migrations are pending".
+func TestOnePendingMigrationIsSingular(t *testing.T) {
+	deps := healthy()
+	deps.PendingMigrations = func(context.Context, string) ([]string, error) {
+		return []string{"0005_protected_paths"}, nil
+	}
+	got := byName(t, Run(context.Background(), deps))
+	if s := got[CheckMigrations].Summary; !strings.Contains(s, "1 migration is pending") {
+		t.Errorf("summary = %q, want it to say \"1 migration is pending\"", s)
+	}
+}
