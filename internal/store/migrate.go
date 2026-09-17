@@ -120,10 +120,7 @@ func (s *Store) Migrate(ctx context.Context, migrations []Migration) (MigrateRes
 	for _, m := range migrations {
 		if have, ok := applied[m.Version]; ok {
 			if have != m.Checksum {
-				return result, fmt.Errorf(
-					"migration %s was already applied but its file has changed "+
-						"(recorded %s, found %s); add a new migration instead of editing an applied one",
-					m.Version, short(have), short(m.Checksum))
+				return result, changedMigrationError(m.Version, have, m.Checksum)
 			}
 			result.AlreadyUp = append(result.AlreadyUp, m.Version)
 			continue
@@ -157,4 +154,57 @@ func short(checksum string) string {
 		return checksum
 	}
 	return checksum[:12]
+}
+
+func changedMigrationError(version, recorded, found string) error {
+	return fmt.Errorf(
+		"migration %s was already applied but its file has changed "+
+			"(recorded %s, found %s); add a new migration instead of editing an applied one",
+		version, short(recorded), short(found))
+}
+
+// PendingMigrations reports, without changing anything, the versions in
+// migrations that the database has not applied yet.
+func (s *Store) PendingMigrations(ctx context.Context, migrations []Migration) ([]string, error) {
+	var present *string
+	if err := s.db.QueryRow(ctx, `SELECT to_regclass('schema_migrations')::text`).Scan(&present); err != nil {
+		return nil, fmt.Errorf("check schema_migrations: %w", err)
+	}
+	if present == nil {
+		pending := make([]string, 0, len(migrations))
+		for _, m := range migrations {
+			pending = append(pending, m.Version)
+		}
+		return pending, nil
+	}
+
+	applied := map[string]string{}
+	rows, err := s.db.Query(ctx, `SELECT version, checksum FROM schema_migrations`)
+	if err != nil {
+		return nil, fmt.Errorf("read schema_migrations: %w", err)
+	}
+	for rows.Next() {
+		var version, checksum string
+		if err := rows.Scan(&version, &checksum); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("scan schema_migrations: %w", err)
+		}
+		applied[version] = checksum
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read schema_migrations: %w", err)
+	}
+
+	var pending []string
+	for _, m := range migrations {
+		if have, ok := applied[m.Version]; ok {
+			if have != m.Checksum {
+				return nil, changedMigrationError(m.Version, have, m.Checksum)
+			}
+			continue
+		}
+		pending = append(pending, m.Version)
+	}
+	return pending, nil
 }
