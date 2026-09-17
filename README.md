@@ -534,6 +534,21 @@ your backend under aidev's name.
 
 ## When something goes wrong
 
+**Start with `aidev doctor`.** It checks, in order, that the configuration can be
+read, that git and the configured agent are installed, that the database answers
+and is migrated, and that `workspace_root` is writable. Each problem comes with
+what to do about it, the database password is never shown, and it exits 1 when
+something is broken. `aidev doctor --json` prints the same results as a JSON list;
+the plugin's `aidev:doctor` skill reads that and repairs what it safely can.
+
+```bash
+aidev doctor
+# ok    config      Configuration is readable.
+# ...
+# FAIL  database    Cannot reach the database: ... connection refused.
+#       fix: Start PostgreSQL with `make db-up` in the aidev repository and ...
+```
+
 **aidev was killed while a task was running.** The task is stuck in `RUNNING`, and
 nothing will pick it up again. Cancel it:
 

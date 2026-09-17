@@ -27,6 +27,7 @@
 <tr><th>Lệnh</th><th>Cờ</th><th>Làm gì</th></tr>
 <tr><td><code>aidev version</code></td><td>không có</td><td>In phiên bản aidev.</td></tr>
 <tr><td><code>aidev config</code></td><td><code>--json</code>: in dạng JSON</td><td>In cấu hình đã nhận, với mật khẩu cơ sở dữ liệu đã che. Dùng nó để kiểm tra aidev thật sự đã đọc gì.</td></tr>
+<tr><td><code>aidev doctor</code></td><td><code>--json</code>: in kết quả dạng danh sách JSON</td><td>Kiểm tra aidev có chạy được ở đây không: cấu hình, git, agent đang cấu hình, cơ sở dữ liệu và migration, và <code>workspace_root</code>. Mỗi lỗi đều kèm cách sửa. Thoát với mã 1 nếu có mục hỏng. Chạy lệnh này đầu tiên khi có gì đó không hoạt động.</td></tr>
 <tr><td><code>aidev migrate</code></td><td><code>--json</code>: in kết quả dạng JSON</td><td>Áp các migration cơ sở dữ liệu còn thiếu. Lũy đẳng: chạy lại thoải mái.</td></tr>
 <tr><td><code>aidev mcp</code></td><td>không có</td><td>Chạy máy chủ MCP trên stdio, cho Claude Code. Mọi log đi ra stderr vì stdout mang giao thức.</td></tr>
 </table>
