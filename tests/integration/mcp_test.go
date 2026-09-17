@@ -10,6 +10,7 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"aidev/internal/config"
 	"aidev/internal/logging"
 	aidevmcp "aidev/internal/mcp"
 	"aidev/internal/task"
@@ -25,8 +26,14 @@ type mcpHarness struct {
 
 func newMCPHarness(t *testing.T) *mcpHarness {
 	t.Helper()
+	return newMCPHarnessWith(t, nil)
+}
 
-	h := newHarness(t, nil)
+// newMCPHarnessWith is newMCPHarness over a configuration the test adjusts.
+func newMCPHarnessWith(t *testing.T, mutate func(*config.Config)) *mcpHarness {
+	t.Helper()
+
+	h := newHarness(t, mutate)
 	server := aidevmcp.New(h.orchestrator, h.store, "test", logging.Discard())
 
 	serverTransport, clientTransport := sdk.NewInMemoryTransports()

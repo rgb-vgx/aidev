@@ -104,6 +104,8 @@ Creates a task. Does **not** run it.
 | `requires_approval` | boolean | no | gate the task behind a human decision |
 | `base_ref` | string | no | git ref to branch from; defaults to the repository's current branch |
 | `timeout_seconds` | integer | no | bound this task's agent run |
+| `hardness` | string | no | how hard the task is: TRIVIAL, STANDARD or HARD; picks the model from `agent.routing` unless `model` is given |
+| `model` | string | no | model to run on, overriding `agent.routing` and `agent.opencode.model` |
 
 `verification` is required by the schema, not merely validated: a task aidev cannot
 check is one it will not accept. The commands run in the task's worktree **without a

@@ -37,6 +37,7 @@ func (s *Server) register(server *sdk.Server) {
 		Description: "Create an implementation task for a git repository. " +
 			"At least one verification command is required: aidev runs those commands itself " +
 			"to decide whether the task succeeded, and will not accept a task it cannot check. " +
+			"State how hard the task is with hardness so aidev can pick the right model. " +
 			"Creating a task does not run it; use " + ToolRunTask + " for that.",
 	}, s.createTask)
 
@@ -101,6 +102,8 @@ type CreateTaskInput struct {
 	RequiresApproval   bool   `json:"requires_approval,omitempty" jsonschema:"when true the task will not run until a human approves it"`
 	BaseRef            string `json:"base_ref,omitempty" jsonschema:"git ref the task's branch starts from; defaults to the repository's current branch"`
 	TimeoutSeconds     int    `json:"timeout_seconds,omitempty" jsonschema:"bound this task's agent run; defaults to the configured timeout"`
+	Hardness           string `json:"hardness,omitempty" jsonschema:"how hard the task is: TRIVIAL, STANDARD or HARD, case-insensitive; picks the model from agent.routing in conf.json unless model is given"`
+	Model              string `json:"model,omitempty" jsonschema:"model to run on, overriding agent.routing and agent.opencode.model"`
 }
 
 // CreateTaskOutput is the output of aidev_create_task.
@@ -136,6 +139,8 @@ func (s *Server) createTask(ctx context.Context, _ *sdk.CallToolRequest, in Crea
 		Verification:       steps,
 		RequiresApproval:   in.RequiresApproval,
 		BaseRef:            in.BaseRef,
+		Hardness:           in.Hardness,
+		Model:              in.Model,
 		Timeout:            time.Duration(in.TimeoutSeconds) * time.Second,
 	})
 	if err != nil {
