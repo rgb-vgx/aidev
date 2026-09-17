@@ -958,6 +958,14 @@ specified test-first and delegated back to aidev (`spec/reviewer-findings`,
 extension-suffixed `.so` names it exists for. It is now fixed: only T/, T.py, T.pyc
 and extension-suffixed names count.
 
+**Status on 2026-09-17:** every finding in the list above is fixed on main. Checked against the
+code that evening: MCP tools validate their input before connecting; concurrent first calls share
+one connection attempt that a waiter can abandon; the MCP close waits for an attempt in flight and
+closes what it opens; `sh -s` and `bash -es` are not intercepted; tracing headers are trimmed and
+a wrong-typed value is named; a malformed `database.url` fails at startup; the help no longer
+names environment variables; `make *-env` print a conf.json object; and `python -m T` counts only
+T/, T.py, T.pyc and extension-suffixed names (TASK-000055).
+
 ### The control held
 
 Across nine valid runs, with a false positive pre-registered as a trap, **not one run claimed it**,
