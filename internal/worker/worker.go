@@ -131,16 +131,19 @@ func (o *Orchestrator) cancelPoll() time.Duration {
 // that stops the watcher and waits for it, so the watcher never outlives the
 // run.
 func (r *run) startCancelWatch(ctx context.Context, stop context.CancelFunc) (wait func()) {
+	// The run goes on changing r.task and r.log while the watcher polls, so the
+	// watcher gets its own copies and never touches r.
+	st, id, every, log := r.o.Store, r.task.ID, r.o.cancelPoll(), r.log
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		watchForCancel(ctx, r.o.cancelPoll(), func(ctx context.Context) (task.Status, error) {
-			t, err := r.o.Store.GetTask(ctx, r.task.ID)
+		watchForCancel(ctx, every, func(ctx context.Context) (task.Status, error) {
+			t, err := st.GetTask(ctx, id)
 			if err != nil {
 				return "", err
 			}
 			return t.Status, nil
-		}, stop, r.log)
+		}, stop, log)
 	}()
 	return func() {
 		stop()

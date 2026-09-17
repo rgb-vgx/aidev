@@ -40,8 +40,8 @@ install: ## install aidev into GOPATH/bin
 test: ## run unit tests (integration tests skip without a database)
 	$(GO) test ./...
 
-test-integration: ## run every test, including those needing PostgreSQL
-	AIDEV_REQUIRE_DB=1 TEST_DATABASE_URL="$(TEST_DB_URL)" $(GO) test ./... -count=1
+test-integration: ## run every test, including those needing PostgreSQL, with the race detector
+	AIDEV_REQUIRE_DB=1 TEST_DATABASE_URL="$(TEST_DB_URL)" $(GO) test -race ./... -count=1
 
 # Only the repository's own files. `gofmt -l .` walks ignored directories too,
 # so a cloned upstream repo under .probe/ made `make check` fail on code aidev
