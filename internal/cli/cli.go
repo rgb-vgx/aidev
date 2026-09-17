@@ -79,6 +79,11 @@ func Run(ctx context.Context, version string, args []string, stdout, stderr io.W
 			summary: "run the MCP server on stdio, for Claude Code",
 			run:     runMCPServer,
 		},
+		"doctor": {
+			name:    "doctor",
+			summary: "check that aidev can work here, and say how to fix what cannot",
+			run:     runDoctor,
+		},
 	}
 
 	if len(args) == 0 {
