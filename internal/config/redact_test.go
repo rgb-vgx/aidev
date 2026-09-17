@@ -29,6 +29,13 @@ func TestRedactionCoversEveryFormPgxAccepts(t *testing.T) {
 		// URL userinfo.
 		{"keyword/value, @ in the password", "host=127.0.0.1 user=aidev password=hunter2@x dbname=aidev",
 			[]string{"host=127.0.0.1", "dbname=aidev"}},
+		// pgx decodes query keys before it reads them.
+		{"query parameter, percent-encoded key", "postgres://127.0.0.1/aidev?pass%77ord=hunter2&sslmode=disable",
+			[]string{"127.0.0.1/aidev", "sslmode=disable"}},
+		// libpq, and pgx after it, read a backslash in an unquoted value as an
+		// escape: this password is "x hunter2", and all of it is secret.
+		{"keyword/value, escaped space in the password", `host=127.0.0.1 password=x\ hunter2 dbname=aidev`,
+			[]string{"host=127.0.0.1", "dbname=aidev"}},
 		{"query parameter", "postgres://aidev@127.0.0.1:5434/aidev?password=hunter2&sslmode=disable",
 			[]string{"127.0.0.1:5434/aidev", "sslmode=disable"}},
 		{"query parameter first of several", "postgres://127.0.0.1/aidev?sslmode=disable&password=hunter2&application_name=x",

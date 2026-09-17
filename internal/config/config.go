@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -798,7 +799,8 @@ func (c Config) Redacted() Config {
 // password or sslpassword (case-insensitive) becomes ***. Anything else is a
 // keyword/value string: the value of password or sslpassword
 // (case-insensitive keys, optional spaces around '=', quoted or unquoted
-// values, backslash escapes inside quotes) becomes ***. It works on a plain
+// values, backslash escapes as libpq reads them) becomes ***. Query keys are
+// compared after percent-decoding, as pgx reads them. It works on a plain
 // string rather than net/url so that an unparseable value is redacted
 // conservatively instead of being passed through; when the input cannot be
 // understood it hides too much rather than leaking, e.g. an unterminated
@@ -862,7 +864,9 @@ func redactURLString(raw string) string {
 			continue
 		}
 		key := p[:eq]
-		if strings.EqualFold(key, "password") || strings.EqualFold(key, "sslpassword") {
+		// pgx decodes a key before reading it, so pass%77ord is a password.
+		decoded, err := url.QueryUnescape(key)
+		if err != nil || isSecretKey(decoded) {
 			parts[i] = key + "=***"
 		}
 	}
@@ -892,101 +896,68 @@ func redactKeywordValue(s string) string {
 		for j < n && s[j] != '=' && !isKVSpace(s[j]) {
 			j++
 		}
-		tmp := j
-		for tmp < n && isKVSpace(s[tmp]) {
-			tmp++
+		eq := j
+		for eq < n && isKVSpace(s[eq]) {
+			eq++
 		}
-		if tmp >= n || s[tmp] != '=' {
-			b.WriteString(s[i:tmp])
-			i = tmp
+		if eq >= n || s[eq] != '=' {
+			b.WriteString(s[i:eq])
+			i = eq
 			continue
 		}
-		key := s[i:j]
-		eqPos := tmp
-		v := eqPos + 1
+		v := eq + 1
 		for v < n && isKVSpace(s[v]) {
 			v++
 		}
-		isSecret := strings.EqualFold(key, "password") || strings.EqualFold(key, "sslpassword")
-		if !isSecret {
-			if v >= n {
-				b.WriteString(s[i:v])
-				i = v
-				continue
-			}
-			if s[v] == '\'' {
-				end := -1
-				p := v + 1
-				for p < n {
-					if s[p] == '\\' {
-						if p+1 < n {
-							p += 2
-						} else {
-							p++
-						}
-						continue
-					}
-					if s[p] == '\'' {
-						end = p
-						break
-					}
-					p++
-				}
-				if end < 0 {
-					b.WriteString(s[i:v])
-					b.WriteString("***")
-					return b.String()
-				}
-				b.WriteString(s[i : end+1])
-				i = end + 1
-				continue
-			}
-			p := v
-			for p < n && !isKVSpace(s[p]) {
-				p++
-			}
-			b.WriteString(s[i:p])
-			i = p
+		end, closed := scanKVValue(s, v)
+		if !isSecretKey(s[i:j]) {
+			b.WriteString(s[i:end])
+			i = end
 			continue
 		}
 		b.WriteString(s[i:v])
 		b.WriteString("***")
-		if v >= n {
-			i = v
-			continue
+		if !closed {
+			// An open quote: where the password ends is unknown, so
+			// nothing after it is printed.
+			return b.String()
 		}
-		if s[v] == '\'' {
-			p := v + 1
-			closed := false
-			for p < n {
-				if s[p] == '\\' {
-					if p+1 < n {
-						p += 2
-					} else {
-						p++
-					}
-					continue
-				}
-				if s[p] == '\'' {
-					closed = true
-					p++
-					break
-				}
-				p++
-			}
-			if !closed {
-				return b.String()
-			}
-			i = p
-			continue
-		}
-		p := v
-		for p < n && !isKVSpace(s[p]) {
-			p++
-		}
-		i = p
+		i = end
 	}
 	return b.String()
+}
+
+// scanKVValue returns where the value starting at v ends, the way libpq reads
+// it: a quoted value runs to its closing quote, an unquoted one to the next
+// space, and in both a backslash escapes the character after it. closed is false
+// when a quote is never closed.
+func scanKVValue(s string, v int) (end int, closed bool) {
+	n := len(s)
+	quoted := v < n && s[v] == '\''
+	p := v
+	if quoted {
+		p++
+	}
+	for p < n {
+		switch {
+		case s[p] == '\\':
+			p += 2
+			continue
+		case quoted && s[p] == '\'':
+			return p + 1, true
+		case !quoted && isKVSpace(s[p]):
+			return p, true
+		}
+		p++
+	}
+	if p > n {
+		p = n
+	}
+	return p, !quoted
+}
+
+func isSecretKey(key string) bool {
+	return strings.EqualFold(key, "password") || strings.EqualFold(key, "sslpassword")
 }
 
 func parseDuration(key, raw string) (time.Duration, error) {
