@@ -242,9 +242,13 @@ func pythonMatches(args []string, changed []string) []string {
 
 // matchModule reports changed paths that can shadow MODULE loaded with
 // python -m: only the top level of the working directory is searched, through
-// the top-level name T (MODULE up to the first dot). A first segment equal to
-// T covers a package directory; one starting with "T." covers a source,
-// sourceless or extension module.
+// the top-level name T (MODULE up to the first dot). A changed path shadows T
+// only when its first path segment is exactly T (a package or namespace
+// directory), T.py or T.pyc, or T followed by an extension-module suffix:
+// ".so", ".abi3.so", or ".cpython-<tag>.so" where <tag> is one or more
+// characters without "/" (for example T.cpython-312-x86_64-linux-gnu.so,
+// T.cpython-313t-x86_64-linux-gnu.so). Nothing else shadows T: not T.pyw,
+// T.py.bak, T.txt, T.extra.py, T.cpython.so.bak.
 func matchModule(module string, changed []string) []string {
 	top, _, _ := strings.Cut(module, ".")
 	if top == "" {
@@ -253,9 +257,26 @@ func matchModule(module string, changed []string) []string {
 	var out []string
 	for _, c := range changed {
 		first, _, _ := strings.Cut(c, "/")
-		if first == top || strings.HasPrefix(first, top+".") {
+		if first == top || first == top+".py" || first == top+".pyc" || isExtensionModule(first, top) {
 			out = append(out, c)
 		}
 	}
 	return out
+}
+
+// isExtensionModule reports whether the top-level file name shadows T as an
+// extension module: T.so, T.abi3.so, or T.cpython-<tag>.so.
+func isExtensionModule(first, top string) bool {
+	if first == top+".so" || first == top+".abi3.so" {
+		return true
+	}
+	rest, ok := strings.CutPrefix(first, top+".cpython-")
+	if !ok {
+		return false
+	}
+	tag, ok := strings.CutSuffix(rest, ".so")
+	if !ok {
+		return false
+	}
+	return tag != "" && !strings.Contains(tag, "/")
 }

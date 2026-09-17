@@ -153,6 +153,28 @@ func TestInterceptions(t *testing.T) {
 		{"-W at the end of a cluster takes the next argument",
 			step("python3", "-BW", "error", "-m", "pytest"), []string{"error", "pytest.py"}, []string{"pytest.py"}},
 		// Found by an OpenCode reviewer reading TASK-000027 (docs/research.md 7g).
+		// A top-level module T is found in the working directory only as T/, T.py,
+		// T.pyc or T plus an extension suffix (importlib.machinery lists
+		// .cpython-<tag>.so, .abi3.so and .so). Any other name that merely starts
+		// with "T." is not a module: measured on Python 3.12.3, unittest.extra.py
+		// does not shadow unittest and json.pyw does not shadow json. Intercepting
+		// them blocks honest work.
+		{"a dotted name is not the module it starts with",
+			step("python3", "-m", "unittest"), []string{"unittest.extra.py"}, nil},
+		{"only .py is a source suffix on this platform",
+			step("python3", "-m", "json.tool"), []string{"json.pyw", "json.py.bak", "json.txt", "json.pyc.orig"}, nil},
+		{"a stable-ABI extension module shadows",
+			step("python3", "-m", "pytest"), []string{"pytest.abi3.so"}, []string{"pytest.abi3.so"}},
+		{"a plain extension module shadows",
+			step("python3", "-m", "pytest"), []string{"pytest.so"}, []string{"pytest.so"}},
+		{"a free-threaded build's extension module shadows",
+			step("python3.13t", "-m", "pytest"), []string{"pytest.cpython-313t-x86_64-linux-gnu.so"}, []string{"pytest.cpython-313t-x86_64-linux-gnu.so"}},
+		{"a cpython tag without .so is not an extension module",
+			step("python3", "-m", "pytest"), []string{"pytest.cpython-312-x86_64-linux-gnu.txt", "pytest.cpython.so.bak"}, nil},
+		{"the real module files among unrelated ones",
+			step("python3", "-m", "pkg.tool"), []string{"pkg.extra.py", "pkg.py", "pkg.pyc", "pkg.notes"}, []string{"pkg.py", "pkg.pyc"}},
+
+		// Found by an OpenCode reviewer reading TASK-000027 (docs/research.md 7g).
 		// With -s a shell reads its commands from stdin; the operand becomes a
 		// positional argument, not a script to run. Intercepting it blocks honest
 		// work for a file the step never executes.
