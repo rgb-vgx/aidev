@@ -17,6 +17,11 @@ import (
 
 const envDatabaseURL = "TEST_DATABASE_URL"
 
+// envRequireDB turns the skip into a failure. A skipped package still reports
+// ok, so a gate that meant to run these tests — `make test-integration`, or an
+// aidev task's verification — would otherwise pass without running any of them.
+const envRequireDB = "AIDEV_REQUIRE_DB"
+
 // openStore returns a migrated, empty database, or skips the test when none is
 // configured. Each test gets truncated tables rather than a fresh database, so
 // the suite stays fast while still being order-independent.
@@ -25,6 +30,9 @@ func openStore(t *testing.T) (*store.Store, context.Context) {
 
 	url := os.Getenv(envDatabaseURL)
 	if url == "" {
+		if os.Getenv(envRequireDB) == "1" {
+			t.Fatalf("%s=1 but %s is not set: the integration tests were asked for and cannot run", envRequireDB, envDatabaseURL)
+		}
 		t.Skipf("%s is not set; start the database with `docker compose up -d` and export it to run integration tests", envDatabaseURL)
 	}
 

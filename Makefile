@@ -2,7 +2,10 @@
 #
 # `make check` is the gate: it is what runs after every phase and what CI should
 # run. Integration tests skip themselves unless TEST_DATABASE_URL is set, so
-# `make check` passes on a machine with no database.
+# `make check` passes on a machine with no database. `make test-integration`
+# sets AIDEV_REQUIRE_DB=1, which turns that skip into a failure: use it (not a
+# bare `go test`) wherever the integration tests are meant to count, including
+# an aidev task's --verify.
 
 GO      ?= go
 BIN     := bin/aidev
@@ -38,7 +41,7 @@ test: ## run unit tests (integration tests skip without a database)
 	$(GO) test ./...
 
 test-integration: ## run every test, including those needing PostgreSQL
-	TEST_DATABASE_URL="$(TEST_DB_URL)" $(GO) test ./... -count=1
+	AIDEV_REQUIRE_DB=1 TEST_DATABASE_URL="$(TEST_DB_URL)" $(GO) test ./... -count=1
 
 # Only the repository's own files. `gofmt -l .` walks ignored directories too,
 # so a cloned upstream repo under .probe/ made `make check` fail on code aidev

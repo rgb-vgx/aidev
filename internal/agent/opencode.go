@@ -226,7 +226,26 @@ func classify(proc procexec.Result, events transcript, req Request) (task.Worker
 			fmt.Errorf("opencode exited 0 but produced no events; stderr: %s", firstLine(proc.Stderr))
 	}
 
+	// A session that finished ends with reason "stop". Anything else means the
+	// model's turn ended while work was still outstanding — it asked for a tool and
+	// the loop never came back ("tool-calls"), or it ran out of room ("length").
+	// Measured in TASK-000039: four steps, exit 0, no file changed, last reason
+	// "tool-calls", recorded as a clean success until verification disagreed. A
+	// rejected permission produces the same shape (docs/research.md 7g).
+	if reason, cut := cutShort[events.FinishReason]; cut {
+		return task.WorkerFailed, task.FailureAgentError, fmt.Errorf(
+			"opencode ended with finish reason %q: %s, so it never stopped of its own accord",
+			events.FinishReason, reason)
+	}
+
 	return task.WorkerSucceeded, task.FailureNone, nil
+}
+
+// cutShort maps a finish reason that is not a completion to what it means. A reason
+// outside it is left alone: a new one should not become a failure aidev invents.
+var cutShort = map[string]string{
+	"tool-calls": "the session ended while the agent was still calling tools",
+	"length":     "the agent ran out of output space mid-answer",
 }
 
 // startupError explains a failure to launch in terms a user can act on.

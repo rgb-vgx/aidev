@@ -610,3 +610,57 @@ func TestResultReportsTheModelThatRan(t *testing.T) {
 		t.Errorf("model = %q, want the model the request asked for", res.Model)
 	}
 }
+
+// Measured in TASK-000039 (2026-09-15): the agent read three files, ran one command,
+// said "now drafting the doc rewrites" and the session ended — exit 0, four steps, no
+// file changed. aidev recorded it as the agent succeeding, and only verification said
+// otherwise. The transcript says what really happened: the last step ended with
+// reason "tool-calls", which means the model finished its turn still intending to call
+// a tool. A completed session ends with "stop".
+//
+// It matters beyond the message. A run recorded as a success that failed verification
+// is attributed, in aidev stats, to a model that writes code which does not pass. A
+// model that quit halfway through is a different problem with a different remedy, and
+// the history should not confuse the two. The same shape is what a rejected permission
+// produces (docs/research.md 7g), which is otherwise indistinguishable from success.
+func TestASessionThatEndedMidToolCallIsNotASuccess(t *testing.T) {
+	command, _ := fakeOpenCode(t, emit(
+		fixtureStepStart, fixtureToolUse, fixtureStepFinishTools,
+	)+"exit 0")
+
+	o := NewOpenCode(command, "")
+	res, err := o.Run(context.Background(), openCodeRequest(t))
+	if err != nil {
+		t.Fatalf("Run: %v; an agent that stopped early is an outcome, not a failure to run", err)
+	}
+	if res.Status != task.WorkerFailed {
+		t.Errorf("status = %s, want FAILED: the agent did not finish", res.Status)
+	}
+	if res.FailureKind != task.FailureAgentError {
+		t.Errorf("failure kind = %s, want AGENT_ERROR: the agent stopped, it did not write failing code", res.FailureKind)
+	}
+	if res.Err == nil || !strings.Contains(res.Err.Error(), "tool-calls") || !strings.Contains(strings.ToLower(res.Err.Error()), "stop") {
+		t.Errorf("Err = %v, want it to say the session ended before the agent stopped, and to quote the reason", err)
+	}
+	// The record is still complete: a cut-short session is worth inspecting.
+	if res.SessionID == "" {
+		t.Error("the session id was not recorded, so the run cannot be resumed or inspected")
+	}
+}
+
+// The ordinary case must stay ordinary: a session whose last step is "stop" finished,
+// whatever happened in the steps before it.
+func TestASessionThatEndedAfterToolCallsIsStillASuccess(t *testing.T) {
+	command, _ := fakeOpenCode(t, emit(
+		fixtureStepStart, fixtureToolUse, fixtureStepFinishTools, fixtureText, fixtureStepFinishStop,
+	)+"exit 0")
+
+	o := NewOpenCode(command, "")
+	res, err := o.Run(context.Background(), openCodeRequest(t))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Status != task.WorkerSucceeded {
+		t.Errorf("status = %s, want SUCCEEDED", res.Status)
+	}
+}
