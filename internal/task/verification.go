@@ -20,8 +20,9 @@ type VerificationStep struct {
 	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
 }
 
-// String renders the step the way a human would type it. It is for display and
-// audit records only and is never handed back to a shell.
+// String renders the step the way a human would type it. The output parses
+// back to the same step via ParseVerificationStep and passes the same
+// arguments when run by a POSIX shell.
 func (s VerificationStep) String() string {
 	parts := make([]string, 0, len(s.Args)+1)
 	parts = append(parts, quoteIfNeeded(s.Command))
@@ -137,11 +138,31 @@ func splitFields(raw string) ([]string, error) {
 }
 
 func quoteIfNeeded(s string) string {
+	if isBareSafe(s) {
+		return s
+	}
+	// POSIX single quotes keep everything literal, including newlines and
+	// tabs; a single quote itself cannot appear inside them, so close the
+	// quote, emit it inside double quotes, and reopen.
+	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
+}
+
+// isBareSafe reports whether s needs no quoting: it is non-empty and made
+// only of characters that are safe both for splitFields and for a POSIX
+// shell.
+func isBareSafe(s string) bool {
 	if s == "" {
-		return `""`
+		return false
 	}
-	if strings.ContainsAny(s, " \t\"'") {
-		return `"` + strings.ReplaceAll(s, `"`, `\"`) + `"`
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z',
+			r >= 'A' && r <= 'Z',
+			r >= '0' && r <= '9':
+		case strings.ContainsRune("_@%+=:,./-", r):
+		default:
+			return false
+		}
 	}
-	return s
+	return true
 }

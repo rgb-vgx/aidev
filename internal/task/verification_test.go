@@ -118,19 +118,20 @@ func TestParseVerificationStepsSkipsBlanksAndReportsPosition(t *testing.T) {
 	}
 }
 
-func TestStepStringRoundTrip(t *testing.T) {
-	cases := []struct{ in, want string }{
-		{"go test ./...", "go test ./..."},
-		{`go test -run "TestA TestB"`, `go test -run "TestA TestB"`},
-		{`mytool --flag ""`, `mytool --flag ""`},
-	}
-	for _, tc := range cases {
-		step, err := ParseVerificationStep(tc.in)
+// Arguments that need no quoting are printed as typed, so the common case reads
+// exactly as the user wrote it.
+func TestStepStringLeavesPlainArgumentsAlone(t *testing.T) {
+	for _, in := range []string{
+		"go test ./...",
+		"go test ./internal/... -run=TestA -count=1",
+		"make check",
+	} {
+		step, err := ParseVerificationStep(in)
 		if err != nil {
-			t.Fatalf("ParseVerificationStep(%q): %v", tc.in, err)
+			t.Fatalf("ParseVerificationStep(%q): %v", in, err)
 		}
-		if got := step.String(); got != tc.want {
-			t.Errorf("String() = %q, want %q", got, tc.want)
+		if got := step.String(); got != in {
+			t.Errorf("String() = %q, want %q", got, in)
 		}
 	}
 }

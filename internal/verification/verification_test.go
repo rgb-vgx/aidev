@@ -316,7 +316,7 @@ func TestRecordedCommandIsReadable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if got := report.Runs[0].Command; got != `sh -c "exit 0"` {
+	if got := report.Runs[0].Command; got != `sh -c 'exit 0'` {
 		t.Errorf("command = %q, want the rendered argv", got)
 	}
 }
