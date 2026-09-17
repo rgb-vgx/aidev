@@ -47,7 +47,8 @@ const (
 // killGrace is how long a process has to exit after its process group is asked
 // to terminate, before it is killed outright. Phase 0 measured `opencode run`
 // exiting promptly on SIGTERM, so this is a safety net rather than the norm.
-const killGrace = 5 * time.Second
+// A variable only so that a test can shorten it.
+var killGrace = 5 * time.Second
 
 // Spec describes one process to run.
 type Spec struct {
