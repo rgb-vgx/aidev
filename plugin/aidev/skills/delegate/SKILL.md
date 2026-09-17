@@ -30,8 +30,10 @@ when the work is finished, including what must keep working. Show it to the user
 get a yes, unless they already stated it that precisely. This is the step that
 catches a misunderstanding cheaply.
 
-## 2. Check the repository
+## 2. Check aidev and the repository
 
+- If this is the first delegation in the session, or an aidev tool call has
+  failed, run `aidev doctor` first (see the `doctor` skill).
 - It must be a git repository with at least one commit. aidev never touches the
   user's working tree; the task branches from `base_ref`.
 - Find how the project is tested (Makefile, package.json scripts, `go test`,
@@ -108,7 +110,8 @@ find which it was:
   finish or carry the partial work yourself, but check every line of it as if you
   wrote it, and never carry over an edit to a test file.
 - **The environment is broken** (database down, invalid API key, agent missing):
-  fix that first; retrying will fail the same way.
+  fix that first with the `doctor` skill (`aidev doctor`); retrying will fail the
+  same way.
 
 ## 8. When it succeeds
 
