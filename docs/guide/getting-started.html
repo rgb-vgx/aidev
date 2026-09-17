@@ -26,7 +26,7 @@
 <tr><td>Go, version 1.25 or newer</td><td>aidev is written in Go, and the MCP library requires a recent Go.</td><td><code>go version</code></td><td>Install Go from your system package manager or the Go website. With Go 1.24 the toolchain downloads a newer one automatically, but that needs network access.</td></tr>
 <tr><td>git, version 2.23 or newer</td><td>Every task runs in a git worktree, which is a git feature.</td><td><code>git --version</code></td><td>Install git with your package manager, then run the check again.</td></tr>
 <tr><td>Docker with Compose</td><td>PostgreSQL runs in a container for local development.</td><td><code>docker compose version</code></td><td>Install Docker Desktop or the Docker engine plus the compose plugin, then make sure the Docker service is running.</td></tr>
-<tr><td>OpenCode, version 1.18 or newer</td><td>OpenCode is the agent that writes the code. You need it to run real tasks.</td><td><code>opencode --version</code></td><td>Install OpenCode and make sure the <code>opencode</code> program is on your <code>PATH</code>, or set <code>OPENCODE_COMMAND</code> to its location. No API key is needed for the public <code>opencode/*</code> models.</td></tr>
+<tr><td>OpenCode, version 1.18 or newer</td><td>OpenCode is the agent that writes the code. You need it to run real tasks.</td><td><code>opencode --version</code></td><td>Install OpenCode and make sure the <code>opencode</code> program is on your <code>PATH</code>, or set <code>agent.opencode.command</code> to its location in <code>conf.json</code> (see <a href="#configuration">configuration</a>). No API key is needed for the public <code>opencode/*</code> models.</td></tr>
 </table>
 
 <p>Run all four checks now, in full:</p>
@@ -90,52 +90,50 @@ make build
 
 <p>If <code>make db-up</code> fails, the usual causes are: Docker is not running (start it and try again), or the port is already in use (pick another port as shown above). The error names the cause. Fix it and repeat the command. It is safe to repeat.</p>
 
-<p>Next, configure the connection and apply the schema. A <strong>connection string</strong> is a single line of text that tells a program how to reach a database: who to log in as, where, and with what options. You write it once into a configuration file, as described in the <a href="#configuration">configuration section</a> below, rather than exporting it in every terminal:</p>
+<p>Next, configure the connection and apply the schema. A <strong>connection string</strong> is a single line of text that tells a program how to reach a database: who to log in as, where, and with what options. You write it once into your <code>conf.json</code> under the key <code>database.url</code>, as described in the <a href="#configuration">configuration section</a> below:</p>
 
-<pre><code>mkdir -p ~/.config/aidev
-cp .env.example ~/.config/aidev/config.env
-# then edit ~/.config/aidev/config.env if you changed the port
+<pre><code>cp conf/conf.example.json conf/conf.json
+# then edit database.url in conf/conf.json if you changed the port
+export AIDEV_CONFIG="$PWD/conf/conf.json"
+# put that export line in your shell profile (~/.bashrc, ~/.zshrc, or equivalent)
 aidev migrate
 # want: "database is up to date (N migrations)" or a list of "applied ..." lines</code></pre>
 
-<p>Why each line matters. The first creates the configuration directory. The second copies the example settings into <code>~/.config/aidev/config.env</code>. Edit <code>config.env</code> if you changed the port. The last applies pending migrations. <code>aidev migrate</code> is idempotent, which means running it twice is harmless: the second run finds nothing to do and says the database is up to date.</p>
+<p>Why each line matters. The first copies the example settings into <code>conf/conf.json</code>. Edit <code>database.url</code> if you used a different port. The second tells aidev which file is its <code>conf.json</code>: <code>AIDEV_CONFIG</code> must hold the file's absolute path, and it is the only environment variable aidev reads for configuration. The last applies pending migrations. <code>aidev migrate</code> is idempotent, which means running it twice is harmless: the second run finds nothing to do and says the database is up to date.</p>
 
-<p>If <code>aidev migrate</code> says the configuration is invalid, it names the variable. If it cannot connect, check that <code>make db-up</code> is still running and that the port in <code>DATABASE_URL</code> matches the port the database actually listens on. If you edited a migration file that was already applied, the migrator refuses to start and tells you: never edit an applied migration; add a new one instead.</p>
+<p>If <code>aidev migrate</code> says the configuration is invalid, it names the setting. If it cannot connect, check that <code>make db-up</code> is still running and that the port in <code>database.url</code> matches the port the database actually listens on. If you edited a migration file that was already applied, the migrator refuses to start and tells you: never edit an applied migration; add a new one instead.</p>
 </section>
 
 <section id="configuration">
-<h2>Configuration: the environment variables that matter</h2>
+<h2>Configuration: the conf.json file that matters</h2>
 
-<p>aidev reads its configuration from <strong>environment variables</strong>. An environment variable is a named value attached to your shell session, like <code>DATABASE_URL</code>. Only one part of aidev reads them, and it validates everything at startup and reports every problem at once, instead of failing halfway through a task. You do not export these variables every time you open a terminal. You write them once into a configuration file, and every new terminal picks them up automatically.</p>
+<p>aidev reads its configuration from one JSON file: the <code>conf.json</code> that <code>AIDEV_CONFIG</code> names. <code>AIDEV_CONFIG</code> must hold the file's absolute path, and it is the only environment variable aidev reads for configuration. Everything lives in that file, and aidev validates it at startup and reports every problem at once, instead of failing halfway through a task.</p>
 
-<p>Create the file once. It lives at <code>$XDG_CONFIG_HOME/aidev/config.env</code>, or, when <code>XDG_CONFIG_HOME</code> is unset, at <code>~/.config/aidev/config.env</code>. Setting <code>AIDEV_CONFIG</code> names a different file instead.</p>
+<p>Create the file once. Copy the example and point aidev at it:</p>
 
-<pre><code>mkdir -p ~/.config/aidev
-cat &gt; ~/.config/aidev/config.env &lt;&lt;EOF
-DATABASE_URL='postgres://aidev:aidev@127.0.0.1:5434/aidev?sslmode=disable'
-EOF
+<pre><code>cp conf/conf.example.json conf/conf.json
+# then edit it: database.url, workspace_root, and anything else you need
+export AIDEV_CONFIG="$PWD/conf/conf.json"
+# put that export line in your shell profile (~/.bashrc, ~/.zshrc, or equivalent)
 aidev config
 # prints the resolved settings and which file it used</code></pre>
 
-<p>A missing file is fine: aidev simply starts with defaults plus whatever is exported in the shell. A file that exists and cannot be parsed is an error that names the file and the line, so a broken setting is never silently ignored.</p>
+<p>aidev reads nothing but the file that <code>AIDEV_CONFIG</code> names, so the export must be present in every new terminal. Put that line in your shell profile and this is one-time setup. A missing file is an error: <code>aidev config</code> says <code>AIDEV_CONFIG</code> is not set. A file that exists and cannot be parsed, or holds an unknown key, is an error that names the problem, so a broken setting is never silently ignored.</p>
 
-<p>The file is parsed and never executed, so a value is literal. <code>$VARIABLES</code> are not expanded, and one pair of surrounding quotes is stripped, so the quotes above protect special characters without becoming part of the value.</p>
+<p>The file is JSON, so a value is literal text. Edit <code>database.url</code> when you change the database port; nothing else in the environment can override the file, so what you read in <code>conf.json</code> is what aidev uses.</p>
 
-<p>Anything exported in the shell overrides the file, so one command can be run differently without editing anything:</p>
-
-<pre><code>DATABASE_URL='postgres://aidev:aidev@127.0.0.1:5434/aidev?sslmode=disable' aidev migrate
-# the exported value wins for this one command; the file is unchanged</code></pre>
+<p>The keys you will reach for first:</p>
 
 <table>
-<tr><th>Variable</th><th>Default</th><th>What it does</th><th>What happens if it is wrong</th></tr>
-<tr><td><code>DATABASE_URL</code></td><td>none: required</td><td>How aidev reaches PostgreSQL.</td><td>Every command that touches the database fails at startup with a message naming <code>DATABASE_URL</code>. Nothing runs.</td></tr>
-<tr><td><code>WORKSPACE_ROOT</code></td><td><code>$XDG_DATA_HOME/aidev/worktrees</code> or <code>~/.local/share/aidev/worktrees</code></td><td>The directory under which every task worktree is created. Every worktree must resolve inside it.</td><td>Task runs fail because the isolation directory cannot be prepared. The error names the path.</td></tr>
-<tr><td><code>DEFAULT_TASK_TIMEOUT</code></td><td><code>30m</code></td><td>How long one agent run may take before aidev stops it.</td><td>Too short and slow models get killed mid-work. The default is generous on purpose: a first run against a new repository was measured taking over four minutes before producing output.</td></tr>
-<tr><td><code>OPENCODE_MODEL</code></td><td><code>opencode/muse-spark-1.3-contributor-free</code></td><td>Which model OpenCode uses. Set it to an empty string to let OpenCode choose.</td><td>An unknown model makes the agent fail, which fails the task. The public default needs no credentials.</td></tr>
-<tr><td><code>LOG_LEVEL</code></td><td><code>info</code></td><td>How much log detail aidev emits: <code>debug</code>, <code>info</code>, <code>warn</code>, or <code>error</code>.</td><td>An unknown value fails startup. Too quiet and you lose diagnosis; too loud and the signal drowns.</td></tr>
+<tr><th>Key</th><th>Default</th><th>What it does</th><th>What happens if it is wrong</th></tr>
+<tr><td><code>database.url</code></td><td>none: required</td><td>How aidev reaches PostgreSQL.</td><td>Every command that touches the database fails at startup with a message naming <code>database.url</code>. Nothing runs.</td></tr>
+<tr><td><code>workspace_root</code></td><td><code>~/.local/share/aidev/worktrees</code></td><td>The directory under which every task worktree is created. Every worktree must resolve inside it.</td><td>Task runs fail because the isolation directory cannot be prepared. The error names the path.</td></tr>
+<tr><td><code>tasks.timeout</code></td><td><code>30m</code></td><td>How long one agent run may take before aidev stops it.</td><td>Too short and slow models get killed mid-work. The default is generous on purpose: a first run against a new repository was measured taking over four minutes before producing output.</td></tr>
+<tr><td><code>agent.opencode.model</code></td><td><code>opencode/muse-spark-1.3-contributor-free</code></td><td>Which model OpenCode uses. Set it to an empty string to let OpenCode choose.</td><td>An unknown model makes the agent fail, which fails the task. The public default needs no credentials.</td></tr>
+<tr><td><code>log_level</code></td><td><code>info</code></td><td>How much log detail aidev emits: <code>debug</code>, <code>info</code>, <code>warn</code>, or <code>error</code>.</td><td>An unknown value fails startup. Too quiet and you lose diagnosis; too loud and the signal drowns.</td></tr>
 </table>
 
-<p>The full list, with every default, is on the <a href="reference.html#environment">reference page</a>. To see exactly what aidev resolved, with the database password redacted:</p>
+<p>The full list, with every default, is on the <a href="reference.html#configuration">reference page</a>. To see exactly what aidev resolved, with the database password redacted:</p>
 
 <pre><code>aidev config
 aidev config --json</code></pre>
@@ -253,7 +251,7 @@ go clean -testcache &amp;&amp; go test ./...
 # run the test yourself on your own checkout of the branch:
 # it should pass, because verification already passed in the worktree</code></pre>
 
-<p>On failure, the worktree is kept exactly as the agent left it, under <code>WORKSPACE_ROOT</code>, and recorded as RETAINED. That is deliberate: partial work is often the most useful thing about a failure. Find it with <code>aidev worktree list</code>, inspect it, and remove it only when you are done. The <a href="debugging.html#worktrees">debugging page</a> walks through that.</p>
+<p>On failure, the worktree is kept exactly as the agent left it, under <code>workspace_root</code>, and recorded as RETAINED. That is deliberate: partial work is often the most useful thing about a failure. Find it with <code>aidev worktree list</code>, inspect it, and remove it only when you are done. The <a href="debugging.html#worktrees">debugging page</a> walks through that.</p>
 
 <p>When you are finished with the demo, delete the throwaway directory. Then continue with the <a href="index.html">guide index</a>, the <a href="debugging.html">debugging page</a> for everything that can go wrong, and the <a href="reference.html">reference page</a> for the complete flag and variable lists.</p>
 
@@ -262,7 +260,7 @@ rm -rf /tmp/aidev-demo
 aidev task list
 # your demo task is still in PostgreSQL: the record outlives the directory</code></pre>
 
-<p>Coming back tomorrow: if you closed your terminal, there is nothing to set up again. Make sure PostgreSQL is running with <code>make db-up</code>, then just run <code>aidev</code>. Your configuration is already in <code>~/.config/aidev/config.env</code>, every new terminal picks it up, and <code>make install</code> means the <code>aidev</code> command is still found. Check with <code>aidev config</code> if you want proof before running a task.</p>
+<p>Coming back tomorrow: if you closed your terminal, there is nothing to set up again except the shell export. Make sure PostgreSQL is running with <code>make db-up</code>, then just run <code>aidev</code>. Your configuration is already in the <code>conf.json</code> that <code>AIDEV_CONFIG</code> names, the export in your shell profile puts it in every new terminal, and <code>make install</code> means the <code>aidev</code> command is still found. Check with <code>aidev config</code> if you want proof before running a task.</p>
 </section>
 <section id="claude-code">
 <h2>Connecting Claude Code: delegating from any repository</h2>
@@ -272,12 +270,13 @@ aidev task list
 <pre><code>make install
 # puts aidev in $(go env GOPATH)/bin, a path that does not move
 
-claude mcp add --scope user aidev -- "$(go env GOPATH)/bin/aidev" mcp
-# registers aidev for every project on this machine</code></pre>
+claude mcp add --scope user -e AIDEV_CONFIG=/abs/path/conf.json aidev -- "$(go env GOPATH)/bin/aidev" mcp
+# registers aidev for every project on this machine; use the absolute path
+# of the same conf.json that aidev config reports</code></pre>
 
 <p>Use <code>--scope user</code>. Without it, Claude Code uses the <code>local</code> scope, which ties the registration to the directory you ran the command in. aidev then works in that one repository and does not exist in any other. There is no error message: the tools are simply missing. That is the mistake this paragraph is here to prevent.</p>
 
-<p>No password or connection string goes on the registration. aidev reads <code>~/.config/aidev/config.env</code> itself, the same file the terminal commands use, so <code>aidev config</code> shows you exactly what the MCP server will see.</p>
+<p>No password or connection string goes on the registration except through the file it names. aidev reads the <code>conf.json</code> that <code>AIDEV_CONFIG</code> names, the same file the terminal commands use, so <code>aidev config</code> shows you exactly what the MCP server will see.</p>
 
 <p>Check the registration from a directory that is <em>not</em> the aidev repository, because that is where a wrong scope shows up:</p>
 

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Tra cứu aidev: lệnh, trạng thái, event, biến, công cụ</title>
+<title>Tra cứu aidev: lệnh, trạng thái, event, cấu hình, công cụ</title>
 <link rel="stylesheet" href="../guide.css">
 </head>
 <body>
@@ -12,7 +12,7 @@
 <main>
 <h1>Tra cứu: các danh sách đầy đủ</h1>
 
-<p>Trang này liệt kê mọi thứ một cách chính xác. Nếu trang bắt đầu và trang gỡ lỗi là câu chuyện thì đây là từ điển. Mọi lệnh kèm mọi cờ, mọi trạng thái, mọi loại thất bại, mọi kiểu event, mọi biến môi trường kèm giá trị mặc định, và mọi công cụ MCP kèm đầu vào. Giá trị ở đây lấy từ code, không phải từ trí nhớ.</p>
+<p>Trang này liệt kê mọi thứ một cách chính xác. Nếu trang bắt đầu và trang gỡ lỗi là câu chuyện thì đây là từ điển. Mọi lệnh kèm mọi cờ, mọi trạng thái, mọi loại thất bại, mọi kiểu event, mọi thiết lập <code>conf.json</code> kèm giá trị mặc định, và mọi công cụ MCP kèm đầu vào. Giá trị ở đây lấy từ code, không phải từ trí nhớ.</p>
 
 <div class="notice"><strong>Nhắc lại quy tắc duy nhất:</strong> aidev chạy agent trong một worktree git tách biệt, rồi tự chạy các lệnh verification của task, và chỉ các lệnh đó mới được đưa task sang SUCCEEDED. Agent nói công việc đã xong cũng không thay đổi điều gì. Bảng trạng thái và bảng loại thất bại dưới đây đều xoay quanh quy tắc đó.</div>
 
@@ -48,12 +48,12 @@ aidev migrate --json</code></pre>
 <tr><td><code>--repo PATH</code></td><td>Đường dẫn tới kho git. Mặc định: thư mục hiện tại. Kho chưa biết được tự đăng ký thành project.</td></tr>
 <tr><td><code>--description D</code></td><td>Hướng dẫn đầy đủ cho agent.</td></tr>
 <tr><td><code>--acceptance A</code></td><td>Xong trông ra sao, viết bằng văn xuôi.</td></tr>
-<tr><td><code>--agent NAME</code></td><td>Agent dùng. Mặc định: thiết lập <code>OPENCODE_AGENT</code>, tức là <code>build</code>. aidev tự kiểm tra tên vì OpenCode lặng lẽ dùng mặc định khi gặp tên lạ mà vẫn thoát 0.</td></tr>
+<tr><td><code>--agent NAME</code></td><td>Agent dùng. Mặc định: thiết lập <code>agent.opencode.agent</code>, tức là <code>build</code>. aidev tự kiểm tra tên vì OpenCode lặng lẽ dùng mặc định khi gặp tên lạ mà vẫn thoát 0.</td></tr>
 <tr><td><code>--priority N</code></td><td>Số lớn chạy trước. Mặc định 0. Từ -1000 tới 1000.</td></tr>
 <tr><td><code>--max-retries N</code></td><td>Ghi nhận cho tính năng chạy lại sau này. Bản hiện tại không bao giờ chạy lại.</td></tr>
 <tr><td><code>--requires-approval</code></td><td>Giữ task sau cửa quyết định của con người. Nó sẽ chờ ở WAITING_APPROVAL cho tới khi được duyệt.</td></tr>
 <tr><td><code>--base-ref REF</code></td><td>Git ref để tách nhánh. Mặc định: nhánh mặc định của project. Kiểm tra ngay lúc này chứ không đợi tới khi tạo worktree.</td></tr>
-<tr><td><code>--timeout DURATION</code></td><td>Giới hạn lần chạy agent của task này, ví dụ <code>60m</code>. Mặc định: DEFAULT_TASK_TIMEOUT.</td></tr>
+<tr><td><code>--timeout DURATION</code></td><td>Giới hạn lần chạy agent của task này, ví dụ <code>60m</code>. Mặc định: <code>tasks.timeout</code>.</td></tr>
 <tr><td><code>--json</code></td><td>In task vừa tạo dạng JSON.</td></tr>
 </table>
 
@@ -166,34 +166,42 @@ aidev task events TASK-000001 --after 5 --limit 50
 # only events after sequence 5, at most 50 rows</code></pre>
 </section>
 
-<section id="environment">
-<h2>Biến môi trường</h2>
+<section id="configuration">
+<h2>Cấu hình</h2>
 
-<p>Cấu hình chỉ do <code>internal/config</code> đọc. Không chỗ nào khác trong aidev đọc môi trường trực tiếp. Các giá trị này có thể tới từ tập tin cấu hình cũng như từ môi trường: aidev đọc <code>$XDG_CONFIG_HOME/aidev/config.env</code>, hoặc <code>~/.config/aidev/config.env</code> khi <code>XDG_CONFIG_HOME</code> không đặt, trừ khi <code>AIDEV_CONFIG</code> chỉ một tập tin khác. Mọi thứ xuất trong shell đều thắng tập tin. Mọi thứ được kiểm tra khi khởi động và mọi lỗi báo một lúc. <code>DATABASE_URL</code> là biến bắt buộc duy nhất; còn lại đều có mặc định.</p>
+<p>Cấu hình nằm trong một tập tin JSON duy nhất: <code>conf.json</code> mà <code>AIDEV_CONFIG</code> chỉ tới. Cấu hình chỉ do <code>internal/config</code> đọc. Không chỗ nào khác trong aidev đọc môi trường để cấu hình: biến còn sót trong shell profile không được lặng lẽ thắng tập tin mà người ta đang đọc và sửa. <code>AIDEV_CONFIG</code> phải chứa đường dẫn tuyệt đối của tập tin. Mọi thứ được kiểm tra khi khởi động và mọi lỗi báo một lúc. <code>database.url</code> là thiết lập bắt buộc duy nhất; còn lại đều có mặc định. Chép <code>conf/conf.example.json</code> thành <code>conf/conf.json</code> để bắt đầu từ tập tin đã có đủ mọi khóa.</p>
+
+<p>Bảng khóa dưới đây là đầy đủ: nó khớp với <code>config.SettingKeys()</code> trong <code>internal/config/config.go</code>. <code>agent.routing</code> và <code>tracing.headers</code> là object chứa chuỗi, không phải giá trị đơn: các mục trong đó là giá trị bạn viết, không phải thiết lập con.</p>
 
 <table>
-<tr><th>Biến</th><th>Mặc định</th><th>Mục đích</th></tr>
-<tr><td><code>DATABASE_URL</code></td><td>không có: bắt buộc</td><td>Chuỗi kết nối PostgreSQL, ví dụ <code>postgres://aidev:aidev@127.0.0.1:5434/aidev?sslmode=disable</code>.</td></tr>
-<tr><td><code>WORKSPACE_ROOT</code></td><td><code>$XDG_DATA_HOME/aidev/worktrees</code>, nếu không thì <code>~/.local/share/aidev/worktrees</code></td><td>Nơi tạo worktree của task. Mọi đường dẫn worktree phải nằm trong nó.</td></tr>
-<tr><td><code>DEFAULT_TASK_TIMEOUT</code></td><td><code>30m</code></td><td>Giới hạn một lần chạy agent khi task không đặt timeout riêng. Rộng rãi có chủ ý: lần đầu chạy trên kho chưa từng thấy từng bị đo là mất hàng phút.</td></tr>
-<tr><td><code>DEFAULT_VERIFICATION_TIMEOUT</code></td><td><code>10m</code></td><td>Giới hạn một bước verification.</td></tr>
-<tr><td><code>OPENCODE_COMMAND</code></td><td><code>opencode</code></td><td>Chương trình OpenCode mà aidev gọi.</td></tr>
-<tr><td><code>OPENCODE_MODEL</code></td><td><code>opencode/muse-spark-1.3-contributor-free</code></td><td>Model truyền qua <code>-m</code>. Không cần tài khoản. Đặt chuỗi rỗng để OpenCode tự chọn.</td></tr>
-<tr><td><code>OPENCODE_AGENT</code></td><td><code>build</code></td><td>Agent OpenCode mặc định cho task không nêu tên.</td></tr>
-<tr><td><code>MAX_OUTPUT_BYTES</code></td><td><code>1048576</code> (1 MiB) cho mỗi luồng thu</td><td>Trần mỗi luồng thu trước khi vào cơ sở dữ liệu. Vượt trần thì bỏ phần dư và gắn cờ đã cắt bớt. Tối thiểu 1024.</td></tr>
-<tr><td><code>WORKTREE_CLEANUP</code></td><td><code>on-success</code></td><td><code>on-success</code> commit công việc rồi xóa worktree; <code>never</code> giữ mọi worktree. Không giá trị nào vứt công việc hỏng.</td></tr>
-<tr><td><code>LOG_LEVEL</code></td><td><code>info</code></td><td>Mức log tối thiểu: <code>debug</code>, <code>info</code>, <code>warn</code>, <code>error</code>.</td></tr>
-<tr><td><code>OTEL_EXPORTER_OTLP_ENDPOINT</code></td><td>không đặt: tracing tắt</td><td>URL HTTP OTLP gốc. Trace gửi tới <code>&lt;base&gt;/v1/traces</code>. Tracing tắt trừ khi có endpoint.</td></tr>
-<tr><td><code>OTEL_EXPORTER_OTLP_TRACES_ENDPOINT</code></td><td>không đặt</td><td>URL trace đầy đủ cho riêng tín hiệu trace, dùng nguyên như cho. Ưu tiên hơn biến gốc.</td></tr>
-<tr><td><code>OTEL_EXPORTER_OTLP_HEADERS</code></td><td>không đặt</td><td>Các cặp <code>key=value</code> cách nhau bằng phẩy, ví dụ header xác thực.</td></tr>
-<tr><td><code>OTEL_SERVICE_NAME</code></td><td><code>aidev</code></td><td>Tên dịch vụ hiện trong backend tracing.</td></tr>
-<tr><td><code>OTEL_TRACES_SAMPLER_ARG</code></td><td><code>1</code></td><td>Tỉ lệ lấy mẫu từ 0 tới 1. Ngoài khoảng đó thì khởi động thất bại.</td></tr>
-<tr><td><code>AIDEV_CONFIG</code></td><td><code>$XDG_CONFIG_HOME/aidev/config.env</code>, nếu không thì <code>~/.config/aidev/config.env</code></td><td>Chỉ một tập tin cấu hình khác thay cho mặc định. Tập tin được phân tích chứ không bao giờ được thực thi: giá trị là chữ nguyên văn.</td></tr>
+<tr><th>Thiết lập</th><th>Mặc định</th><th>Mục đích</th></tr>
+<tr><td><code>database.url</code></td><td>không có: bắt buộc</td><td>Chuỗi kết nối PostgreSQL, ví dụ <code>postgres://aidev:aidev@127.0.0.1:5434/aidev?sslmode=disable</code>.</td></tr>
+<tr><td><code>workspace_root</code></td><td><code>~/.local/share/aidev/worktrees</code></td><td>Nơi tạo worktree của task. Mọi đường dẫn worktree phải nằm trong nó.</td></tr>
+<tr><td><code>tasks.timeout</code></td><td><code>30m</code></td><td>Giới hạn một lần chạy agent khi task không đặt timeout riêng. Rộng rãi có chủ ý: lần đầu chạy trên kho chưa từng thấy từng bị đo là mất hàng phút.</td></tr>
+<tr><td><code>tasks.verification_timeout</code></td><td><code>10m</code></td><td>Giới hạn một bước verification.</td></tr>
+<tr><td><code>tasks.max_output_bytes</code></td><td><code>1048576</code> (1 MiB) cho mỗi luồng thu</td><td>Trần mỗi luồng thu trước khi vào cơ sở dữ liệu. Vượt trần thì bỏ phần dư và gắn cờ đã cắt bớt. Tối thiểu 1024.</td></tr>
+<tr><td><code>tasks.worktree_cleanup</code></td><td><code>on-success</code></td><td><code>on-success</code> commit công việc rồi xóa worktree; <code>never</code> giữ mọi worktree. Không giá trị nào vứt công việc hỏng.</td></tr>
+<tr><td><code>agent.backend</code></td><td><code>opencode</code></td><td>Bộ máy agent nào chạy task: <code>opencode</code> hay <code>codex</code>.</td></tr>
+<tr><td><code>agent.opencode.command</code></td><td><code>opencode</code></td><td>Chương trình OpenCode mà aidev gọi.</td></tr>
+<tr><td><code>agent.opencode.model</code></td><td><code>opencode/muse-spark-1.3-contributor-free</code></td><td>Model truyền qua <code>-m</code>. Không cần tài khoản. Đặt chuỗi rỗng để OpenCode tự chọn.</td></tr>
+<tr><td><code>agent.opencode.agent</code></td><td><code>build</code></td><td>Agent OpenCode mặc định cho task không nêu tên.</td></tr>
+<tr><td><code>agent.codex.command</code></td><td><code>codex</code></td><td>Chương trình Codex mà aidev gọi.</td></tr>
+<tr><td><code>agent.codex.profile</code></td><td>không có</td><td>Truyền qua <code>--profile</code> khi đặt.</td></tr>
+<tr><td><code>agent.codex.model</code></td><td>không có</td><td>Truyền qua <code>-m</code> khi đặt; rỗng thì Codex tự chọn.</td></tr>
+<tr><td><code>agent.codex.sandbox</code></td><td><code>workspace-write</code></td><td>Truyền qua <code>--sandbox</code> khi đặt.</td></tr>
+<tr><td><code>agent.routing</code></td><td>không có</td><td>Một object ánh xạ độ khó của task (<code>TRIVIAL</code>, <code>STANDARD</code>, <code>HARD</code>) sang model xứng với độ khó đó; độ khó nào không có mục thì để backend tự chọn.</td></tr>
+<tr><td><code>log_level</code></td><td><code>info</code></td><td>Mức log tối thiểu: <code>debug</code>, <code>info</code>, <code>warn</code>, <code>error</code>.</td></tr>
+<tr><td><code>tracing.endpoint</code></td><td>không đặt: tracing tắt</td><td>URL HTTP OTLP gốc. Trace gửi tới <code>&lt;base&gt;/v1/traces</code>. Tracing tắt trừ khi có endpoint.</td></tr>
+<tr><td><code>tracing.traces_endpoint</code></td><td>không đặt</td><td>URL trace đầy đủ cho riêng tín hiệu trace, dùng nguyên như cho. Ưu tiên hơn endpoint gốc.</td></tr>
+<tr><td><code>tracing.headers</code></td><td>không đặt</td><td>Object chứa các header OTLP thêm, ví dụ header xác thực.</td></tr>
+<tr><td><code>tracing.service_name</code></td><td><code>aidev</code></td><td>Tên dịch vụ hiện trong backend tracing.</td></tr>
+<tr><td><code>tracing.sample_ratio</code></td><td><code>1</code></td><td>Tỉ lệ lấy mẫu từ 0 tới 1. Ngoài khoảng đó thì khởi động thất bại.</td></tr>
 </table>
 
-<p>Các biến liên quan nhưng không phải cấu hình aidev mà xuất hiện trong quy trình của nó: <code>AIDEV_DB_PORT</code> đổi cổng PostgreSQL trên máy cho <code>make db-up</code>; <code>TEST_DATABASE_URL</code> trỏ test tích hợp tới cơ sở dữ liệu (không có nó thì test tự bỏ qua); <code>AIDEV_TEST_OTLP</code> giữ cửa cho test xuất tracing thật. Xem <a href="debugging.html#tracing">phần tracing</a> để thấy các biến OTLP khi dùng thật.</p>
+<p>Biến môi trường duy nhất là cấu hình aidev: <code>AIDEV_CONFIG</code> chỉ tới tập tin <code>conf.json</code>. Các giá trị liên quan nhưng không phải cấu hình aidev mà xuất hiện trong quy trình của nó: <code>AIDEV_DB_PORT</code> đổi cổng PostgreSQL trên máy cho <code>make db-up</code>; <code>TEST_DATABASE_URL</code> trỏ test tích hợp tới cơ sở dữ liệu (không có nó thì test tự bỏ qua); <code>AIDEV_TEST_OTLP</code> giữ cửa cho test xuất tracing thật. Xem <a href="debugging.html#tracing">phần tracing</a> để thấy các khóa tracing khi dùng thật.</p>
 
-<pre><code>aidev config
+<pre><code>export AIDEV_CONFIG="$PWD/conf/conf.json"
+aidev config
 aidev config --json
 # the resolved configuration, password redacted; the way to check every default above</code></pre>
 </section>
