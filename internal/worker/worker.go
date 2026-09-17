@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -37,6 +38,11 @@ import (
 // than leaving a row stuck in RUNNING.
 const persistTimeout = 30 * time.Second
 
+// defaultCancelPoll is how often a run re-reads its task's status when
+// Orchestrator.CancelPoll is unset. It is the worst case delay before a Cancel
+// from another process stops the agent or the verification commands.
+const defaultCancelPoll = 2 * time.Second
+
 // Orchestrator executes tasks.
 //
 // The store is a concrete type rather than an interface: there is one
@@ -51,6 +57,17 @@ type Orchestrator struct {
 	Verifier *verification.Runner
 	Config   config.Config
 	Logger   *slog.Logger
+
+	// CancelPoll is how often a run reads its task's status to notice a Cancel
+	// made by another process. Zero means the default.
+	CancelPoll time.Duration
+
+	// runs maps a task ID to the cancel func of the run currently executing
+	// it on this process, so that Cancel stops a local run without waiting
+	// for the status poll. It is created on first use so that the zero value
+	// is usable; guard it with mu.
+	mu   sync.Mutex
+	runs map[uuid.UUID]context.CancelFunc
 }
 
 // New builds an Orchestrator, defaulting the logger and the verifier.
@@ -65,6 +82,69 @@ func New(st *store.Store, gm *git.Manager, backend agent.Backend, cfg config.Con
 		Verifier: verification.NewRunner(cfg.DefaultVerificationTimeout, cfg.MaxOutputBytes),
 		Config:   cfg,
 		Logger:   logger,
+	}
+}
+
+// registerRun records the cancel func of a run so that Cancel on this process
+// stops it immediately. The map is created on first use so that both the zero
+// value and New work.
+func (o *Orchestrator) registerRun(id uuid.UUID, cancel context.CancelFunc) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.runs == nil {
+		o.runs = map[uuid.UUID]context.CancelFunc{}
+	}
+	o.runs[id] = cancel
+}
+
+// unregisterRun removes a finished run. A later Cancel finds nothing, which is
+// the correct answer once the run owns its own ending.
+func (o *Orchestrator) unregisterRun(id uuid.UUID) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	delete(o.runs, id)
+}
+
+// stopLocalRun cancels the registered run for id, if there is one. The call
+// happens after Cancel's transaction committed, so the run's own recording
+// observes CANCELLED rather than racing it.
+func (o *Orchestrator) stopLocalRun(id uuid.UUID) {
+	o.mu.Lock()
+	cancel, ok := o.runs[id]
+	o.mu.Unlock()
+	if ok {
+		cancel()
+	}
+}
+
+// cancelPoll is how often a run checks whether another process cancelled its
+// task. A non-positive CancelPoll means the default.
+func (o *Orchestrator) cancelPoll() time.Duration {
+	if o.CancelPoll > 0 {
+		return o.CancelPoll
+	}
+	return defaultCancelPoll
+}
+
+// startCancelWatch polls the task's status until the run ends and cancels the
+// run's context when the task was cancelled elsewhere. It returns a function
+// that stops the watcher and waits for it, so the watcher never outlives the
+// run.
+func (r *run) startCancelWatch(ctx context.Context, stop context.CancelFunc) (wait func()) {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		watchForCancel(ctx, r.o.cancelPoll(), func(ctx context.Context) (task.Status, error) {
+			t, err := r.o.Store.GetTask(ctx, r.task.ID)
+			if err != nil {
+				return "", err
+			}
+			return t.Status, nil
+		}, stop, r.log)
+	}()
+	return func() {
+		stop()
+		<-done
 	}
 }
 
@@ -177,8 +257,11 @@ func (o *Orchestrator) Approve(ctx context.Context, idOrRef string, granted bool
 
 // Cancel stops a task that has not finished.
 //
-// A worktree belonging to a cancelled attempt is retained: work in progress may
-// still be useful, and discarding it would be the one thing the cleanup policy
+// A run in progress is stopped as well: immediately when it runs on this
+// process, and within the poll interval when it runs in another process and
+// notices the CANCELLED status. The cancelled attempt is finished as
+// CANCELLED and its worktree is retained: work in progress may still be
+// useful, and discarding it would be the one thing the cleanup policy
 // promises never to do.
 func (o *Orchestrator) Cancel(ctx context.Context, idOrRef, reason string) (Outcome, error) {
 	t, err := o.Store.ResolveTask(ctx, idOrRef)
@@ -213,6 +296,10 @@ func (o *Orchestrator) Cancel(ctx context.Context, idOrRef, reason string) (Outc
 	t.Status = task.StatusCancelled
 	o.Logger.InfoContext(ctx, "task cancelled",
 		logging.FieldTaskRef, t.Ref, "previous_status", previous.String(), "reason", reason)
+
+	// A run on this process is already registered (or finished) either way;
+	// polling remains the path for runs in other processes.
+	o.stopLocalRun(t.ID)
 
 	return Outcome{
 		Task:    t,
@@ -276,6 +363,16 @@ func (r *run) execute(ctx context.Context) (outcome Outcome, retErr error) {
 		retErr = err
 		return Outcome{}, retErr
 	}
+	// The run's own context: a Cancel from any process stops the agent and
+	// the verification commands running under it. The watcher notices a
+	// Cancel from another process by polling; the registry delivers a Cancel
+	// on this process without waiting for the poll.
+	runCtx, stopRun := context.WithCancel(ctx)
+	r.o.registerRun(r.task.ID, stopRun)
+	defer r.o.unregisterRun(r.task.ID)
+	stopWatch := r.startCancelWatch(runCtx, stopRun)
+	defer stopWatch()
+	ctx = runCtx
 	root.SetAttributes(attribute.Int("aidev.attempt.number", r.attempt.AttemptNumber))
 
 	r.log = r.log.With(
@@ -726,6 +823,10 @@ func (r *run) verify(ctx context.Context) (Outcome, error) {
 	if err := r.transition(ctx, task.StatusVerifying, event.TypeVerificationStarted, map[string]any{
 		"steps": len(r.task.Verification),
 	}); err != nil {
+		// A Cancel that landed after the agent finished owns the ending.
+		if out, ok := r.cancelledElsewhere(ctx, err); ok {
+			return out, nil
+		}
 		return Outcome{}, err
 	}
 
@@ -971,6 +1072,35 @@ func (r *run) cleanupAfterSuccess(ctx context.Context) {
 	})
 }
 
+// cancelledElsewhere adopts the ending Cancel already recorded after a
+// compare-and-set lost to it. Cancel finishes the attempt, retains the
+// worktree and appends task.cancelled; the run must neither fail on the lost
+// write nor record a second ending, so a conflict whose current status is
+// CANCELLED is the expected outcome, reported with a nil error. Any other
+// error, or a conflict with any other status, is not.
+func (r *run) cancelledElsewhere(ctx context.Context, cause error) (Outcome, bool) {
+	if !errors.Is(cause, store.ErrConflict) {
+		return Outcome{}, false
+	}
+	reloadCtx, reloadCancel := writeContext(ctx)
+	defer reloadCancel()
+	current, err := r.o.Store.GetTask(reloadCtx, r.task.ID)
+	if err != nil || current.Status != task.StatusCancelled {
+		return Outcome{}, false
+	}
+	r.task = current
+	if wt, wtErr := r.o.Store.GetWorktreeByAttempt(reloadCtx, r.attempt.ID); wtErr == nil {
+		r.record = &wt
+	}
+	summary := fmt.Sprintf("%s is CANCELLED: it was cancelled while the run was in progress", r.task.Identifier())
+	if r.worktree != nil {
+		summary += fmt.Sprintf("; the worktree was kept at %s", r.worktree.Path)
+	}
+	r.log.InfoContext(ctx, "task was cancelled while the run was in progress",
+		"status", current.Status.String())
+	return r.outcome(summary), true
+}
+
 // fail records a terminal failure, or a cancellation when that is what happened.
 func (r *run) fail(ctx context.Context, kind task.FailureKind, cause error) (Outcome, error) {
 	cancelled := kind == task.FailureCancelled || errors.Is(ctx.Err(), context.Canceled)
@@ -1023,6 +1153,11 @@ func (r *run) fail(ctx context.Context, kind task.FailureKind, cause error) (Out
 		return appendEvent(writeCtx, tx, r.task.ID, &r.attempt.ID, evType, payload)
 	})
 	if err != nil {
+		// Cancel recorded the ending first: adopt it rather than failing on
+		// the lost write or recording a second one.
+		if out, ok := r.cancelledElsewhere(ctx, err); ok {
+			return out, nil
+		}
 		return Outcome{}, err
 	}
 
