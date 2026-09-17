@@ -103,14 +103,16 @@ func englishPages() []page {
 				"aidev migrate",
 				"aidev task create",
 				"aidev task run",
-				"DATABASE_URL",
-				"WORKSPACE_ROOT",
+				"AIDEV_CONFIG",
+				"conf.example.json",
+				"database.url",
+				"workspace_root",
 				"--verify",
 				"aidev/TASK-",
 				// A reader who closes the terminal must be able to come back
 				// tomorrow without repeating the setup, so the guide has to say
 				// where configuration lives and how aidev gets on the PATH.
-				"config.env",
+				"conf.json",
 				"make install",
 				// aidev exists to be driven by Claude Code. A guide that never says
 				// how to connect the two leaves the reader with a CLI and no
@@ -145,8 +147,8 @@ func englishPages() []page {
 				"ACTIVE",
 				"REMOVED",
 				"aidev task cancel",
-				"LOG_LEVEL",
-				"OTEL_EXPORTER_OTLP_ENDPOINT",
+				"log_level",
+				"tracing.endpoint",
 			},
 			minBytes:      11000,
 			minCodeBlocks: 8,
@@ -157,15 +159,15 @@ func englishPages() []page {
 			titleContains: "Reference",
 			sections: []string{
 				"cli", "task-statuses", "failure-kinds", "events-reference",
-				"environment", "mcp-tools",
+				"configuration", "mcp-tools",
 			},
 			mustMention: []string{
 				"WAITING_APPROVAL", "VERIFYING", "CANCELLED",
 				"VERIFICATION", "AGENT_ERROR", "TIMEOUT",
 				"task.verification_completed",
 				"aidev_create_task", "aidev_run_task", "aidev_get_task_result",
-				"DEFAULT_TASK_TIMEOUT", "WORKTREE_CLEANUP", "OPENCODE_MODEL",
-				"AIDEV_CONFIG",
+				"tasks.timeout", "tasks.worktree_cleanup", "agent.opencode.model",
+				"agent.routing", "AIDEV_CONFIG",
 			},
 			minBytes:      11000,
 			minCodeBlocks: 4,

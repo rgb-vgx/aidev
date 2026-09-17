@@ -24,6 +24,14 @@ import (
 var docFiles = []string{
 	"../../README.md",
 	"../../docs/mcp-tools.md",
+	"../../docs/architecture.md",
+	"../../docs/database.md",
+	"../../docs/guide/getting-started.html",
+	"../../docs/guide/debugging.html",
+	"../../docs/guide/reference.html",
+	"../../docs/guide/vi/getting-started.html",
+	"../../docs/guide/vi/debugging.html",
+	"../../docs/guide/vi/reference.html",
 }
 
 // removedFromTheEnvironment is what the old prose told people to set. aidev reads
@@ -101,5 +109,17 @@ func TestReadmeSetsUpTheConfigurationFileThatAidevActuallyReads(t *testing.T) {
 	}
 	if !regexp.MustCompile(`claude mcp add[^\n]*-e AIDEV_CONFIG=`).MatchString(text) {
 		t.Errorf("the MCP registration in README does not pass AIDEV_CONFIG, so the server would start unconfigured")
+	}
+}
+
+// .env.example was the template for config.env. Keeping it after config.env went
+// away leaves a file whose only use is to mislead: conf/conf.example.json is the
+// template now.
+func TestTheOldEnvironmentTemplateIsGone(t *testing.T) {
+	if _, err := os.Stat("../../.env.example"); !os.IsNotExist(err) {
+		t.Errorf(".env.example still exists (err = %v); conf/conf.example.json replaced it", err)
+	}
+	if _, err := os.Stat("../../conf/conf.example.json"); err != nil {
+		t.Errorf("conf/conf.example.json, the template the docs point at, is missing: %v", err)
 	}
 }
