@@ -467,6 +467,12 @@ Cancelling closes every open attempt and retains every active worktree, so the
 partial work survives and the task's history stays coherent.
 `TestRecoveryFromAnInterruptedRun` executes exactly this sequence.
 
+A cancel also stops the running agent and verification rather than only
+changing the database: a run on the same process is stopped immediately, and a
+run in another process notices the `CANCELLED` status on its next poll (every 2
+seconds by default) and stops then. The stopped run adopts the ending the
+cancel already recorded instead of writing a second one.
+
 aidev does **not** time out a stale `RUNNING` task on its own. A timeout that
 declared a task dead while another process was still driving it would be worse than
 a task an operator has to cancel deliberately, and there is no reliable way to tell
