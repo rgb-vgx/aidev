@@ -842,14 +842,21 @@ func (r *run) persistVerification(ctx context.Context, report verification.Repor
 	}
 }
 
-// succeed commits the work, cleans up per policy, and marks the task succeeded.
+// succeed delivers the work, records success, and cleans up per policy, in that
+// order. The commit comes first so that a failure to deliver is a failure of
+// the task, not a success with a warning; the removal comes last so that a
+// task that is no longer VERIFYING — cancelled while verification ran — keeps
+// its worktree.
 func (r *run) succeed(ctx context.Context) (Outcome, error) {
-	r.cleanupAfterSuccess(ctx)
+	committed, err := r.commitWork(ctx)
+	if err != nil {
+		return r.fail(ctx, task.FailureWorktree, fmt.Errorf("commit failed: %w", err))
+	}
 
 	writeCtx, cancel := writeContext(ctx)
 	defer cancel()
 
-	err := r.o.Store.InTx(writeCtx, func(tx *store.Store) error {
+	err = r.o.Store.InTx(writeCtx, func(tx *store.Store) error {
 		if err := tx.TransitionTask(writeCtx, r.task.ID, task.StatusVerifying, task.StatusSucceeded); err != nil {
 			return err
 		}
@@ -865,46 +872,76 @@ func (r *run) succeed(ctx context.Context) (Outcome, error) {
 		})
 	})
 	if err != nil {
+		// Someone else finished the task first — Cancel only changes the
+		// database — so the worktree stays where it is and the outcome
+		// reports what the task actually is now, not a success.
+		reloadCtx, reloadCancel := writeContext(ctx)
+		defer reloadCancel()
+		if current, reloadErr := r.o.Store.GetTask(reloadCtx, r.task.ID); reloadErr == nil {
+			r.task = current
+			if wt, wtErr := r.o.Store.GetWorktreeByAttempt(reloadCtx, r.attempt.ID); wtErr == nil {
+				r.record = &wt
+			}
+			return r.outcome(fmt.Sprintf("%s is %s, not SUCCEEDED: %s",
+				r.task.Identifier(), r.task.Status, err)), err
+		}
 		return Outcome{}, err
 	}
 
 	r.task.Status = task.StatusSucceeded
+	r.cleanupAfterSuccess(ctx)
 	r.log.InfoContext(ctx, "task succeeded",
 		"branch", r.worktree.Branch, "head_commit", r.headCommit())
 
-	return r.outcome(fmt.Sprintf("%s succeeded: %s, work committed on %s",
-		r.task.Identifier(), r.report.Summary(), r.worktree.Branch)), nil
+	if committed {
+		return r.outcome(fmt.Sprintf("%s succeeded: %s, work committed on %s",
+			r.task.Identifier(), r.report.Summary(), r.worktree.Branch)), nil
+	}
+	return r.outcome(fmt.Sprintf("%s succeeded: %s; no changes to commit",
+		r.task.Identifier(), r.report.Summary())), nil
 }
 
-// cleanupAfterSuccess commits the agent's work to the task branch and removes the
-// worktree when the policy asks for it.
-//
-// Committing first is what makes removal safe: the work is the deliverable, and
-// deleting an uncommitted worktree would destroy it. Nothing is merged — only the
+// commitWork records the agent's work on the task branch and returns whether a
+// commit was made. An empty commit means the agent changed nothing, which is
+// still a success once verification passed. Nothing is merged — only the
 // task's own branch is written.
-func (r *run) cleanupAfterSuccess(ctx context.Context) {
-	writeCtx, cancel := writeContext(ctx)
+func (r *run) commitWork(ctx context.Context) (bool, error) {
+	// Detached from the caller's context so a cancelled task still delivers,
+	// and bounded by git's own timeout rather than the shorter write budget
+	// so a slow commit is not cut short by aidev.
+	commitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), git.DefaultTimeout)
 	defer cancel()
 
-	commit, err := r.worktree.Commit(writeCtx, fmt.Sprintf("%s %s", r.task.Identifier(), r.task.Title))
+	commit, err := r.worktree.Commit(commitCtx, fmt.Sprintf("%s %s", r.task.Identifier(), r.task.Title))
 	if err != nil {
-		r.log.ErrorContext(ctx, "could not commit the worktree; keeping it for inspection", "error", err.Error())
-		r.retainWorktree(ctx, "commit failed")
-		return
+		return false, err
 	}
-	if commit != "" {
-		if r.record != nil {
-			if err := r.o.Store.SetWorktreeHead(writeCtx, r.record.ID, commit); err != nil {
-				r.log.WarnContext(ctx, "could not record the commit", "error", err.Error())
-			}
+	if commit == "" {
+		return false, nil
+	}
+	writeCtx, writeCancel := writeContext(ctx)
+	defer writeCancel()
+	if r.record != nil {
+		if err := r.o.Store.SetWorktreeHead(writeCtx, r.record.ID, commit); err != nil {
+			r.log.WarnContext(ctx, "could not record the commit", "error", err.Error())
 		}
-		r.setHeadCommit(commit)
 	}
+	r.setHeadCommit(commit)
+	return true, nil
+}
 
+// cleanupAfterSuccess removes the worktree when the policy asks for it. It runs
+// only after SUCCEEDED is recorded: the commit is the deliverable, and deleting
+// the worktree before the task owns its outcome would destroy work a cancelled
+// task promised to keep.
+func (r *run) cleanupAfterSuccess(ctx context.Context) {
 	if r.o.Config.WorktreeCleanup != config.CleanupOnSuccess {
 		r.log.InfoContext(ctx, "keeping the worktree", "policy", r.o.Config.WorktreeCleanup.String())
 		return
 	}
+
+	writeCtx, cancel := writeContext(ctx)
+	defer cancel()
 
 	if err := r.o.Git.Remove(writeCtx, r.worktree, false); err != nil {
 		// Removal without --force can only fail if something is still
