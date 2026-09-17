@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "aidev",
+  "description": "The aidev plugin for Claude Code.",
+  "owner": {
+    "name": "rgb-vgx",
+    "email": "maithuyetedu@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "aidev",
+      "description": "Delegate implementation work to aidev and review what it did.",
+      "source": "./plugin/aidev",
+      "category": "development"
+    }
+  ]
+}

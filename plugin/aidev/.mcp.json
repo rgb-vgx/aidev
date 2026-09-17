@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "aidev": {
+      "command": "aidev",
+      "args": ["mcp"],
+      "env": {
+        "AIDEV_CONFIG": "${AIDEV_CONFIG}"
+      }
+    }
+  }
+}
