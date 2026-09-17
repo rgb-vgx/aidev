@@ -150,10 +150,12 @@ something failed* without the domain knowing anything about OpenCode.
                      │
          ┌───────────┴───────────┐
       passed                  failed
-          │                       │
-   commit to aidev/<ref>     worktree RETAINED
-   VERIFYING ──▶ SUCCEEDED   FAILED (VERIFICATION)
-   remove worktree
+         │                       │
+  commit to aidev/<ref>     worktree RETAINED
+  (fails ──▶ FAILED          FAILED (VERIFICATION)
+   (WORKTREE), RETAINED)
+  VERIFYING ──▶ SUCCEEDED
+  remove worktree
 ```
 
 Three properties of this flow are worth stating separately, because they are what

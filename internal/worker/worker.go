@@ -877,15 +877,21 @@ func (r *run) succeed(ctx context.Context) (Outcome, error) {
 		// reports what the task actually is now, not a success.
 		reloadCtx, reloadCancel := writeContext(ctx)
 		defer reloadCancel()
-		if current, reloadErr := r.o.Store.GetTask(reloadCtx, r.task.ID); reloadErr == nil {
-			r.task = current
-			if wt, wtErr := r.o.Store.GetWorktreeByAttempt(reloadCtx, r.attempt.ID); wtErr == nil {
-				r.record = &wt
-			}
-			return r.outcome(fmt.Sprintf("%s is %s, not SUCCEEDED: %s",
-				r.task.Identifier(), r.task.Status, err)), err
+		current, reloadErr := r.o.Store.GetTask(reloadCtx, r.task.ID)
+		if reloadErr != nil || !current.Status.Terminal() {
+			// Still VERIFYING, or unreadable: the write itself failed, and
+			// that is an error. The commit and the worktree are both kept.
+			return Outcome{}, err
 		}
-		return Outcome{}, err
+		// A recorded ending is an outcome, as it is in fail.
+		r.task = current
+		if wt, wtErr := r.o.Store.GetWorktreeByAttempt(reloadCtx, r.attempt.ID); wtErr == nil {
+			r.record = &wt
+		}
+		r.log.InfoContext(ctx, "task ended elsewhere while verification ran",
+			"status", current.Status.String())
+		return r.outcome(fmt.Sprintf("%s is %s, not SUCCEEDED: it ended while verification ran; the worktree was kept at %s",
+			r.task.Identifier(), r.task.Status, r.worktree.Path)), nil
 	}
 
 	r.task.Status = task.StatusSucceeded

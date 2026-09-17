@@ -137,12 +137,18 @@ func TestCancelDuringVerificationKeepsTheWorktree(t *testing.T) {
 		cancelled <- context.DeadlineExceeded
 	}()
 
-	outcome, _ := h.orchestrator.RunTask(h.ctx, created.Ref)
+	outcome, runErr := h.orchestrator.RunTask(h.ctx, created.Ref)
 	if err := <-cancelled; err != nil {
 		t.Fatalf("Cancel during verification: %v", err)
 	}
-	if outcome.Task.Status == task.StatusSucceeded {
-		t.Errorf("the run reported SUCCEEDED for a task that was cancelled: %s", outcome.Message)
+	// The task ended, and its end is recorded: that is an outcome, as every other
+	// recorded ending is, not an error from RunTask. `aidev task run` would
+	// otherwise exit 1 for a cancellation someone asked for.
+	if runErr != nil {
+		t.Errorf("RunTask: %v; a task cancelled by someone else is an outcome, not an error", runErr)
+	}
+	if outcome.Task.Status != task.StatusCancelled {
+		t.Errorf("the run reported %s for a task that was cancelled: %s", outcome.Task.Status, outcome.Message)
 	}
 
 	reloaded, err := h.store.GetTask(h.ctx, created.ID)
