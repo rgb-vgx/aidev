@@ -198,7 +198,7 @@ aidev task events TASK-000001 --after 5 --limit 50
 <tr><td><code>tracing.sample_ratio</code></td><td><code>1</code></td><td>Tỉ lệ lấy mẫu từ 0 tới 1. Ngoài khoảng đó thì khởi động thất bại.</td></tr>
 </table>
 
-<p>Biến môi trường duy nhất là cấu hình aidev: <code>AIDEV_CONFIG</code> chỉ tới tập tin <code>conf.json</code>. Các giá trị liên quan nhưng không phải cấu hình aidev mà xuất hiện trong quy trình của nó: <code>AIDEV_DB_PORT</code> đổi cổng PostgreSQL trên máy cho <code>make db-up</code>; <code>TEST_DATABASE_URL</code> trỏ test tích hợp tới cơ sở dữ liệu (không có nó thì test tự bỏ qua); <code>AIDEV_TEST_OTLP</code> giữ cửa cho test xuất tracing thật. Xem <a href="debugging.html#tracing">phần tracing</a> để thấy các khóa tracing khi dùng thật.</p>
+<p>Biến môi trường duy nhất là cấu hình aidev: <code>AIDEV_CONFIG</code> chỉ tới tập tin <code>conf.json</code>. Các giá trị liên quan nhưng không phải cấu hình aidev mà xuất hiện trong quy trình của nó: <code>AIDEV_DB_PORT</code> đổi cổng PostgreSQL trên máy cho <code>make db-up</code>; <code>TEST_DATABASE_URL</code> trỏ test tích hợp tới cơ sở dữ liệu (không có nó thì test tự bỏ qua, trừ khi <code>make check</code> đã đặt <code>AIDEV_REQUIRE_DB=1</code>, lúc đó việc bỏ qua thành lỗi); <code>AIDEV_TEST_OTLP</code> giữ cửa cho test xuất tracing thật. Xem <a href="debugging.html#tracing">phần tracing</a> để thấy các khóa tracing khi dùng thật.</p>
 
 <pre><code>export AIDEV_CONFIG="$PWD/conf/conf.json"
 aidev config

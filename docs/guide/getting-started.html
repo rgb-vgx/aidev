@@ -118,7 +118,7 @@ export AIDEV_CONFIG="$PWD/conf/conf.json"
 aidev config
 # prints the resolved settings and which file it used</code></pre>
 
-<p>aidev reads nothing but the file that <code>AIDEV_CONFIG</code> names, so the export must be present in every new terminal. Put that line in your shell profile and this is one-time setup. A missing file is an error: <code>aidev config</code> says <code>AIDEV_CONFIG</code> is not set. A file that exists and cannot be parsed, or holds an unknown key, is an error that names the problem, so a broken setting is never silently ignored.</p>
+<p>aidev reads nothing but the file that <code>AIDEV_CONFIG</code> names, so the export must be present in every new terminal. Put that line in your shell profile and this is one-time setup. A missing export is an error: <code>aidev config</code> says <code>AIDEV_CONFIG is not set</code>. A file that cannot be read is a different error that names the path: <code>read config file &lt;path&gt;: ...</code>. A file that exists and cannot be parsed, or holds an unknown key, is an error that names the problem, so a broken setting is never silently ignored.</p>
 
 <p>The file is JSON, so a value is literal text. Edit <code>database.url</code> when you change the database port; nothing else in the environment can override the file, so what you read in <code>conf.json</code> is what aidev uses.</p>
 

@@ -477,7 +477,8 @@ at all when one is not. One trace per task run, with the agent invocation carryi
 its token usage.
 
 ```bash
-make jaeger-up && eval "$(make jaeger-env)"   # one container, UI on :16686
+make jaeger-up   # one container, UI on :16686
+make jaeger-env  # prints the tracing object to paste into the conf.json that AIDEV_CONFIG names
 aidev task run TASK-000001
 ```
 
@@ -485,7 +486,8 @@ For an LLM-oriented view with cost, self-hosted Langfuse works too — six servi
 so it is started separately:
 
 ```bash
-make langfuse-up && eval "$(make langfuse-env)"
+make langfuse-up   # six services, UI on :3000
+make langfuse-env  # prints the tracing object to paste into the conf.json that AIDEV_CONFIG names
 make langfuse-credentials   # the bootstrapped UI login, on :3000
 ```
 
