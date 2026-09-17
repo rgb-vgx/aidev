@@ -31,7 +31,7 @@ SQL — so a test reads the migration and fails if the two ever disagree
 value is removed from the constraint, not merely assumed to work.
 
 **Bounded text plus a truncation flag.** aidev caps each captured stream before it
-reaches the database (`MAX_OUTPUT_BYTES`). The companion `*_truncated` boolean
+reaches the database (`tasks.max_output_bytes`). The companion `*_truncated` boolean
 makes the cap visible in the record, so a reader is never misled into thinking
 they are looking at complete output.
 

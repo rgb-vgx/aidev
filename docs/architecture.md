@@ -85,7 +85,7 @@ docs/                 this directory
 Three departures from the layout in the brief, each a decision rather than an
 oversight.
 
-**No `Dockerfile`, and no `deployments/`.** aidev must run on the host. It operates on
+**No `Dockerfile`, and no `deployments/` for aidev itself** (`deployments/langfuse/` holds only the optional observability stack's compose file). aidev must run on the host. It operates on
 the developer's own repositories, creates git worktrees next to them, and executes the
 `opencode` binary and the task's verification commands — `go test`, a linter, whatever
 the project uses. A containerised aidev would need the repository bind-mounted, git
@@ -186,7 +186,7 @@ uncommitted. Keeping every worktree grows the workspace without bound.
 | succeeded | the work is committed to `aidev/<ref>`, then the worktree directory is removed |
 | failed | the worktree is kept, untouched and uncommitted, and recorded as `RETAINED` |
 | cancelled | same as failed |
-| `WORKTREE_CLEANUP=never` | nothing is removed, but the work is still committed |
+| `tasks.worktree_cleanup` set to `never` | nothing is removed, but the work is still committed |
 
 Committing is not merging: only the task's own branch is written, and the result is
 reviewable with `git log aidev/<ref>` and `git diff main..aidev/<ref>`.
@@ -209,7 +209,7 @@ prompt, whether or not its `--auto` flag was passed (docs/research.md §2.6). Th
 is no agent-side sandbox to rely on.
 
 Therefore: every task runs with the agent's working directory set to a dedicated
-worktree, worktree paths are validated to resolve inside `WORKSPACE_ROOT`, and the
+worktree, worktree paths are validated to resolve inside `workspace_root`, and the
 repository's main working tree is never a valid target. This is enforced in code
 and asserted by tests, not stated as a convention.
 
@@ -343,7 +343,7 @@ place a listed future feature plugs in without a rewrite.
 |---|---|
 | Retry | `task_attempts` is append-only with numbered attempts; `max_retries` is stored; `worker_runs.session_id` records the resumable agent session; worktree and branch names already include the attempt number so a second attempt cannot collide with the first. Only the `FAILED → READY` edge and a policy are missing. |
 | Concurrent workers | `tasks_ready_claim_idx` matches a `FOR UPDATE SKIP LOCKED` claim; status changes are already compare-and-set. |
-| Another agent backend | `agent.Backend`; orchestration never names a backend. Codex was added exactly this way (`internal/agent/codex.go`, selected with `AGENT_BACKEND=codex`) and is **paused since 2026-09-15**: OpenCode is the backend in use. The code and its tests stay, so resuming is a configuration change. Codex took 6–8 minutes on trivial tasks and, in TASK-000029, read another project's virtualenv outside its worktree. A server-mode OpenCode backend would be another new file in `internal/agent`. |
+| Another agent backend | `agent.Backend`; orchestration never names a backend. Codex was added exactly this way (`internal/agent/codex.go`, selected with `agent.backend` set to `"codex"`) and is **paused since 2026-09-15**: OpenCode is the backend in use. The code and its tests stay, so resuming is a configuration change. Codex took 6–8 minutes on trivial tasks and, in TASK-000029, read another project's virtualenv outside its worktree. A server-mode OpenCode backend would be another new file in `internal/agent`. |
 | Sandboxed agent execution | `internal/procexec` is the one place processes start, and `agent.Request.WorkingDir` is the only path an agent is given, so containing the agent is a change to how a backend launches. Verification stays local whatever happens: a remote exit code is not aidev's own measurement (docs/opensandbox.md). **Parked as a future feature on 2026-09-15** — tasks are not yet complex enough to need it. Unmeasured: a worktree's `.git` file points into the main repository, so a container would need both mounted. |
 | Dependency DAG | `PENDING` exists as "not yet eligible"; the eligibility check is the hook. |
 | Observability / event-driven features | `events.seq` gives a total order, so a consumer can resume from a cursor. |
@@ -365,7 +365,7 @@ the privileges of whoever started aidev.
 
 The consequence is stated plainly because it decides everything else: **the git
 worktree is the only boundary.** It is enforced by two checks before git is ever
-invoked — the path must resolve inside `WORKSPACE_ROOT`, and it must lie outside the
+invoked — the path must resolve inside `workspace_root`, and it must lie outside the
 repository — both comparing physically resolved paths so a planted symlink cannot
 satisfy a textual prefix. Worktree names are an allowlist of `[A-Za-z0-9._-]` rather
 than a blocklist, because a name arrives from user input and an allowlist cannot be

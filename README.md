@@ -98,40 +98,62 @@ AIDEV_DB_PORT=5440 make db-up
 Then configure aidev and apply the schema:
 
 ```bash
-make install                                     # puts aidev on your PATH
+make install                                            # puts aidev on your PATH
 mkdir -p ~/.config/aidev
-cp .env.example ~/.config/aidev/config.env       # then edit if you changed the port
+cp conf/conf.example.json ~/.config/aidev/conf.json     # then edit if you changed the port
+export AIDEV_CONFIG="$HOME/.config/aidev/conf.json"     # put this line in your shell profile
 aidev migrate
 ```
 
-That configuration file is read by every `aidev` command, in every new terminal, so
-this is a one-time setup. `aidev config` prints which file it used. An exported
-environment variable still overrides the file when you want one command to differ.
+aidev reads nothing but the file that `AIDEV_CONFIG` names, so the export must be
+present in every new terminal. Put that line in your shell profile
+(`~/.bashrc`, `~/.zshrc`, or the equivalent for your shell) and this is one-time
+setup. `aidev config` prints which file it used.
 
-`make migrate` is idempotent — run it as often as you like. Migrations are embedded
-in the binary; there is no separate migration tool to install.
+A conf.json holds the database password, so keep it out of git. Copy it to
+`conf/conf.json` if you prefer — that path is already ignored — or just never
+commit whichever path you use. `aidev config` redacts secrets, so it is safe to
+read back.
+
+`aidev migrate` is idempotent — run it as often as you like. Migrations are
+embedded in the binary; there is no separate migration tool to install.
 
 ## Configuration
 
-aidev reads its configuration from the environment. `DATABASE_URL` is the only
-required variable; everything else has a default.
+aidev reads its configuration from one JSON file: the conf.json that `AIDEV_CONFIG`
+names. Nothing else in the environment is consulted for configuration — a variable
+left over in a shell profile must not quietly win over the file someone is reading
+and editing.
 
-aidev reads them from `~/.config/aidev/config.env` (or `$XDG_CONFIG_HOME/aidev/config.env`,
-or the file named by `AIDEV_CONFIG`), and anything exported in your shell overrides
-that file.
+Every setting is optional except `database.url`. The defaults below are what the
+binary uses when a key is absent; conf/conf.example.json shows them all in one file.
 
-| Variable | Default | Purpose |
+| Setting | Default | Purpose |
 |---|---|---|
-| `DATABASE_URL` | *(required)* | PostgreSQL connection string |
-| `WORKSPACE_ROOT` | `$XDG_DATA_HOME/aidev/worktrees` or `~/.local/share/aidev/worktrees` | where task worktrees are created; every worktree must resolve inside it |
-| `DEFAULT_TASK_TIMEOUT` | `30m` | bounds one agent run |
-| `DEFAULT_VERIFICATION_TIMEOUT` | `10m` | bounds one verification step |
-| `OPENCODE_COMMAND` | `opencode` | the OpenCode executable |
-| `OPENCODE_MODEL` | `opencode/muse-spark-1.3-contributor-free` | needs no credentials; set it to an empty string to let OpenCode choose |
-| `OPENCODE_AGENT` | `build` | default OpenCode agent |
-| `MAX_OUTPUT_BYTES` | `1048576` | per-stream capture limit; output beyond it is dropped and flagged |
-| `WORKTREE_CLEANUP` | `on-success` | `on-success` commits and removes; `never` keeps every worktree. Neither discards failed work |
-| `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
+| `database.url` | *(required)* | PostgreSQL connection string |
+| `workspace_root` | `~/.local/share/aidev/worktrees` | where task worktrees are created; every worktree path must resolve inside it |
+| `tasks.timeout` | `30m` | bounds one agent run when the task does not set its own |
+| `tasks.verification_timeout` | `10m` | bounds one verification step |
+| `tasks.max_output_bytes` | `1048576` | per-stream capture limit; output beyond it is dropped and flagged as truncated |
+| `tasks.worktree_cleanup` | `on-success` | `on-success` commits the work and removes the worktree; `never` keeps every worktree. Neither discards failed work |
+| `agent.backend` | `opencode` | which agent implementation runs tasks: `opencode` or `codex` |
+| `agent.opencode.command` | `opencode` | the OpenCode executable |
+| `agent.opencode.model` | `opencode/muse-spark-1.3-contributor-free` | needs no credentials; set it to an empty string to let OpenCode choose |
+| `agent.opencode.agent` | `build` | default OpenCode agent |
+| `agent.codex.command` | `codex` | the Codex executable |
+| `agent.codex.profile` | *(none)* | passed as `--profile` when set |
+| `agent.codex.model` | *(none)* | passed as `-m` when set; empty lets Codex choose |
+| `agent.codex.sandbox` | `workspace-write` | passed as `--sandbox` when set |
+| `agent.routing` | *(none)* | an object mapping a task hardness (`TRIVIAL`, `STANDARD`, `HARD`) to the model that hardness deserves; a hardness with no entry leaves the choice to the backend |
+| `log_level` | `info` | `debug`, `info`, `warn` or `error` |
+| `tracing.endpoint` | *(none)* | base OTLP HTTP URL; tracing is off when nothing is set |
+| `tracing.traces_endpoint` | *(none)* | the full URL the traces exporter posts to, taking precedence over `tracing.endpoint` |
+| `tracing.headers` | *(none)* | an object of extra OTLP headers, such as `Authorization` |
+| `tracing.service_name` | `aidev` | the service name the spans carry |
+| `tracing.sample_ratio` | `1` | the fraction of new traces sampled, between 0 and 1 |
+
+`agent.routing` and `tracing.headers` are objects, not scalars: their entries are
+values you write, not further settings.
 
 The task timeout default is deliberately generous: OpenCode's first run against a
 repository it has not seen was measured taking over four minutes before producing
@@ -272,7 +294,7 @@ git diff main..aidev/TASK-000001
 Nothing is merged, and nothing is ever committed to your working branch.
 
 A failed task leaves its worktree exactly as the agent left it, under
-`WORKSPACE_ROOT`, because partial work is often the most useful thing about a
+`workspace_root`, because partial work is often the most useful thing about a
 failure. `git worktree remove` refuses to discard uncommitted work and aidev never
 overrides that automatically, so this holds regardless of configuration. See
 [the cleanup policy](docs/architecture.md#cleanup-policy).
@@ -283,7 +305,7 @@ JSON-RPC protocol, so nothing else may ever be written there.
 
 ## OpenCode setup
 
-Install OpenCode and make it reachable on `PATH`, or set `OPENCODE_COMMAND`. No
+Install OpenCode and make it reachable on `PATH`, or set `agent.opencode.command`. No
 API credentials are required: the public `opencode/*` models work and report zero
 cost, which is how this project's end-to-end test runs without a key.
 
@@ -291,7 +313,7 @@ The default model is `opencode/muse-spark-1.3-contributor-free`, chosen by
 measurement rather than by name. On identical trivial prompts it returned in
 3.2–3.9s across repeated runs; the other free model varied between 3.9s and 100.5s
 for the same work, which is the difference between a one-minute task and an
-eleven-minute one. Set `OPENCODE_MODEL` to any model you have credentials for, or
+eleven-minute one. Set `agent.opencode.model` to any model you have credentials for, or
 to an empty string to let OpenCode decide.
 
 ```bash
@@ -309,7 +331,7 @@ Two measured behaviours worth knowing before your first task:
   worktree, diff, verification, every database write — measured 0.2 seconds
   against agent times of 9 to 656 seconds. Free-tier latency is the variable that
   matters, and it is not always predictable, which is why
-  `DEFAULT_TASK_TIMEOUT` is 30 minutes.
+  `tasks.timeout` defaults to 30 minutes.
 - **OpenCode writes files without asking**, even without its `--auto` flag. That
   is why every task runs in a dedicated worktree and why aidev refuses a worktree
   path that would land inside your repository.
@@ -323,10 +345,10 @@ verifies.
 
 ```bash
 make install                                          # aidev on your PATH
-claude mcp add --scope user aidev -- "$(go env GOPATH)/bin/aidev" mcp
+claude mcp add --scope user -e AIDEV_CONFIG=/abs/path/conf.json aidev -- /abs/path/aidev mcp
 
 claude mcp list
-# aidev: /home/you/go/bin/aidev mcp - ✔ Connected
+# aidev: /abs/path/aidev mcp - ✔ Connected
 ```
 
 **Use `--scope user`.** It registers aidev for every project, which is the point:
@@ -334,9 +356,10 @@ you open Claude Code in whatever repository you are working on and delegate from
 there. `--scope local` would confine it to one project directory, and `--scope
 project` writes a shareable `.mcp.json` that each person must approve once.
 
-No credentials go on the registration. aidev reads
-`~/.config/aidev/config.env` itself, so `~/.claude.json` holds no connection
-string. Eight tools become available:
+No credentials go on the registration: `AIDEV_CONFIG` names the conf.json, and
+aidev reads the database password out of it, so `~/.claude.json` holds no
+connection string. Use the same file and path that `aidev config` reports, so the
+server starts configured. Eight tools become available:
 
 | Tool | Purpose |
 |---|---|
@@ -388,7 +411,7 @@ Nothing was merged into your branch, and the task's worktree has been removed.
 
 Checked afterwards without trusting any of it: the task is in PostgreSQL with both
 verification steps at exit code 0, the repository's own working tree is clean and
-has no `reverse.go`, the branch has it, and `go clean -testcache && go test` run by
+has no reverse.go, the branch has it, and `go clean -testcache && go test` run by
 hand on that branch passes `TestReverse`. The whole exchange took 35 seconds.
 
 ## Development and testing

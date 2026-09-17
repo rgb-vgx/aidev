@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>aidev reference: commands, statuses, events, variables, tools</title>
+<title>aidev reference: commands, statuses, events, configuration, tools</title>
 <link rel="stylesheet" href="guide.css">
 </head>
 <body>
@@ -12,7 +12,7 @@
 <main>
 <h1>Reference: the complete lists</h1>
 
-<p>This page lists everything exactly. If the getting-started and debugging pages are the story, this is the dictionary. Every command with every flag, every status, every failure kind, every event type, every environment variable with its default, and every MCP tool with its inputs. Values here are taken from the code, not from memory.</p>
+<p>This page lists everything exactly. If the getting-started and debugging pages are the story, this is the dictionary. Every command with every flag, every status, every failure kind, every event type, every <code>conf.json</code> setting with its default, and every MCP tool with its inputs. Values here are taken from the code, not from memory.</p>
 
 <div class="notice"><strong>The one rule, once more:</strong> aidev runs the agent in an isolated git worktree, then runs the task's own verification commands itself, and only those commands can move a task to SUCCEEDED. The agent saying the work is done changes nothing. The status and failure-kind tables below are shaped by that rule.</div>
 
@@ -48,12 +48,12 @@ aidev migrate --json</code></pre>
 <tr><td><code>--repo PATH</code></td><td>Path to the git repository. Default: the current directory. An unknown repository is registered as a project automatically.</td></tr>
 <tr><td><code>--description D</code></td><td>The full instruction for the agent.</td></tr>
 <tr><td><code>--acceptance A</code></td><td>What done looks like, in prose.</td></tr>
-<tr><td><code>--agent NAME</code></td><td>Agent to use. Default: the <code>OPENCODE_AGENT</code> setting, which is <code>build</code>. aidev validates the name itself because OpenCode silently falls back to its default on an unknown name and still exits zero.</td></tr>
+<tr><td><code>--agent NAME</code></td><td>Agent to use. Default: the <code>agent.opencode.agent</code> setting, which is <code>build</code>. aidev validates the name itself because OpenCode silently falls back to its default on an unknown name and still exits zero.</td></tr>
 <tr><td><code>--priority N</code></td><td>Higher runs first. Default 0. Range -1000 to 1000.</td></tr>
 <tr><td><code>--max-retries N</code></td><td>Recorded for a future retry feature. The current version never retries.</td></tr>
 <tr><td><code>--requires-approval</code></td><td>Gate the task behind a human decision. It will wait in WAITING_APPROVAL until approved.</td></tr>
 <tr><td><code>--base-ref REF</code></td><td>Git ref to branch from. Default: the project's default branch. Checked now rather than at worktree creation.</td></tr>
-<tr><td><code>--timeout DURATION</code></td><td>Bound this task's agent run, for example <code>60m</code>. Default: DEFAULT_TASK_TIMEOUT.</td></tr>
+<tr><td><code>--timeout DURATION</code></td><td>Bound this task's agent run, for example <code>60m</code>. Default: <code>tasks.timeout</code>.</td></tr>
 <tr><td><code>--json</code></td><td>Print the created task as JSON.</td></tr>
 </table>
 
@@ -166,34 +166,42 @@ aidev task events TASK-000001 --after 5 --limit 50
 # only events after sequence 5, at most 50 rows</code></pre>
 </section>
 
-<section id="environment">
-<h2>Environment variables</h2>
+<section id="configuration">
+<h2>Configuration</h2>
 
-<p>Configuration is read only by <code>internal/config</code>. Nothing else in aidev reads the environment directly. These values may come from the configuration file as well as the environment: aidev reads <code>$XDG_CONFIG_HOME/aidev/config.env</code>, or <code>~/.config/aidev/config.env</code> when <code>XDG_CONFIG_HOME</code> is unset, unless <code>AIDEV_CONFIG</code> names a different file. Anything exported in the shell overrides the file. Everything is validated at startup and every problem is reported at once. <code>DATABASE_URL</code> is the only required variable; everything else has a default.</p>
+<p>Configuration lives in one JSON file: the <code>conf.json</code> that <code>AIDEV_CONFIG</code> names. Configuration is read only by <code>internal/config</code>. Nothing else in aidev reads the environment for configuration: a variable left over in a shell profile must not quietly win over the file someone is reading and editing. <code>AIDEV_CONFIG</code> must hold the absolute path of the file. Everything is validated at startup and every problem is reported at once. <code>database.url</code> is the only required setting; everything else has a default. Copy <code>conf/conf.example.json</code> to <code>conf/conf.json</code> to start from a file that shows every key.</p>
+
+<p>The key list below is complete: it matches <code>config.SettingKeys()</code> in <code>internal/config/config.go</code>. <code>agent.routing</code> and <code>tracing.headers</code> are objects of strings, not scalars: their entries are values you write, not further settings.</p>
 
 <table>
-<tr><th>Variable</th><th>Default</th><th>Purpose</th></tr>
-<tr><td><code>DATABASE_URL</code></td><td>none: required</td><td>PostgreSQL connection string, for example <code>postgres://aidev:aidev@127.0.0.1:5434/aidev?sslmode=disable</code>.</td></tr>
-<tr><td><code>WORKSPACE_ROOT</code></td><td><code>$XDG_DATA_HOME/aidev/worktrees</code>, else <code>~/.local/share/aidev/worktrees</code></td><td>Where task worktrees are created. Every worktree path must resolve inside it.</td></tr>
-<tr><td><code>DEFAULT_TASK_TIMEOUT</code></td><td><code>30m</code></td><td>Bounds one agent run when the task does not set its own timeout. Deliberately generous: first runs against unseen repositories were measured taking minutes.</td></tr>
-<tr><td><code>DEFAULT_VERIFICATION_TIMEOUT</code></td><td><code>10m</code></td><td>Bounds one verification step.</td></tr>
-<tr><td><code>OPENCODE_COMMAND</code></td><td><code>opencode</code></td><td>The OpenCode executable aidev invokes.</td></tr>
-<tr><td><code>OPENCODE_MODEL</code></td><td><code>opencode/muse-spark-1.3-contributor-free</code></td><td>Model passed as <code>-m</code>. Needs no credentials. Set to an empty string to let OpenCode choose.</td></tr>
-<tr><td><code>OPENCODE_AGENT</code></td><td><code>build</code></td><td>Default OpenCode agent for tasks that do not name one.</td></tr>
-<tr><td><code>MAX_OUTPUT_BYTES</code></td><td><code>1048576</code> (1 MiB) per captured stream</td><td>Caps each captured stream before it reaches the database. Output beyond it is dropped and flagged as truncated. Minimum 1024.</td></tr>
-<tr><td><code>WORKTREE_CLEANUP</code></td><td><code>on-success</code></td><td><code>on-success</code> commits the work and removes the worktree; <code>never</code> keeps every worktree. Neither discards failed work.</td></tr>
-<tr><td><code>LOG_LEVEL</code></td><td><code>info</code></td><td>Minimum log level: <code>debug</code>, <code>info</code>, <code>warn</code>, <code>error</code>.</td></tr>
-<tr><td><code>OTEL_EXPORTER_OTLP_ENDPOINT</code></td><td>unset: tracing off</td><td>Base OTLP HTTP URL. Traces post to <code>&lt;base&gt;/v1/traces</code>. Tracing is off unless an endpoint is set.</td></tr>
-<tr><td><code>OTEL_EXPORTER_OTLP_TRACES_ENDPOINT</code></td><td>unset</td><td>Full signal-specific traces URL, used as given. Takes precedence over the base variable.</td></tr>
-<tr><td><code>OTEL_EXPORTER_OTLP_HEADERS</code></td><td>unset</td><td>Comma-separated <code>key=value</code> pairs, for example authorization headers.</td></tr>
-<tr><td><code>OTEL_SERVICE_NAME</code></td><td><code>aidev</code></td><td>Service name shown in the tracing backend.</td></tr>
-<tr><td><code>OTEL_TRACES_SAMPLER_ARG</code></td><td><code>1</code></td><td>Sample ratio from 0 to 1. Values outside that range fail at startup.</td></tr>
-<tr><td><code>AIDEV_CONFIG</code></td><td><code>$XDG_CONFIG_HOME/aidev/config.env</code>, else <code>~/.config/aidev/config.env</code></td><td>Names a different configuration file instead of the default. The file is parsed, never executed: values are literal.</td></tr>
+<tr><th>Setting</th><th>Default</th><th>Purpose</th></tr>
+<tr><td><code>database.url</code></td><td>none: required</td><td>PostgreSQL connection string, for example <code>postgres://aidev:aidev@127.0.0.1:5434/aidev?sslmode=disable</code>.</td></tr>
+<tr><td><code>workspace_root</code></td><td><code>~/.local/share/aidev/worktrees</code></td><td>Where task worktrees are created. Every worktree path must resolve inside it.</td></tr>
+<tr><td><code>tasks.timeout</code></td><td><code>30m</code></td><td>Bounds one agent run when the task does not set its own timeout. Deliberately generous: first runs against unseen repositories were measured taking minutes.</td></tr>
+<tr><td><code>tasks.verification_timeout</code></td><td><code>10m</code></td><td>Bounds one verification step.</td></tr>
+<tr><td><code>tasks.max_output_bytes</code></td><td><code>1048576</code> (1 MiB) per captured stream</td><td>Caps each captured stream before it reaches the database. Output beyond it is dropped and flagged as truncated. Minimum 1024.</td></tr>
+<tr><td><code>tasks.worktree_cleanup</code></td><td><code>on-success</code></td><td><code>on-success</code> commits the work and removes the worktree; <code>never</code> keeps every worktree. Neither discards failed work.</td></tr>
+<tr><td><code>agent.backend</code></td><td><code>opencode</code></td><td>Which agent implementation runs tasks: <code>opencode</code> or <code>codex</code>.</td></tr>
+<tr><td><code>agent.opencode.command</code></td><td><code>opencode</code></td><td>The OpenCode executable aidev invokes.</td></tr>
+<tr><td><code>agent.opencode.model</code></td><td><code>opencode/muse-spark-1.3-contributor-free</code></td><td>Model passed as <code>-m</code>. Needs no credentials. Set to an empty string to let OpenCode choose.</td></tr>
+<tr><td><code>agent.opencode.agent</code></td><td><code>build</code></td><td>Default OpenCode agent for tasks that do not name one.</td></tr>
+<tr><td><code>agent.codex.command</code></td><td><code>codex</code></td><td>The Codex executable aidev invokes.</td></tr>
+<tr><td><code>agent.codex.profile</code></td><td>none</td><td>Passed as <code>--profile</code> when set.</td></tr>
+<tr><td><code>agent.codex.model</code></td><td>none</td><td>Passed as <code>-m</code> when set; empty lets Codex choose.</td></tr>
+<tr><td><code>agent.codex.sandbox</code></td><td><code>workspace-write</code></td><td>Passed as <code>--sandbox</code> when set.</td></tr>
+<tr><td><code>agent.routing</code></td><td>none</td><td>An object mapping a task hardness (<code>TRIVIAL</code>, <code>STANDARD</code>, <code>HARD</code>) to the model that hardness deserves; a hardness with no entry leaves the choice to the backend.</td></tr>
+<tr><td><code>log_level</code></td><td><code>info</code></td><td>Minimum log level: <code>debug</code>, <code>info</code>, <code>warn</code>, <code>error</code>.</td></tr>
+<tr><td><code>tracing.endpoint</code></td><td>none: tracing off</td><td>Base OTLP HTTP URL. Traces post to <code>&lt;base&gt;/v1/traces</code>. Tracing is off unless an endpoint is set.</td></tr>
+<tr><td><code>tracing.traces_endpoint</code></td><td>none</td><td>Full signal-specific traces URL, used as given. Takes precedence over the base endpoint.</td></tr>
+<tr><td><code>tracing.headers</code></td><td>none</td><td>An object of extra OTLP headers, for example authorization headers.</td></tr>
+<tr><td><code>tracing.service_name</code></td><td><code>aidev</code></td><td>Service name shown in the tracing backend.</td></tr>
+<tr><td><code>tracing.sample_ratio</code></td><td><code>1</code></td><td>Sample ratio from 0 to 1. Values outside that range fail at startup.</td></tr>
 </table>
 
-<p>Related variables that are not aidev configuration but appear in its workflow: <code>AIDEV_DB_PORT</code> overrides the host PostgreSQL port for <code>make db-up</code>; <code>TEST_DATABASE_URL</code> points integration tests at a database (without it they skip themselves); <code>AIDEV_TEST_OTLP</code> gates the live tracing export test. See the <a href="debugging.html#tracing">tracing section</a> for the OTLP variables in use.</p>
+<p>The one environment variable that is aidev configuration: <code>AIDEV_CONFIG</code> names the <code>conf.json</code> file. Related values that are not aidev configuration but appear in its workflow: <code>AIDEV_DB_PORT</code> overrides the host PostgreSQL port for <code>make db-up</code>; <code>TEST_DATABASE_URL</code> points integration tests at a database (without it they skip themselves); <code>AIDEV_TEST_OTLP</code> gates the live tracing export test. See the <a href="debugging.html#tracing">tracing section</a> for the tracing keys in use.</p>
 
-<pre><code>aidev config
+<pre><code>export AIDEV_CONFIG="$PWD/conf/conf.json"
+aidev config
 aidev config --json
 # the resolved configuration, password redacted; the way to check every default above</code></pre>
 </section>

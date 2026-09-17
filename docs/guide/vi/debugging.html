@@ -25,10 +25,10 @@
 <tr><th>Triệu chứng</th><th>Bắt đầu ở</th><th>Lệnh</th></tr>
 <tr><td>Task hỏng và bạn muốn biết vì sao</td><td>Kết quả kèm output đầy đủ</td><td><code>aidev task result TASK-000001 --logs</code></td></tr>
 <tr><td>Task có vẻ kẹt hoặc chậm</td><td>Lịch sử event</td><td><code>aidev task events TASK-000001</code></td></tr>
-<tr><td>Chính aidev in lỗi</td><td>Log trên stderr</td><td>Chạy lại và đọc stderr; nâng <code>LOG_LEVEL</code> lên <code>debug</code></td></tr>
+<tr><td>Chính aidev in lỗi</td><td>Log trên stderr</td><td>Chạy lại và đọc stderr; đặt <code>log_level</code> thành <code>debug</code> trong <code>conf.json</code></td></tr>
 <tr><td>Bạn muốn lấy các tập tin agent làm dở</td><td>Worktree được giữ lại</td><td><code>aidev worktree list</code></td></tr>
 <tr><td>Task kẹt ở RUNNING sau sự cố</td><td>Khôi phục bằng cách hủy</td><td><code>aidev task cancel TASK-000001 --reason "..."</code></td></tr>
-<tr><td>Bạn cần thời gian từng chặng của cả lần chạy</td><td>Tracing</td><td>Đặt <code>OTEL_EXPORTER_OTLP_ENDPOINT</code> rồi xem trace</td></tr>
+<tr><td>Bạn cần thời gian từng chặng của cả lần chạy</td><td>Tracing</td><td>Đặt <code>tracing.endpoint</code> trong <code>conf.json</code> rồi xem trace</td></tr>
 </table>
 
 <p>Phần còn lại của trang đi qua từng dòng một. Nếu bạn mới thì đọc hết trang một lần. Sau đó dùng bảng trên như mục lục.</p>
@@ -51,12 +51,14 @@
 
 <p>Các dòng log có cấu trúc. Mỗi dòng mang các trường để bạn lần theo một task:</p>
 
-<pre><code>LOG_LEVEL=debug aidev task run TASK-000001 2&gt; aidev.log
+<p>Muốn tạm thời xem log chi tiết thì sửa <code>log_level</code> thành <code>debug</code> trong <code>conf.json</code> của bạn, rồi lọc stderr vào một tập tin:</p>
+
+<pre><code>aidev task run TASK-000001 2&gt; aidev.log
 grep 'TASK-000001' aidev.log | head -20</code></pre>
 
 <p>Đoạn <code>2&gt;</code> chuyển hướng stderr vào tập tin. Phải làm vậy vì log đi ra stderr chứ không phải stdout. Các trường cần tìm là <code>task_id</code>, <code>attempt_id</code> và <code>worktree_path</code>. Chúng gắn với một logger nằm trong context của chương trình, nên code ở sâu bên trong tự kế thừa mà không cần truyền logger qua từng hàm. Muốn theo một task thì lọc theo mã tham chiếu hoặc id của nó. Muốn theo một lần chạy thì lọc theo id attempt.</p>
 
-<p><code>LOG_LEVEL</code> điều khiển lượng log in ra. Các giá trị cho phép là <code>debug</code>, <code>info</code>, <code>warn</code> và <code>error</code>. Mặc định là <code>info</code>. Đặt <code>LOG_LEVEL=debug</code> khi cần bức tranh đầy đủ, ví dụ task hỏng theo cách mà kết quả không giải thích được. Giá trị lạ làm khởi động thất bại kèm thông báo nêu các giá trị cho phép. aidev không bao giờ ghi bí mật vào log: chuỗi kết nối được che trước khi in hoặc ghi, và môi trường đưa cho tiến trình con không bao giờ bị ghi lại.</p>
+<p><code>log_level</code> điều khiển lượng log in ra. Các giá trị cho phép là <code>debug</code>, <code>info</code>, <code>warn</code> và <code>error</code>. Mặc định là <code>info</code>. Đặt <code>log_level</code> thành <code>debug</code> trong <code>conf.json</code> khi cần bức tranh đầy đủ, ví dụ task hỏng theo cách mà kết quả không giải thích được. Giá trị lạ làm khởi động thất bại kèm thông báo nêu các giá trị cho phép. aidev không bao giờ ghi bí mật vào log: chuỗi kết nối được che trước khi in hoặc ghi, và môi trường đưa cho tiến trình con không bao giờ bị ghi lại.</p>
 
 <p>Nếu nâng mức log vẫn không giải thích được vấn đề thời gian thì bật tracing như <a href="debugging.html#tracing">phần tracing</a> mô tả. Log cho biết chuyện gì đã xảy ra. Trace cho biết mỗi phần tốn bao lâu.</p>
 </section>
@@ -181,17 +183,19 @@ aidev worktree remove TASK-000002 --force
 
 <p><strong>Tracing</strong> ghi lại mỗi phần của lần chạy tốn bao lâu, dưới dạng cây các span. Một khoảng đo (span) là một thao tác được bấm giờ, như tạo worktree hay chạy agent. Tracing trả lời "thời gian đi đâu" theo cách log không làm được. aidev xuất trace theo định dạng chuẩn OTLP, không dính nhà cung cấp nào: backend nào nhận OTLP đều dùng được.</p>
 
-<p>Tracing tắt trừ khi bạn cấu hình endpoint. Khi tắt, code có gắn đo đạc dùng tracer rỗng nên không tốn gì và không kết nối mạng. Muốn bật thì trỏ aidev tới một backend. Backend đơn giản nhất dùng trên máy cá nhân là Jaeger, chạy bằng một container với giao diện ở cổng 16686:</p>
+<p>Tracing tắt trừ khi bạn cấu hình endpoint trong <code>conf.json</code>. Khi tắt, code có gắn đo đạc dùng tracer rỗng nên không tốn gì và không kết nối mạng. Muốn bật thì trỏ aidev tới một backend bằng cách đặt <code>tracing.endpoint</code>. Backend đơn giản nhất dùng trên máy cá nhân là Jaeger, chạy bằng một container với giao diện ở cổng 16686:</p>
 
 <pre><code>make jaeger-up
-eval "$(make jaeger-env)"
-# the second command sets OTEL_EXPORTER_OTLP_ENDPOINT in your current shell
+# rồi trong conf.json, đặt tracing.endpoint trỏ tới Jaeger trên máy:
+#   "tracing": { "endpoint": "http://localhost:4318", ... }
+# (make jaeger-env in ra URL đó)
+export AIDEV_CONFIG="$PWD/conf/conf.json"
 aidev task run TASK-000001</code></pre>
 
-<p>Dấu hiệu đúng: lần chạy vẫn diễn ra bình thường, sau đó giao diện Jaeger ở <code>http://localhost:16686</code> hiện một trace của lần chạy. <code>eval "$(...)"</code> nghĩa là "chạy output của lệnh này như lệnh shell", nhờ đó địa chỉ endpoint chui vào môi trường của bạn. Nếu giao diện trống trơn thì kiểm tra xem biến endpoint có thật sự đặt trong shell đã chạy aidev không:</p>
+<p>Dấu hiệu đúng: lần chạy vẫn diễn ra bình thường, sau đó giao diện Jaeger ở <code>http://localhost:16686</code> hiện một trace của lần chạy. Tracing đọc thiết lập từ <code>conf.json</code> chứ không đọc từ shell: chỉ xuất địa chỉ endpoint thì không thay đổi gì, nên địa chỉ phải ghi vào phần <code>tracing</code> của tập tin mà <code>AIDEV_CONFIG</code> chỉ tới. Kiểm tra những gì aidev đã nhận bằng <code>aidev config</code>:</p>
 
-<pre><code>echo "$OTEL_EXPORTER_OTLP_ENDPOINT"
-# want: an http URL printed by make jaeger-env, for example http://localhost:4318</code></pre>
+<pre><code>aidev config | grep -i tracing
+# want: the endpoint you set, not "(none)"</code></pre>
 
 <p>Một lần chạy thật trông thế này, agent chiếm gần hết:</p>
 
@@ -203,13 +207,17 @@ aidev task run TASK-000001</code></pre>
 
 <p>Hình dạng đó là điển hình: việc của riêng aidev chỉ một phần của giây, còn lại là agent. Nếu lần chạy chậm thì trace cho thấy đó là do model, và cách xử lý là đổi model nhanh hơn chứ không phải chỉnh aidev.</p>
 
-<p>Các biến tracing, tất cả không bắt buộc, với ý nghĩa:</p>
+<p>Các khóa tracing, tất cả không bắt buộc, với ý nghĩa. Mỗi khóa nằm dưới object <code>tracing</code> trong <code>conf.json</code>; chạy <code>aidev config</code> để xem aidev đã nhận gì:</p>
 
-<pre><code>OTEL_EXPORTER_OTLP_ENDPOINT=https://example.com/otel        # base URL; traces post to &lt;base&gt;/v1/traces
-OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=https://other:4318/v1/traces  # full URL, used as given, takes precedence
-OTEL_EXPORTER_OTLP_HEADERS='Authorization=Bearer secret'     # comma-separated key=value pairs
-OTEL_SERVICE_NAME=aidev                                       # service name shown in the backend
-OTEL_TRACES_SAMPLER_ARG=1                                     # 0 to 1; 1 keeps everything</code></pre>
+<pre><code>"tracing": {
+  "endpoint": "https://example.com/otel",
+  "traces_endpoint": "",
+  "headers": { "Authorization": "Bearer secret" },
+  "service_name": "aidev",
+  "sample_ratio": 1
+}</code></pre>
+
+<p><code>tracing.endpoint</code> là URL HTTP OTLP gốc; trace gửi tới <code>&lt;base&gt;/v1/traces</code>. <code>tracing.traces_endpoint</code> là URL đầy đủ, dùng nguyên như cho, và thắng thế khi đặt. <code>tracing.headers</code> là object chứa các header OTLP thêm, như header xác thực. <code>tracing.service_name</code> là tên dịch vụ hiện trong backend (mặc định <code>aidev</code>). <code>tracing.sample_ratio</code> là số từ 0 tới 1; 1 giữ lại mọi thứ. Tracing tắt khi cả hai endpoint đều rỗng.</p>
 
 <p>Hai cái bẫy ghi ở đây vì cả hai đều dễ lặp lại. Thứ nhất, aidev cố tình không truyền cấu hình OTLP cho tiến trình agent: OpenCode tự nó cũng có đo đạc, và đã có lần nó nã hơn nghìn span nội bộ của chính nó vào backend dưới tên aidev. Thứ hai, nếu dùng Langfuse tự host thì lưu ý bản 4 đã bỏ <code>GET /api/public/traces</code>: hãy dùng <code>GET /api/public/v2/observations</code>, và xem mã trạng thái HTTP thay vì đọc trường data rỗng trong thân lỗi.</p>
 </section>
@@ -237,19 +245,19 @@ aidev task cancel TASK-000001 --reason "aidev was killed mid-run"
 
 <table>
 <tr><th>Triệu chứng</th><th>Nguyên nhân</th><th>Cách sửa</th></tr>
-<tr><td><code>aidev migrate</code> không nối được cơ sở dữ liệu</td><td>PostgreSQL chưa chạy, hoặc <code>DATABASE_URL</code> ghi sai cổng.</td><td>Chạy <code>make db-up</code>. Đối chiếu cổng: mặc định 5434, hoặc giá trị <code>AIDEV_DB_PORT</code> bạn đổi. Chạy <code>aidev config</code> để xem aidev đã nhận gì.</td></tr>
+<tr><td><code>aidev migrate</code> không nối được cơ sở dữ liệu</td><td>PostgreSQL chưa chạy, hoặc <code>database.url</code> ghi sai cổng.</td><td>Chạy <code>make db-up</code>. Đối chiếu cổng: mặc định 5434, hoặc giá trị <code>AIDEV_DB_PORT</code> bạn đổi. Chạy <code>aidev config</code> để xem aidev đã nhận gì.</td></tr>
 <tr><td><code>aidev task create</code> từ chối vì thiếu verification</td><td>Ít nhất một lệnh <code>--verify</code> là bắt buộc, theo cả domain và ràng buộc cơ sở dữ liệu.</td><td>Thêm <code>--verify 'go test ./...'</code> hoặc bước kiểm tra hợp với kho mã. Task mà aidev không kiểm được thì nó không nhận.</td></tr>
 <tr><td>Agent nói thành công mà task FAILED</td><td>Agent xong việc rồi verification hỏng. Lời nói được ghi lại, không bao giờ quyết định. Đây là quy tắc duy nhất vận hành đúng như thiết kế.</td><td>Đọc <code>aidev task result TASK-000001 --logs</code>. Tin mã thoát của verification. Viết hướng dẫn tốt hơn rồi tạo task mới.</td></tr>
-<tr><td>Task chậm: mười phút chưa có kết quả</td><td>Gần như chắc chắn do model chứ không phải aidev. Phần của aidev được đo chỉ 0,2 giây trong khi agent tốn 9 tới 656 giây.</td><td>Xem <code>aidev task events TASK-000001</code> để biết đang ở chặng nào. Cân nhắc model nhanh hơn qua <code>OPENCODE_MODEL</code>. Đừng rút ngắn timeout để chữa chậm.</td></tr>
-<tr><td><code>aidev task run</code> diệt agent vì quá giờ</td><td><code>DEFAULT_TASK_TIMEOUT</code> hết trước khi agent xong.</td><td>Nâng timeout cho task bằng <code>--timeout 60m</code>, hoặc nâng <code>DEFAULT_TASK_TIMEOUT</code>. Lần đầu chạy trên kho mã mới thường chậm.</td></tr>
+<tr><td>Task chậm: mười phút chưa có kết quả</td><td>Gần như chắc chắn do model chứ không phải aidev. Phần của aidev được đo chỉ 0,2 giây trong khi agent tốn 9 tới 656 giây.</td><td>Xem <code>aidev task events TASK-000001</code> để biết đang ở chặng nào. Cân nhắc model nhanh hơn qua <code>agent.opencode.model</code> trong <code>conf.json</code>. Đừng rút ngắn timeout để chữa chậm.</td></tr>
+<tr><td><code>aidev task run</code> diệt agent vì quá giờ</td><td><code>tasks.timeout</code> hết trước khi agent xong.</td><td>Nâng timeout cho task bằng <code>--timeout 60m</code>, hoặc nâng <code>tasks.timeout</code> trong <code>conf.json</code>. Lần đầu chạy trên kho mã mới thường chậm.</td></tr>
 <tr><td><code>aidev worktree remove</code> bị từ chối</td><td>Worktree còn việc chưa commit, và git không cho vứt nếu thiếu <code>--force</code>.</td><td>Xem lại công việc trước. Rồi <code>aidev worktree remove TASK-000001 --force</code> để vứt một cách có chủ ý. Nhánh không ảnh hưởng gì cả hai cách.</td></tr>
 <tr><td>Task kẹt ở RUNNING sau khi aidev bị diệt</td><td>Tiến trình chết giữa lần chạy. Không có gì tự dọn, đó là chủ ý.</td><td><code>aidev task cancel TASK-000001 --reason "aidev was killed mid-run"</code>, rồi xem worktree được giữ lại.</td></tr>
 <tr><td>Verification hỏng kiểu "command not found"</td><td>Chương trình kiểm tra chưa cài trong môi trường aidev chạy lệnh.</td><td>Cài công cụ, hoặc sửa chính tả lệnh. Nhớ lệnh chạy không qua shell: pipe và chuyển hướng bị từ chối ngay khi phân tích.</td></tr>
-<tr><td>Thiếu log hoặc phiên MCP gãy</td><td>Có thứ gì đó ghi ra stdout ở chế độ MCP, hoặc bạn tìm log ở stdout.</td><td>Log luôn đi ra stderr. Ở chế độ MCP, stdout thuộc về giao thức. Đặt <code>LOG_LEVEL=debug</code> rồi đọc stderr.</td></tr>
-<tr><td>Trace không hiện trong backend</td><td><code>OTEL_EXPORTER_OTLP_ENDPOINT</code> chưa đặt hoặc không tới được, hoặc bạn truy vấn endpoint đã bỏ.</td><td>Xác nhận biến đã đặt trong shell chạy aidev. Với Jaeger thì xem cổng 16686. Với Langfuse v4 thì truy vấn endpoint observations bản v2 và kiểm tra mã trạng thái HTTP.</td></tr>
+<tr><td>Thiếu log hoặc phiên MCP gãy</td><td>Có thứ gì đó ghi ra stdout ở chế độ MCP, hoặc bạn tìm log ở stdout.</td><td>Log luôn đi ra stderr. Ở chế độ MCP, stdout thuộc về giao thức. Đặt <code>log_level</code> thành <code>debug</code> trong <code>conf.json</code> rồi đọc stderr.</td></tr>
+<tr><td>Trace không hiện trong backend</td><td><code>tracing.endpoint</code> chưa đặt hoặc không tới được, hoặc bạn truy vấn endpoint đã bỏ.</td><td>Xác nhận khóa đã đặt trong <code>conf.json</code> mà <code>AIDEV_CONFIG</code> chỉ tới: <code>aidev config</code> cho biết aidev đã nhận gì. Với Jaeger thì xem cổng 16686. Với Langfuse v4 thì truy vấn endpoint observations bản v2 và kiểm tra mã trạng thái HTTP.</td></tr>
 </table>
 
-<p>Nếu không dòng nào khớp, gom ba thứ theo thứ tự rồi đọc cùng nhau: <code>aidev task result TASK-000001 --logs</code>, <code>aidev task events TASK-000001 --payload</code> và worktree giữ lại từ <code>aidev worktree list</code>. Giữa phán quyết, lịch sử và tập tin, nguyên nhân luôn nằm ở một trong ba. Quay lại <a href="index.html">trang đầu hướng dẫn</a> nếu cần bức tranh lớn, hoặc <a href="reference.html">trang tra cứu</a> để xem định nghĩa chính xác từng cờ và biến.</p>
+<p>Nếu không dòng nào khớp, gom ba thứ theo thứ tự rồi đọc cùng nhau: <code>aidev task result TASK-000001 --logs</code>, <code>aidev task events TASK-000001 --payload</code> và worktree giữ lại từ <code>aidev worktree list</code>. Giữa phán quyết, lịch sử và tập tin, nguyên nhân luôn nằm ở một trong ba. Quay lại <a href="index.html">trang đầu hướng dẫn</a> nếu cần bức tranh lớn, hoặc <a href="reference.html">trang tra cứu</a> để xem định nghĩa chính xác từng cờ và thiết lập.</p>
 </section>
 </main>
 </body>

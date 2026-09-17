@@ -26,7 +26,7 @@
 <tr><td>Go, bản 1.25 trở lên</td><td>aidev viết bằng Go, và thư viện MCP đòi Go bản mới.</td><td><code>go version</code></td><td>Cài Go từ trình quản lý gói của hệ điều hành hoặc trang chủ Go. Với Go 1.24, toolchain sẽ tự tải bản mới hơn, nhưng việc đó cần mạng.</td></tr>
 <tr><td>git, bản 2.23 trở lên</td><td>Mỗi task chạy trong một worktree git, vốn là một tính năng của git.</td><td><code>git --version</code></td><td>Cài git bằng trình quản lý gói rồi chạy lại lệnh kiểm tra.</td></tr>
 <tr><td>Docker kèm Compose</td><td>PostgreSQL chạy trong container khi phát triển trên máy cá nhân.</td><td><code>docker compose version</code></td><td>Cài Docker Desktop hoặc Docker engine kèm plugin compose, rồi chắc chắn dịch vụ Docker đang chạy.</td></tr>
-<tr><td>OpenCode, bản 1.18 trở lên</td><td>OpenCode là agent viết code. Muốn chạy task thật thì phải có nó.</td><td><code>opencode --version</code></td><td>Cài OpenCode và chắc chắn chương trình <code>opencode</code> nằm trên <code>PATH</code>, hoặc đặt <code>OPENCODE_COMMAND</code> trỏ tới chỗ nó nằm. Các model <code>opencode/*</code> công khai không cần API key.</td></tr>
+<tr><td>OpenCode, bản 1.18 trở lên</td><td>OpenCode là agent viết code. Muốn chạy task thật thì phải có nó.</td><td><code>opencode --version</code></td><td>Cài OpenCode và chắc chắn chương trình <code>opencode</code> nằm trên <code>PATH</code>, hoặc đặt <code>agent.opencode.command</code> trỏ tới chỗ nó nằm trong <code>conf.json</code> (xem <a href="#configuration">phần cấu hình</a>). Các model <code>opencode/*</code> công khai không cần API key.</td></tr>
 </table>
 
 <p>Chạy cả bốn lệnh kiểm tra ngay bây giờ, đầy đủ:</p>
@@ -90,52 +90,50 @@ make build
 
 <p>Nếu <code>make db-up</code> hỏng thì thường do hai nguyên nhân: Docker chưa chạy (bật Docker lên rồi thử lại), hoặc cổng đã có chương trình khác dùng (chọn cổng khác như trên). Thông báo lỗi sẽ nêu rõ nguyên nhân. Sửa rồi chạy lại lệnh, chạy lại thoải mái.</p>
 
-<p>Tiếp theo, cấu hình kết nối rồi áp cấu trúc bảng. <strong>Chuỗi kết nối</strong> là một dòng chữ duy nhất cho chương trình biết cách tới cơ sở dữ liệu: đăng nhập tên gì, ở đâu, kèm tùy chọn gì. Bạn chỉ viết nó một lần vào tập tin cấu hình, như <a href="#configuration">phần cấu hình</a> dưới đây mô tả, chứ không cần xuất nó trong mỗi terminal:</p>
+<p>Tiếp theo, cấu hình kết nối rồi áp cấu trúc bảng. <strong>Chuỗi kết nối</strong> là một dòng chữ duy nhất cho chương trình biết cách tới cơ sở dữ liệu: đăng nhập tên gì, ở đâu, kèm tùy chọn gì. Bạn chỉ viết nó một lần vào <code>conf.json</code> của mình, ở khóa <code>database.url</code>, như <a href="#configuration">phần cấu hình</a> dưới đây mô tả:</p>
 
-<pre><code>mkdir -p ~/.config/aidev
-cp .env.example ~/.config/aidev/config.env
-# then edit ~/.config/aidev/config.env if you changed the port
+<pre><code>cp conf/conf.example.json conf/conf.json
+# rồi sửa database.url trong conf/conf.json nếu bạn đổi cổng
+export AIDEV_CONFIG="$PWD/conf/conf.json"
+# đặt dòng export đó vào shell profile (~/.bashrc, ~/.zshrc, hoặc tương đương)
 aidev migrate
 # want: "database is up to date (N migrations)" or a list of "applied ..." lines</code></pre>
 
-<p>Vì sao mỗi dòng quan trọng. Dòng đầu tạo thư mục cấu hình. Dòng thứ hai chép các thiết lập mẫu vào <code>~/.config/aidev/config.env</code>. Nếu đổi cổng thì sửa <code>config.env</code> cho khớp. Dòng cuối áp các migration còn thiếu. <code>aidev migrate</code> có tính lũy đẳng, tức là chạy hai lần cũng không sao: lần thứ hai chẳng còn gì để làm và nó báo cơ sở dữ liệu đã cập nhật.</p>
+<p>Vì sao mỗi dòng quan trọng. Dòng đầu chép các thiết lập mẫu vào <code>conf/conf.json</code>. Nếu đổi cổng thì sửa <code>database.url</code> cho khớp. Dòng thứ hai cho aidev biết tập tin nào là <code>conf.json</code> của nó: <code>AIDEV_CONFIG</code> phải chứa đường dẫn tuyệt đối của tập tin, và đó là biến môi trường duy nhất aidev đọc để cấu hình. Dòng cuối áp các migration còn thiếu. <code>aidev migrate</code> có tính lũy đẳng, tức là chạy hai lần cũng không sao: lần thứ hai chẳng còn gì để làm và nó báo cơ sở dữ liệu đã cập nhật.</p>
 
-<p>Nếu <code>aidev migrate</code> báo cấu hình không hợp lệ thì nó sẽ nêu tên biến. Nếu không kết nối được thì kiểm tra xem <code>make db-up</code> còn chạy không, và cổng trong <code>DATABASE_URL</code> có khớp với cổng cơ sở dữ liệu đang nghe không. Nếu bạn sửa một tập tin migration đã áp rồi thì bộ migrator sẽ từ chối khởi động và nói rõ: đừng bao giờ sửa migration đã áp, hãy thêm migration mới.</p>
+<p>Nếu <code>aidev migrate</code> báo cấu hình không hợp lệ thì nó sẽ nêu tên thiết lập. Nếu không kết nối được thì kiểm tra xem <code>make db-up</code> còn chạy không, và cổng trong <code>database.url</code> có khớp với cổng cơ sở dữ liệu đang nghe không. Nếu bạn sửa một tập tin migration đã áp rồi thì bộ migrator sẽ từ chối khởi động và nói rõ: đừng bao giờ sửa migration đã áp, hãy thêm migration mới.</p>
 </section>
 
 <section id="configuration">
-<h2>Cấu hình: các biến môi trường quan trọng</h2>
+<h2>Cấu hình: tập tin conf.json quyết định</h2>
 
-<p>aidev đọc cấu hình từ <strong>biến môi trường</strong>. Biến môi trường là một giá trị có tên gắn với phiên shell của bạn, như <code>DATABASE_URL</code>. Chỉ một bộ phận của aidev đọc chúng, và nó kiểm tra mọi thứ ngay khi khởi động rồi báo hết mọi lỗi một lúc, thay vì chạy nửa chừng mới đổ vỡ. Bạn không cần xuất các biến này mỗi khi mở terminal. Bạn chỉ viết chúng một lần vào tập tin cấu hình, rồi terminal mới nào cũng tự nhận.</p>
+<p>aidev đọc toàn bộ cấu hình từ một tập tin JSON duy nhất: <code>conf.json</code> mà <code>AIDEV_CONFIG</code> chỉ tới. <code>AIDEV_CONFIG</code> phải chứa đường dẫn tuyệt đối của tập tin, và đó là biến môi trường duy nhất aidev đọc để cấu hình. Mọi thứ nằm trong tập tin đó, và aidev kiểm tra toàn bộ ngay khi khởi động rồi báo hết mọi lỗi một lúc, thay vì chạy nửa chừng mới đổ vỡ.</p>
 
-<p>Tạo tập tin một lần. Nó nằm ở <code>$XDG_CONFIG_HOME/aidev/config.env</code>, hoặc khi <code>XDG_CONFIG_HOME</code> không đặt thì ở <code>~/.config/aidev/config.env</code>. Đặt <code>AIDEV_CONFIG</code> để chỉ một tập tin khác thay thế.</p>
+<p>Tạo tập tin một lần. Chép tập tin mẫu rồi trỏ aidev tới nó:</p>
 
-<pre><code>mkdir -p ~/.config/aidev
-cat &gt; ~/.config/aidev/config.env &lt;&lt;EOF
-DATABASE_URL='postgres://aidev:aidev@127.0.0.1:5434/aidev?sslmode=disable'
-EOF
+<pre><code>cp conf/conf.example.json conf/conf.json
+# rồi sửa cho hợp: database.url, workspace_root, và những gì khác bạn cần
+export AIDEV_CONFIG="$PWD/conf/conf.json"
+# đặt dòng export đó vào shell profile (~/.bashrc, ~/.zshrc, hoặc tương đương)
 aidev config
 # in thiết lập đã nhận và cho biết đã dùng tập tin nào</code></pre>
 
-<p>Thiếu tập tin cũng không sao: aidev chỉ dùng giá trị mặc định cộng với những gì shell đã xuất. Còn tập tin đã tồn tại mà không phân tích được thì đó là lỗi nêu rõ tên tập tin và số dòng, để thiết lập hỏng không bao giờ bị lặng lẽ bỏ qua.</p>
+<p>aidev không đọc gì ngoài tập tin mà <code>AIDEV_CONFIG</code> chỉ tới, nên dòng export phải có mặt trong mọi terminal mới. Đặt dòng đó vào shell profile thì đây là việc làm một lần. Thiếu tập tin là lỗi: <code>aidev config</code> sẽ báo <code>AIDEV_CONFIG</code> chưa đặt. Tập tin đã tồn tại mà không phân tích được, hoặc chứa khóa lạ, cũng là lỗi nêu rõ vấn đề, để thiết lập hỏng không bao giờ bị lặng lẽ bỏ qua.</p>
 
-<p>Tập tin được phân tích chứ không bao giờ được thực thi, nên giá trị là chữ nguyên văn. <code>$VARIABLES</code> không được mở rộng, và một cặp dấu nháy bao quanh sẽ bị lột bỏ, nên dấu nháy ở trên chỉ bảo vệ ký tự đặc biệt chứ không thành một phần của giá trị.</p>
+<p>Tập tin là JSON nên giá trị là chữ nguyên văn. Đổi cổng cơ sở dữ liệu thì sửa <code>database.url</code>; không có gì khác trong môi trường thắng được tập tin, nên những gì bạn đọc trong <code>conf.json</code> chính là những gì aidev dùng.</p>
 
-<p>Mọi thứ xuất trong shell đều thắng tập tin, nên một lệnh vẫn chạy khác đi mà khỏi sửa gì:</p>
-
-<pre><code>DATABASE_URL='postgres://aidev:aidev@127.0.0.1:5434/aidev?sslmode=disable' aidev migrate
-# giá trị đã xuất thắng trong đúng lệnh này; tập tin không đổi</code></pre>
+<p>Các khóa bạn sẽ đụng tới đầu tiên:</p>
 
 <table>
-<tr><th>Biến</th><th>Mặc định</th><th>Dùng để làm gì</th><th>Sai thì chuyện gì xảy ra</th></tr>
-<tr><td><code>DATABASE_URL</code></td><td>không có: bắt buộc</td><td>Cách aidev tới được PostgreSQL.</td><td>Mọi lệnh đụng tới cơ sở dữ liệu đều chết ngay khi khởi động, kèm thông báo nêu tên <code>DATABASE_URL</code>. Không chạy được gì cả.</td></tr>
-<tr><td><code>WORKSPACE_ROOT</code></td><td><code>$XDG_DATA_HOME/aidev/worktrees</code> hoặc <code>~/.local/share/aidev/worktrees</code></td><td>Thư mục chứa mọi worktree của task. Mọi worktree đều phải nằm trong nó.</td><td>Task chạy thất bại vì không chuẩn bị được thư mục cách ly. Thông báo lỗi sẽ nêu đường dẫn.</td></tr>
-<tr><td><code>DEFAULT_TASK_TIMEOUT</code></td><td><code>30m</code></td><td>Một lần chạy agent được phép kéo dài bao lâu trước khi aidev dừng nó.</td><td>Đặt quá ngắn thì model chậm sẽ bị diệt giữa chừng. Giá trị mặc định rộng rãi có chủ ý: lần chạy đầu tiên trên kho mã mới từng bị đo là mất hơn bốn phút mới ra output.</td></tr>
-<tr><td><code>OPENCODE_MODEL</code></td><td><code>opencode/muse-spark-1.3-contributor-free</code></td><td>Model mà OpenCode dùng. Đặt chuỗi rỗng để OpenCode tự chọn.</td><td>Model lạ sẽ làm agent lỗi, kéo theo task lỗi. Giá trị mặc định công khai không cần tài khoản.</td></tr>
-<tr><td><code>LOG_LEVEL</code></td><td><code>info</code></td><td>Mức chi tiết log của aidev: <code>debug</code>, <code>info</code>, <code>warn</code> hoặc <code>error</code>.</td><td>Giá trị lạ làm khởi động thất bại. Quá ít thì mất manh mối chẩn đoán, quá nhiều thì tín hiệu chìm trong nhiễu.</td></tr>
+<tr><th>Khóa</th><th>Mặc định</th><th>Dùng để làm gì</th><th>Sai thì chuyện gì xảy ra</th></tr>
+<tr><td><code>database.url</code></td><td>không có: bắt buộc</td><td>Cách aidev tới được PostgreSQL.</td><td>Mọi lệnh đụng tới cơ sở dữ liệu đều chết ngay khi khởi động, kèm thông báo nêu tên <code>database.url</code>. Không chạy được gì cả.</td></tr>
+<tr><td><code>workspace_root</code></td><td><code>~/.local/share/aidev/worktrees</code></td><td>Thư mục chứa mọi worktree của task. Mọi worktree đều phải nằm trong nó.</td><td>Task chạy thất bại vì không chuẩn bị được thư mục cách ly. Thông báo lỗi sẽ nêu đường dẫn.</td></tr>
+<tr><td><code>tasks.timeout</code></td><td><code>30m</code></td><td>Một lần chạy agent được phép kéo dài bao lâu trước khi aidev dừng nó.</td><td>Đặt quá ngắn thì model chậm sẽ bị diệt giữa chừng. Giá trị mặc định rộng rãi có chủ ý: lần chạy đầu tiên trên kho mã mới từng bị đo là mất hơn bốn phút mới ra output.</td></tr>
+<tr><td><code>agent.opencode.model</code></td><td><code>opencode/muse-spark-1.3-contributor-free</code></td><td>Model mà OpenCode dùng. Đặt chuỗi rỗng để OpenCode tự chọn.</td><td>Model lạ sẽ làm agent lỗi, kéo theo task lỗi. Giá trị mặc định công khai không cần tài khoản.</td></tr>
+<tr><td><code>log_level</code></td><td><code>info</code></td><td>Mức chi tiết log của aidev: <code>debug</code>, <code>info</code>, <code>warn</code> hoặc <code>error</code>.</td><td>Giá trị lạ làm khởi động thất bại. Quá ít thì mất manh mối chẩn đoán, quá nhiều thì tín hiệu chìm trong nhiễu.</td></tr>
 </table>
 
-<p>Danh sách đầy đủ kèm mọi giá trị mặc định nằm ở <a href="reference.html#environment">trang tra cứu</a>. Muốn xem chính xác aidev đã nhận gì, với mật khẩu cơ sở dữ liệu đã che đi:</p>
+<p>Danh sách đầy đủ kèm mọi giá trị mặc định nằm ở <a href="reference.html#configuration">trang tra cứu</a>. Muốn xem chính xác aidev đã nhận gì, với mật khẩu cơ sở dữ liệu đã che đi:</p>
 
 <pre><code>aidev config
 aidev config --json</code></pre>
@@ -253,7 +251,7 @@ go clean -testcache &amp;&amp; go test ./...
 # run the test yourself on your own checkout of the branch:
 # it should pass, because verification already passed in the worktree</code></pre>
 
-<p>Khi thất bại, worktree được giữ nguyên như agent để lại, nằm dưới <code>WORKSPACE_ROOT</code>, và ghi nhận là RETAINED. Đó là chủ ý: công việc dở dang thường là thứ hữu ích nhất của một lần hỏng. Tìm nó bằng <code>aidev worktree list</code>, xem xét, và chỉ xóa khi đã xong. <a href="debugging.html#worktrees">Trang gỡ lỗi</a> hướng dẫn từng bước việc đó.</p>
+<p>Khi thất bại, worktree được giữ nguyên như agent để lại, nằm dưới <code>workspace_root</code>, và ghi nhận là RETAINED. Đó là chủ ý: công việc dở dang thường là thứ hữu ích nhất của một lần hỏng. Tìm nó bằng <code>aidev worktree list</code>, xem xét, và chỉ xóa khi đã xong. <a href="debugging.html#worktrees">Trang gỡ lỗi</a> hướng dẫn từng bước việc đó.</p>
 
 <p>Làm xong demo thì xóa thư mục dùng một lần. Rồi đọc tiếp <a href="index.html">trang đầu hướng dẫn</a>, <a href="debugging.html">trang gỡ lỗi</a> cho mọi thứ có thể hỏng, và <a href="reference.html">trang tra cứu</a> cho danh sách đầy đủ cờ và biến.</p>
 
@@ -262,7 +260,7 @@ rm -rf /tmp/aidev-demo
 aidev task list
 # your demo task is still in PostgreSQL: the record outlives the directory</code></pre>
 
-<p>Quay lại vào ngày mai: nếu bạn đã đóng terminal thì không cần cài đặt lại gì cả. Hãy chắc PostgreSQL đang chạy bằng <code>make db-up</code>, rồi cứ gõ <code>aidev</code>. Cấu hình của bạn đã nằm sẵn trong <code>~/.config/aidev/config.env</code>, terminal mới nào cũng tự nhận, và nhờ <code>make install</code> nên lệnh <code>aidev</code> vẫn tìm thấy. Muốn chắc thì chạy <code>aidev config</code> để xem trước khi chạy task.</p>
+<p>Quay lại vào ngày mai: nếu bạn đã đóng terminal thì không cần cài đặt lại gì cả ngoài dòng export trong shell profile. Hãy chắc PostgreSQL đang chạy bằng <code>make db-up</code>, rồi cứ gõ <code>aidev</code>. Cấu hình của bạn đã nằm sẵn trong <code>conf.json</code> mà <code>AIDEV_CONFIG</code> chỉ tới, dòng export trong shell profile đưa nó vào mọi terminal mới, và nhờ <code>make install</code> nên lệnh <code>aidev</code> vẫn tìm thấy. Muốn chắc thì chạy <code>aidev config</code> để xem trước khi chạy task.</p>
 </section>
 <section id="claude-code">
 <h2>Kết nối Claude Code: giao việc từ bất kỳ kho mã nào</h2>
@@ -272,12 +270,13 @@ aidev task list
 <pre><code>make install
 # puts aidev in $(go env GOPATH)/bin, a path that does not move
 
-claude mcp add --scope user aidev -- "$(go env GOPATH)/bin/aidev" mcp
-# registers aidev for every project on this machine</code></pre>
+claude mcp add --scope user -e AIDEV_CONFIG=/abs/path/conf.json aidev -- "$(go env GOPATH)/bin/aidev" mcp
+# registers aidev for every project on this machine; use the absolute path
+# of the same conf.json that aidev config reports</code></pre>
 
 <p>Hãy dùng <code>--scope user</code>. Nếu bỏ cờ này, Claude Code dùng phạm vi <code>local</code>, tức là gắn việc đăng ký vào đúng thư mục bạn đứng khi gõ lệnh. Khi đó aidev chạy được ở kho mã đó và không tồn tại ở bất kỳ kho nào khác. Không có thông báo lỗi nào cả: công cụ chỉ đơn giản là không có. Đoạn này viết ra chính là để bạn tránh lỗi đó.</p>
 
-<p>Không có mật khẩu hay chuỗi kết nối nào nằm trong phần đăng ký. aidev tự đọc <code>~/.config/aidev/config.env</code>, cũng là file mà các lệnh terminal dùng, nên <code>aidev config</code> cho bạn thấy đúng những gì máy chủ MCP sẽ thấy.</p>
+<p>Không có mật khẩu hay chuỗi kết nối nào nằm trong phần đăng ký ngoài tập tin mà nó chỉ tới. aidev đọc <code>conf.json</code> mà <code>AIDEV_CONFIG</code> chỉ tới, cũng là tập tin mà các lệnh terminal dùng, nên <code>aidev config</code> cho bạn thấy đúng những gì máy chủ MCP sẽ thấy.</p>
 
 <p>Kiểm tra việc đăng ký từ một thư mục <em>không phải</em> kho mã aidev, vì phạm vi sai chỉ lộ ra ở đó:</p>
 
