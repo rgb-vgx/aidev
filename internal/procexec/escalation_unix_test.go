@@ -54,3 +54,40 @@ func TestAGroupThatIgnoresSIGTERMIsKilledAfterTheGrace(t *testing.T) {
 		t.Error("a child that ignored SIGTERM survived the grace period: only the direct child was killed")
 	}
 }
+
+// The grace period is for the whole group. A helper that handles SIGTERM by
+// cleaning up must be allowed to finish even when the direct child exits at once;
+// SIGKILL is for what is still running when the grace period is over.
+func TestAGroupMemberGetsTheWholeGracePeriod(t *testing.T) {
+	previous := killGrace
+	killGrace = 2 * time.Second
+	t.Cleanup(func() { killGrace = previous })
+
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "cleaned-up")
+
+	// The shell dies on SIGTERM at once; its child traps it and takes half a
+	// second to clean up. The child's stdout is detached, so the pipe does not
+	// hold Wait open.
+	s := spec(t, "sh", "-c",
+		"(trap 'sleep 0.5; touch \""+marker+"\"; exit 0' TERM; while :; do sleep 0.05; done) >/dev/null 2>&1 & sleep 30")
+	s.Dir = dir
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		cancel()
+	}()
+	if _, err := Run(ctx, s); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(marker); err == nil {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Error("a group member was killed before it could finish handling SIGTERM")
+}

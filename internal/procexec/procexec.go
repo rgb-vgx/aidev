@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -199,7 +200,13 @@ func Run(ctx context.Context, spec Spec) (Result, error) {
 	// `opencode run` spawns no children, but verification commands routinely do
 	// (`go test` starts compilers and test binaries).
 	setProcessGroup(cmd)
-	cmd.Cancel = func() error { return terminateGroup(cmd) }
+	// terminatedAt is when the group was asked to stop; zero if it never was.
+	// Cancel runs on exec's own goroutine, hence the atomic.
+	var terminatedAt atomic.Int64
+	cmd.Cancel = func() error {
+		terminatedAt.Store(time.Now().UnixNano())
+		return terminateGroup(cmd)
+	}
 
 	// After cancellation, allow a grace period before the process is killed
 	// outright. This also bounds how long Wait can block on a child holding the
@@ -217,6 +224,13 @@ func Run(ctx context.Context, spec Spec) (Result, error) {
 	}
 
 	waitErr := cmd.Wait()
+
+	// Escalate. WaitDelay kills only the direct child once the grace period is
+	// over, so a group member that ignored SIGTERM would outlive the run. The
+	// rest of the group gets what is left of the same grace period, then SIGKILL.
+	if at := terminatedAt.Load(); at != 0 {
+		_ = killGroupAfter(cmd, time.Unix(0, at).Add(killGrace))
+	}
 
 	result.FinishedAt = time.Now().UTC()
 	result.Duration = result.FinishedAt.Sub(result.StartedAt)

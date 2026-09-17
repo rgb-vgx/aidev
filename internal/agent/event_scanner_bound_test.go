@@ -41,3 +41,46 @@ func TestEventScannerDoesNotHoldAnUnboundedLine(t *testing.T) {
 		t.Error("the text event after the oversized line was lost")
 	}
 }
+
+// An event split across many small writes is still one event, however it is cut.
+func TestEventScannerJoinsAnEventSplitAcrossWrites(t *testing.T) {
+	s := newEventScanner()
+	stream := fixtureStepStart + "\n" + fixtureText + "\n" + fixtureStepFinishStop + "\n"
+	for i := 0; i < len(stream); i += 7 {
+		end := min(i+7, len(stream))
+		if _, err := s.Write([]byte(stream[i:end])); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.Close()
+	got := s.Transcript()
+	if got.Lines != 3 || got.FinishReason != "stop" || got.OversizedLines != 0 {
+		t.Errorf("lines = %d, finish = %q, oversized = %d; want 3, stop, 0", got.Lines, got.FinishReason, got.OversizedLines)
+	}
+}
+
+// An oversized line that ends inside the same write is dropped, and what follows
+// its newline in that write is read; the drop is counted.
+func TestEventScannerDropsAnOversizedLineInOneWrite(t *testing.T) {
+	s := newEventScanner()
+	payload := append(bytes.Repeat([]byte("y"), 2*maxEventLine), '\n')
+	payload = append(payload, []byte(fixtureStepStart+"\n")...)
+	if _, err := s.Write(payload); err != nil {
+		t.Fatal(err)
+	}
+	// A tail with no newline after a dropped line is still dropped at Close.
+	if _, err := s.Write(bytes.Repeat([]byte("z"), maxEventLine+1)); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	got := s.Transcript()
+	if got.SessionID == "" {
+		t.Error("the event after the oversized line was not read")
+	}
+	if got.OversizedLines != 2 {
+		t.Errorf("oversized lines = %d, want 2", got.OversizedLines)
+	}
+	if got.Lines != 1 {
+		t.Errorf("lines = %d, want only the real event counted", got.Lines)
+	}
+}

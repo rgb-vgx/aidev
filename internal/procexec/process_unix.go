@@ -3,8 +3,10 @@
 package procexec
 
 import (
+	"errors"
 	"os/exec"
 	"syscall"
+	"time"
 )
 
 // setProcessGroup puts the child in a new process group whose id equals its pid,
@@ -34,3 +36,30 @@ func terminateGroup(cmd *exec.Cmd) error {
 	}
 	return nil
 }
+
+// killGroupAfter makes sure the child's process group is gone by deadline.
+//
+// It is the escalation after terminateGroup: members still running at the
+// deadline — ones that ignored SIGTERM — are sent SIGKILL. Until then the group is
+// polled, so a group that exits within its grace period is never killed and Run
+// does not wait longer than it has to. Only the group aidev created is ever
+// signalled, never a process matched by name (docs/research.md §2.7).
+func killGroupAfter(cmd *exec.Cmd, deadline time.Time) error {
+	if cmd.Process == nil {
+		return nil
+	}
+	pgid := -cmd.Process.Pid
+	for time.Now().Before(deadline) {
+		if err := syscall.Kill(pgid, 0); errors.Is(err, syscall.ESRCH) {
+			return nil
+		}
+		time.Sleep(groupPollInterval)
+	}
+	if err := syscall.Kill(pgid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+		return err
+	}
+	return nil
+}
+
+// groupPollInterval is how often killGroupAfter checks whether the group is gone.
+const groupPollInterval = 50 * time.Millisecond
