@@ -71,6 +71,12 @@ func runDoctor(ctx context.Context, env *Env, args []string) error {
 	}
 
 	results := doctor.Run(ctx, deps)
+	failed := 0
+	for _, r := range results {
+		if r.Status == doctor.StatusFail {
+			failed++
+		}
+	}
 
 	if *asJSON {
 		if err := writeJSON(env.Stdout, results); err != nil {
@@ -78,43 +84,34 @@ func runDoctor(ctx context.Context, env *Env, args []string) error {
 		}
 	} else {
 		for _, r := range results {
-			var mark string
-			switch r.Status {
-			case doctor.StatusOK:
-				mark = "ok  "
-			case doctor.StatusWarn:
-				mark = "WARN"
-			case doctor.StatusFail:
-				mark = "FAIL"
-			default:
-				mark = "skip"
-			}
-			fmt.Fprintf(env.Stdout, "%s  %-10s %s\n", mark, r.Name, r.Summary)
+			fmt.Fprintf(env.Stdout, "%s  %-11s %s\n", doctorMark(r.Status), r.Name, r.Summary)
 			if r.Fix != "" {
 				fmt.Fprintf(env.Stdout, "      fix: %s\n", r.Fix)
 			}
 		}
-		if doctor.Failed(results) {
-			n := 0
-			for _, r := range results {
-				if r.Status == doctor.StatusFail {
-					n++
-				}
-			}
-			fmt.Fprintf(env.Stdout, "%d check(s) failed.\n", n)
+		if failed > 0 {
+			fmt.Fprintf(env.Stdout, "%d check(s) failed.\n", failed)
 		} else {
 			fmt.Fprintln(env.Stdout, "aidev is ready.")
 		}
 	}
 
-	if doctor.Failed(results) {
-		n := 0
-		for _, r := range results {
-			if r.Status == doctor.StatusFail {
-				n++
-			}
-		}
-		return fmt.Errorf("aidev doctor: %d check(s) failed", n)
+	if failed > 0 {
+		return fmt.Errorf("doctor: %d check(s) failed", failed)
 	}
 	return nil
+}
+
+// doctorMark is the four-character status column of the text output.
+func doctorMark(s doctor.Status) string {
+	switch s {
+	case doctor.StatusOK:
+		return "ok  "
+	case doctor.StatusWarn:
+		return "WARN"
+	case doctor.StatusFail:
+		return "FAIL"
+	default:
+		return "skip"
+	}
 }

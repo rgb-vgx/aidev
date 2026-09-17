@@ -156,6 +156,8 @@ func short(checksum string) string {
 	return checksum[:12]
 }
 
+// changedMigrationError is the refusal Migrate and PendingMigrations give for an
+// applied migration whose file no longer matches what was recorded.
 func changedMigrationError(version, recorded, found string) error {
 	return fmt.Errorf(
 		"migration %s was already applied but its file has changed "+
