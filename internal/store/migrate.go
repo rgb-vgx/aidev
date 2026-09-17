@@ -158,3 +158,10 @@ func short(checksum string) string {
 	}
 	return checksum[:12]
 }
+
+// PendingMigrations reports, without changing anything, the versions in
+// migrations that the database has not applied yet. Specified by
+// tests/integration/doctor_test.go; not implemented yet.
+func (s *Store) PendingMigrations(ctx context.Context, migrations []Migration) ([]string, error) {
+	return nil, nil
+}
