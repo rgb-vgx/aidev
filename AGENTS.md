@@ -16,6 +16,11 @@ involving persistence, also:
 make db-up && make test-db-create && make test-integration
 ```
 
+Integration tests skip themselves when `TEST_DATABASE_URL` is unset, and a
+skipped package still prints `ok`. `make test-integration` sets
+`AIDEV_REQUIRE_DB=1` so they fail instead; a bare `go test ./tests/integration/`
+proves nothing without it.
+
 A change is not done until `make check` passes.
 
 ## Invariants — do not break these without changing the documented decision
