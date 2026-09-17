@@ -1,0 +1,11 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "aidev",
+  "version": "0.1.0",
+  "description": "Delegate implementation work to aidev, which runs a coding agent in an isolated git worktree and decides success only by running the task's own verification commands. Registers the aidev MCP server and teaches Claude how to split, specify, delegate and review the work.",
+  "author": {
+    "name": "rgb-vgx",
+    "email": "maithuyetedu@gmail.com"
+  },
+  "repository": "https://github.com/rgb-vgx/aidev"
+}

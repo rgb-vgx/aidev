@@ -376,6 +376,28 @@ A run takes minutes, so `aidev_run_task` waits a bounded time and then returns w
 `aidev_get_task_result`. The field to read is `succeeded`, which is true only when
 aidev's own verification passed.
 
+### Or install the Claude Code plugin
+
+The repository is also a plugin marketplace. The `aidev` plugin registers the same
+MCP server and adds two skills that teach Claude the workflow around it:
+`aidev:delegate` (agree what "done" means, write failing tests on a `spec/*` branch,
+keep tasks small, delegate, recover from a failed task) and `aidev:review` (check
+the diff beyond the green tests, merge, report in the user's terms).
+
+```bash
+make install                                   # the plugin runs `aidev mcp` from PATH
+export AIDEV_CONFIG="$PWD/conf/conf.json"      # in your shell profile; the plugin passes it on
+claude plugin marketplace add /abs/path/to/aidev
+claude plugin install aidev@aidev
+
+claude mcp list
+# plugin:aidev:aidev: aidev mcp - ✔ Connected
+```
+
+The plugin's server reads `AIDEV_CONFIG` from the environment Claude Code starts
+in, so export it in your shell profile. Use either the plugin or the `claude mcp
+add` registration above, not both: with both, every tool is listed twice.
+
 Two things to know before delegating work in a real repository.
 
 **Tell the agent which verification command fits.** In a monorepo, `go test ./...`
