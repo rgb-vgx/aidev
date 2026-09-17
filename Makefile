@@ -117,10 +117,8 @@ jaeger-up: ## start Jaeger to view traces (one container, UI on :16686)
 jaeger-down: ## stop and remove Jaeger
 	-docker rm -f $(JAEGER_CONTAINER)
 
-jaeger-env: ## print the export lines that point aidev at the local Jaeger
-	@echo "export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318"
-	@echo "export OTEL_SERVICE_NAME=aidev"
-	@echo "unset OTEL_EXPORTER_OTLP_HEADERS"
+jaeger-env: ## print the tracing object to paste into conf.json for the local Jaeger
+	@printf '%s\n' '{"tracing": {"endpoint": "http://localhost:4318", "service_name": "aidev"}}'
 
 LANGFUSE_COMPOSE := deployments/langfuse/docker-compose.yml
 LANGFUSE_ENV     := deployments/langfuse/.env
@@ -180,12 +178,10 @@ $(LANGFUSE_ENV):
 	} > $@
 	@echo "generated $@ with fresh secrets"
 
-langfuse-env: $(LANGFUSE_ENV) ## print the export lines that point aidev at the local Langfuse
-	@set -a; . ./$(LANGFUSE_ENV); set +a; \
+langfuse-env: $(LANGFUSE_ENV) ## print the tracing object to paste into conf.json for the local Langfuse
+	@set -a; . $(LANGFUSE_ENV); set +a; \
 	auth=$$(printf '%s:%s' "$$LANGFUSE_INIT_PROJECT_PUBLIC_KEY" "$$LANGFUSE_INIT_PROJECT_SECRET_KEY" | base64 -w0); \
-	echo "export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:3000/api/public/otel"; \
-	echo "export OTEL_EXPORTER_OTLP_HEADERS='Authorization=Basic $$auth,x-langfuse-ingestion-version=4'"; \
-	echo "export OTEL_SERVICE_NAME=aidev"
+	printf '%s\n' "{\"tracing\": {\"endpoint\": \"http://localhost:3000/api/public/otel\", \"service_name\": \"aidev\", \"headers\": {\"Authorization\": \"Basic $$auth\", \"x-langfuse-ingestion-version\": \"4\"}}}"
 
 langfuse-credentials: $(LANGFUSE_ENV) ## print the Langfuse UI login for the bootstrapped user
 	@set -a; . ./$(LANGFUSE_ENV); set +a; \

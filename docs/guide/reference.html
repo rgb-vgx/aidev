@@ -198,7 +198,7 @@ aidev task events TASK-000001 --after 5 --limit 50
 <tr><td><code>tracing.sample_ratio</code></td><td><code>1</code></td><td>Sample ratio from 0 to 1. Values outside that range fail at startup.</td></tr>
 </table>
 
-<p>The one environment variable that is aidev configuration: <code>AIDEV_CONFIG</code> names the <code>conf.json</code> file. Related values that are not aidev configuration but appear in its workflow: <code>AIDEV_DB_PORT</code> overrides the host PostgreSQL port for <code>make db-up</code>; <code>TEST_DATABASE_URL</code> points integration tests at a database (without it they skip themselves); <code>AIDEV_TEST_OTLP</code> gates the live tracing export test. See the <a href="debugging.html#tracing">tracing section</a> for the tracing keys in use.</p>
+<p>The one environment variable that is aidev configuration: <code>AIDEV_CONFIG</code> names the <code>conf.json</code> file. Related values that are not aidev configuration but appear in its workflow: <code>AIDEV_DB_PORT</code> overrides the host PostgreSQL port for <code>make db-up</code>; <code>TEST_DATABASE_URL</code> points integration tests at a database (without it they skip themselves, unless <code>make check</code> set <code>AIDEV_REQUIRE_DB=1</code>, which turns the skip into a failure); <code>AIDEV_TEST_OTLP</code> gates the live tracing export test. See the <a href="debugging.html#tracing">tracing section</a> for the tracing keys in use.</p>
 
 <pre><code>export AIDEV_CONFIG="$PWD/conf/conf.json"
 aidev config

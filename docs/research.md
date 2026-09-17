@@ -920,7 +920,8 @@ its check in `.probe/review-experiment/grades.md`. In severity order:
   `.env.example`, and a malformed DSN prints "parse DATABASE_URL"; aidev reads none of those.
 - **`make jaeger-env` / `make langfuse-env` print `export OTEL_*`** (case B, found by both valid runs).
   Nothing reads OTEL_* for configuration any more, so the documented way to turn on tracing silently
-  does nothing.
+  does nothing. **Resolved:** both targets now print a `{"tracing": {...}}` object to paste into the
+  conf.json that AIDEV_CONFIG names, and the docs point there instead of `eval "$(make ...)"`.
 - **A malformed `database.url` is accepted** (case C, the control). The server starts and every tool
   call fails with the "make db-up" remedy, which is false advice for a typo.
 - **Tracing headers are no longer trimmed** (case B). Every other tracing string is trimmed; the env

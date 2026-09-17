@@ -188,7 +188,7 @@ aidev worktree remove TASK-000002 --force
 <pre><code>make jaeger-up
 # then in conf.json, set tracing.endpoint to the local Jaeger:
 #   "tracing": { "endpoint": "http://localhost:4318", ... }
-# (make jaeger-env prints that URL)
+# (make jaeger-env prints the tracing object to paste into the conf.json that AIDEV_CONFIG names)
 export AIDEV_CONFIG="$PWD/conf/conf.json"
 aidev task run TASK-000001</code></pre>
 

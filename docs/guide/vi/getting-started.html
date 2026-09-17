@@ -118,7 +118,7 @@ export AIDEV_CONFIG="$PWD/conf/conf.json"
 aidev config
 # in thiết lập đã nhận và cho biết đã dùng tập tin nào</code></pre>
 
-<p>aidev không đọc gì ngoài tập tin mà <code>AIDEV_CONFIG</code> chỉ tới, nên dòng export phải có mặt trong mọi terminal mới. Đặt dòng đó vào shell profile thì đây là việc làm một lần. Thiếu tập tin là lỗi: <code>aidev config</code> sẽ báo <code>AIDEV_CONFIG</code> chưa đặt. Tập tin đã tồn tại mà không phân tích được, hoặc chứa khóa lạ, cũng là lỗi nêu rõ vấn đề, để thiết lập hỏng không bao giờ bị lặng lẽ bỏ qua.</p>
+<p>aidev không đọc gì ngoài tập tin mà <code>AIDEV_CONFIG</code> chỉ tới, nên dòng export phải có mặt trong mọi terminal mới. Đặt dòng đó vào shell profile thì đây là việc làm một lần. Thiếu dòng export là lỗi: <code>aidev config</code> sẽ báo <code>AIDEV_CONFIG is not set</code>. Tập tin không đọc được là một lỗi khác có nêu đường dẫn: <code>read config file &lt;path&gt;: ...</code>. Tập tin đã tồn tại mà không phân tích được, hoặc chứa khóa lạ, cũng là lỗi nêu rõ vấn đề, để thiết lập hỏng không bao giờ bị lặng lẽ bỏ qua.</p>
 
 <p>Tập tin là JSON nên giá trị là chữ nguyên văn. Đổi cổng cơ sở dữ liệu thì sửa <code>database.url</code>; không có gì khác trong môi trường thắng được tập tin, nên những gì bạn đọc trong <code>conf.json</code> chính là những gì aidev dùng.</p>
 

@@ -509,8 +509,10 @@ instrumentation was correct and the fault was in the backend's ingestion pipelin
 A vendor client would have left no way to make that distinction.
 
 ```bash
-make jaeger-up && eval "$(make jaeger-env)"      # one container, UI on :16686
-make langfuse-up && eval "$(make langfuse-env)"  # six services, UI on :3000
+make jaeger-up     # one container, UI on :16686
+make jaeger-env    # prints the tracing object to paste into the conf.json that AIDEV_CONFIG names
+make langfuse-up   # six services, UI on :3000
+make langfuse-env  # prints the tracing object to paste into the conf.json that AIDEV_CONFIG names
 AIDEV_TEST_OTLP=1 go test ./internal/tracing/ -run TestExport -count=1
 ```
 
