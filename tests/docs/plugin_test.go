@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"aidev/internal/doctor"
 	aidevmcp "aidev/internal/mcp"
 )
 
@@ -21,6 +22,7 @@ const pluginDir = "../../plugin/aidev"
 var skillFiles = []string{
 	pluginDir + "/skills/delegate/SKILL.md",
 	pluginDir + "/skills/review/SKILL.md",
+	pluginDir + "/skills/doctor/SKILL.md",
 }
 
 func readJSON(t *testing.T, path string, into any) {
@@ -144,6 +146,24 @@ func TestDelegateSkillUsesRealCreateTaskArguments(t *testing.T) {
 	for _, required := range []string{"repo_path", "title", "verification"} {
 		if !strings.Contains(section, "`"+required+"`") {
 			t.Errorf("the delegate skill does not mention the required argument %s", required)
+		}
+	}
+}
+
+// The doctor skill explains each check by name; the names must be the ones
+// `aidev doctor` prints.
+func TestDoctorSkillNamesEveryCheck(t *testing.T) {
+	text := readDoc(t, pluginDir+"/skills/doctor/SKILL.md")
+	checks := []string{doctor.CheckConfig, doctor.CheckGit, doctor.CheckAgent,
+		doctor.CheckDatabase, doctor.CheckMigrations, doctor.CheckWorkspace}
+	for _, name := range checks {
+		if !strings.Contains(text, "`"+name+"`") {
+			t.Errorf("the doctor skill does not name the %s check", name)
+		}
+	}
+	for _, status := range []doctor.Status{doctor.StatusOK, doctor.StatusWarn, doctor.StatusFail, doctor.StatusSkipped} {
+		if !strings.Contains(text, "`"+string(status)+"`") {
+			t.Errorf("the doctor skill does not explain the %s status", status)
 		}
 	}
 }
