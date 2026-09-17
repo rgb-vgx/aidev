@@ -791,31 +791,202 @@ func (c Config) Redacted() Config {
 	return c
 }
 
-// RedactURL removes userinfo credentials from a URL-shaped string. It works on
-// a plain string rather than net/url so that an unparseable value is redacted
-// conservatively instead of being passed through.
+// RedactURL removes passwords from a PostgreSQL connection string, in either
+// form pgxpool.ParseConfig accepts. A string starting with postgres:// or
+// postgresql:// (case-insensitive) is a URL: userinfo is reduced to user:***
+// (or *** when there is no user) and the value of any query parameter named
+// password or sslpassword (case-insensitive) becomes ***. Anything else is a
+// keyword/value string: the value of password or sslpassword
+// (case-insensitive keys, optional spaces around '=', quoted or unquoted
+// values, backslash escapes inside quotes) becomes ***. It works on a plain
+// string rather than net/url so that an unparseable value is redacted
+// conservatively instead of being passed through; when the input cannot be
+// understood it hides too much rather than leaking, e.g. an unterminated
+// quote after password= hides the rest of the string.
 func RedactURL(raw string) string {
 	if raw == "" {
 		return ""
 	}
-	scheme := ""
-	rest := raw
-	if i := strings.Index(raw, "://"); i >= 0 {
-		scheme, rest = raw[:i+3], raw[i+3:]
+	lower := strings.ToLower(raw)
+	if strings.HasPrefix(lower, "postgres://") || strings.HasPrefix(lower, "postgresql://") {
+		return redactURLString(raw)
 	}
-	at := strings.LastIndex(rest, "@")
-	if at < 0 {
+	return redactKeywordValue(raw)
+}
+
+func redactURLString(raw string) string {
+	idx := strings.Index(raw, "://")
+	if idx < 0 {
 		return raw
 	}
-	userinfo := rest[:at]
-	user := userinfo
-	if c := strings.Index(userinfo, ":"); c >= 0 {
-		user = userinfo[:c]
+	scheme := raw[:idx+3]
+	rest := raw[idx+3:]
+	authEnd := len(rest)
+	for i := 0; i < len(rest); i++ {
+		if rest[i] == '/' || rest[i] == '?' || rest[i] == '#' {
+			authEnd = i
+			break
+		}
 	}
-	if user == "" {
-		return scheme + "***@" + rest[at+1:]
+	authority := rest[:authEnd]
+	remainder := rest[authEnd:]
+	if at := strings.LastIndex(authority, "@"); at >= 0 {
+		userinfo := authority[:at]
+		host := authority[at+1:]
+		user := userinfo
+		if c := strings.Index(userinfo, ":"); c >= 0 {
+			user = userinfo[:c]
+		}
+		if user == "" {
+			authority = "***@" + host
+		} else {
+			authority = user + ":***@" + host
+		}
 	}
-	return scheme + user + ":***@" + rest[at+1:]
+	qPos := strings.Index(remainder, "?")
+	if qPos < 0 {
+		return scheme + authority + remainder
+	}
+	fragPos := strings.Index(remainder[qPos:], "#")
+	var query, fragment string
+	if fragPos < 0 {
+		query = remainder[qPos+1:]
+	} else {
+		query = remainder[qPos+1 : qPos+fragPos]
+		fragment = remainder[qPos+fragPos:]
+	}
+	parts := strings.Split(query, "&")
+	for i, p := range parts {
+		eq := strings.Index(p, "=")
+		if eq < 0 {
+			continue
+		}
+		key := p[:eq]
+		if strings.EqualFold(key, "password") || strings.EqualFold(key, "sslpassword") {
+			parts[i] = key + "=***"
+		}
+	}
+	return scheme + authority + remainder[:qPos+1] + strings.Join(parts, "&") + fragment
+}
+
+func isKVSpace(c byte) bool {
+	switch c {
+	case ' ', '\t', '\n', '\r', '\f', '\v':
+		return true
+	}
+	return false
+}
+
+func redactKeywordValue(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	n := len(s)
+	i := 0
+	for i < n {
+		if isKVSpace(s[i]) {
+			b.WriteByte(s[i])
+			i++
+			continue
+		}
+		j := i
+		for j < n && s[j] != '=' && !isKVSpace(s[j]) {
+			j++
+		}
+		tmp := j
+		for tmp < n && isKVSpace(s[tmp]) {
+			tmp++
+		}
+		if tmp >= n || s[tmp] != '=' {
+			b.WriteString(s[i:tmp])
+			i = tmp
+			continue
+		}
+		key := s[i:j]
+		eqPos := tmp
+		v := eqPos + 1
+		for v < n && isKVSpace(s[v]) {
+			v++
+		}
+		isSecret := strings.EqualFold(key, "password") || strings.EqualFold(key, "sslpassword")
+		if !isSecret {
+			if v >= n {
+				b.WriteString(s[i:v])
+				i = v
+				continue
+			}
+			if s[v] == '\'' {
+				end := -1
+				p := v + 1
+				for p < n {
+					if s[p] == '\\' {
+						if p+1 < n {
+							p += 2
+						} else {
+							p++
+						}
+						continue
+					}
+					if s[p] == '\'' {
+						end = p
+						break
+					}
+					p++
+				}
+				if end < 0 {
+					b.WriteString(s[i:v])
+					b.WriteString("***")
+					return b.String()
+				}
+				b.WriteString(s[i : end+1])
+				i = end + 1
+				continue
+			}
+			p := v
+			for p < n && !isKVSpace(s[p]) {
+				p++
+			}
+			b.WriteString(s[i:p])
+			i = p
+			continue
+		}
+		b.WriteString(s[i:v])
+		b.WriteString("***")
+		if v >= n {
+			i = v
+			continue
+		}
+		if s[v] == '\'' {
+			p := v + 1
+			closed := false
+			for p < n {
+				if s[p] == '\\' {
+					if p+1 < n {
+						p += 2
+					} else {
+						p++
+					}
+					continue
+				}
+				if s[p] == '\'' {
+					closed = true
+					p++
+					break
+				}
+				p++
+			}
+			if !closed {
+				return b.String()
+			}
+			i = p
+			continue
+		}
+		p := v
+		for p < n && !isKVSpace(s[p]) {
+			p++
+		}
+		i = p
+	}
+	return b.String()
 }
 
 func parseDuration(key, raw string) (time.Duration, error) {
