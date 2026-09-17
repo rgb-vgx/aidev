@@ -955,7 +955,8 @@ work: a truncated changed-path list, and an interpreter name that skips the pyth
 specified test-first and delegated back to aidev (`spec/reviewer-findings`,
 `spec/reviewer-findings-2`); `make *-env` belongs to the conf.json infrastructure phase, and the
 `python -m T.*` over-match is not specified yet because a fix has to keep matching the
-extension-suffixed `.so` names it exists for.
+extension-suffixed `.so` names it exists for. It is now fixed: only T/, T.py, T.pyc
+and extension-suffixed names count.
 
 ### The control held
 
