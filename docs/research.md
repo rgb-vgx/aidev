@@ -285,6 +285,15 @@ Context survives across separate process invocations. aidev persists the session
 `TaskAttempt` now, so retry-with-context can be built later without a schema change. The MVP
 does not resume sessions.
 
+**A session belongs to its directory** (measured 2026-09-17, OpenCode 1.18.31, 9router muse,
+probe in `.probe/resume-dir/`). A session created with `--dir a` and continued with
+`-s <id> --dir a` remembered its context ("4271"). Continued with `-s <id> --dir b` (cwd b as
+well), OpenCode logged `creating instance directory=.../a`, ran the turn there — the loop
+reached "exiting loop" in 7 s — yet printed no event at all and hung until `timeout` killed it
+(90 s and 240 s runs). Adding `--fork` created the fork in directory a too, with the same hang.
+So a retry cannot continue a session in a new worktree path: continuing the session means
+running in the directory the session was created in.
+
 ---
 
 ## 3. Claude Code: MCP registration
