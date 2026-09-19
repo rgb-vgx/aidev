@@ -22,7 +22,7 @@ TEST_DB_URL ?= postgres://aidev:aidev@127.0.0.1:$(DB_PORT)/aidev_test?sslmode=di
 # conf/conf.example.json to conf/conf.json and edit it to match the database.
 AIDEV_CONFIG ?= $(CURDIR)/conf/conf.json
 
-.PHONY: help build install test test-integration test-e2e test-db-create fmt fmt-check vet lint check \
+.PHONY: help build install dist test test-integration test-e2e test-db-create fmt fmt-check vet lint check \
         db-up db-down db-reset db-logs migrate clean \
         langfuse-up langfuse-down langfuse-reset langfuse-logs langfuse-env langfuse-credentials \
         jaeger-up jaeger-down jaeger-env \
@@ -36,6 +36,9 @@ build: ## build the aidev binary into bin/
 
 install: ## install aidev into GOPATH/bin
 	$(GO) install -ldflags "-X main.version=$(VERSION)" ./cmd/aidev
+
+dist: ## build the release archives into dist/ (VERSION=v0.1.0 make dist)
+	VERSION=$(VERSION) sh scripts/build-release.sh
 
 test: ## run unit tests (integration tests skip without a database)
 	$(GO) test ./...

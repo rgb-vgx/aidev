@@ -47,29 +47,46 @@ opencode --version
 </section>
 
 <section id="install">
-<h2>Cài đặt: biên dịch aidev</h2>
+<h2>Cài đặt: một lệnh</h2>
 
-<p><strong>Biên dịch</strong> nghĩa là biến mã nguồn thành chương trình chạy được. Lấy kho mã về trước, rồi biên dịch.</p>
+<p>Cài aidev bằng một lệnh duy nhất:</p>
 
-<pre><code>git clone &lt;this repository&gt; aidev
+<pre><code>curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh</code></pre>
+
+<p>Nó tải bản phát hành đúng cho máy của bạn (Linux hoặc macOS, amd64 hoặc arm64), đối chiếu tập tin tải về với tập tin <code>SHA256SUMS</code> của bản phát hành (danh sách dấu vân tay: tập tin tải về không khớp sẽ bị từ chối, nên tập tin hỏng hoặc bị sửa đổi không bao giờ được cài), rồi đặt <code>aidev</code> vào <code>~/.local/bin</code>. Cách này không cần Go.</p>
+
+<p>Dấu hiệu thành công: nó in ra "Installed aidev v0.1.0 to ..." kèm các bước tiếp theo. Kiểm tra bằng:</p>
+
+<pre><code>aidev version
+# muốn thấy: aidev v0.1.0 hoặc tương tự</code></pre>
+
+<p>"Nằm trên PATH" nghĩa là thế này: khi bạn gõ tên một chương trình, shell sẽ dò trong một danh sách thư mục gọi là PATH cho tới khi thấy chương trình khớp. Trình cài đặt đặt <code>aidev</code> vào <code>~/.local/bin</code>, vốn đã nằm trong danh sách đó trên nhiều máy. Nếu <code>~/.local/bin</code> chưa nằm trên PATH thì trình cài đặt sẽ in ra dòng export PATH để bạn thêm vào ~/.bashrc hoặc ~/.zshrc, nhờ đó gõ <code>aidev ...</code> ở thư mục nào cũng chạy, trong terminal mới nào cũng chạy, thay vì chỉ chạy được trong một thư mục.</p>
+
+<p>Muốn cài một phiên bản cụ thể:</p>
+
+<pre><code>curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | AIDEV_VERSION=v0.1.0 sh</code></pre>
+
+<p>Muốn cài sang chỗ khác:</p>
+
+<pre><code>curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | AIDEV_INSTALL_DIR="$HOME/bin" sh</code></pre>
+
+<h3>Từ mã nguồn, khi phát triển aidev</h3>
+
+<p>Nếu bạn muốn sửa chính aidev thì hãy biên dịch từ mã nguồn.</p>
+
+<pre><code>git clone https://github.com/rgb-vgx/aidev.git
 cd aidev
 make build
-# produces bin/aidev</code></pre>
-
-<p>Dấu hiệu thành công: lệnh cuối kết thúc không lỗi, và tập tin <code>bin/aidev</code> tồn tại. Kiểm tra bằng:</p>
-
-<pre><code>ls bin/aidev
+# tạo ra bin/aidev
 ./bin/aidev version
-# want: aidev &lt;version&gt;, for example: aidev dev</code></pre>
+# muốn thấy: aidev &lt;version&gt;, ví dụ: aidev dev</code></pre>
 
-<p>Nếu <code>make build</code> hỏng, hãy đọc thông báo lỗi. Thiếu Go thì nó báo <code>go: command not found</code>. Lỗi mạng khi tải toolchain thì báo gì đó về fetching toolchain. Sửa đúng lỗi được nêu rồi chạy lại <code>make build</code>. Chạy lại thoải mái, không sao cả.</p>
+<p>Dấu hiệu thành công: quá trình biên dịch kết thúc không lỗi, và <code>bin/aidev</code> tồn tại. Nếu <code>make build</code> hỏng, hãy đọc thông báo lỗi, sửa đúng lỗi được nêu rồi chạy lại <code>make build</code>. Chạy lại thoải mái, không sao cả.</p>
 
 <p>Đưa <code>aidev</code> lên PATH để terminal nào cũng tìm thấy nó:</p>
 
 <pre><code>make install
-# runs: go install ./cmd/aidev</code></pre>
-
-<p>"Nằm trên PATH" nghĩa là thế này: khi bạn gõ tên một chương trình, shell sẽ dò trong một danh sách thư mục gọi là PATH cho tới khi thấy chương trình khớp. <code>make install</code> đặt <code>aidev</code> vào một thư mục trong danh sách đó. Sau đó, gõ <code>aidev ...</code> ở thư mục nào cũng chạy, trong terminal mới nào cũng chạy, thay vì chỉ gõ <code>./bin/aidev</code> khi đang đứng trong kho mã. Nếu bạn chưa từng gặp khái niệm này, cứ hiểu đơn giản là cài công cụ một lần để gọi tên nó ở mọi nơi.</p>
+# chạy: go install ./cmd/aidev</code></pre>
 
 <p>Từ đây hướng dẫn sẽ viết <code>aidev</code>. Nếu bạn không cài theo cách đó thì chỗ nào thấy <code>aidev</code> hãy gõ <code>./bin/aidev</code>.</p>
 </section>

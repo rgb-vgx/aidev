@@ -103,6 +103,9 @@ func englishPages() []page {
 				// The one-command setup a new user starts with, and its two
 				// choices: a company registry's image, or an existing database.
 				"aidev setup",
+				// The released binary, installed and checked by install.sh.
+				"install.sh",
+				"SHA256SUMS",
 				"--postgres-image",
 				"--database-url",
 				"aidev migrate",

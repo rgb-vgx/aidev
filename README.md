@@ -70,15 +70,15 @@ schema.
 
 ## Quick start
 
-You need Go 1.25+, git, OpenCode and, unless you already have PostgreSQL, Docker.
+You need git and OpenCode and, unless you already have PostgreSQL, Docker. You do not need Go.
 
-Install the binary:
+Install the released binary:
 
 ```bash
-git clone <this repository> aidev
-cd aidev
-make install
+curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh
 ```
+
+It downloads the release for Linux or macOS (amd64 or arm64), checks it against the release's `SHA256SUMS` and installs aidev into `~/.local/bin`, telling you if that is not on your `PATH`. To pin a version, set `AIDEV_VERSION=v0.1.0`. To build from source instead, see Installation below.
 
 Prepare aidev with one command:
 
@@ -119,7 +119,7 @@ Every line should say `ok`; each failure says how to fix it.
 Use it from Claude Code:
 
 ```bash
-claude plugin marketplace add /abs/path/to/aidev
+claude plugin marketplace add rgb-vgx/aidev
 claude plugin install aidev@aidev
 ```
 
@@ -130,7 +130,7 @@ For the step-by-step guide see [docs/guide/getting-started.html](docs/guide/gett
 ## Installation
 
 ```bash
-git clone <this repository> aidev
+git clone https://github.com/rgb-vgx/aidev.git
 cd aidev
 make build            # produces bin/aidev
 ```
@@ -450,7 +450,7 @@ the diff beyond the green tests, merge, report in the user's terms).
 ```bash
 make install                                   # the plugin runs `aidev mcp` from PATH
 export AIDEV_CONFIG="$PWD/conf/conf.json"      # in your shell profile; the plugin passes it on
-claude plugin marketplace add /abs/path/to/aidev
+claude plugin marketplace add rgb-vgx/aidev
 claude plugin install aidev@aidev
 
 claude mcp list
