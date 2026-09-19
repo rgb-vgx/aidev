@@ -140,3 +140,140 @@ Hoặc cài đặt vào `PATH` của bạn:
 ```bash
 make install          # go install ./cmd/aidev
 ```
+
+## Thiết lập PostgreSQL
+
+```bash
+make db-up            # starts PostgreSQL and waits until it is healthy
+```
+
+Lệnh này công bố PostgreSQL trên **127.0.0.1:5434**, chứ không phải 5432 như thường lệ. Trên máy nơi aidev được phát triển, 5432 đã là dịch vụ PostgreSQL của máy chủ còn 5433 là container của một dự án khác, nên giá trị mặc định thông thường đã khiến lần `docker compose up` đầu tiên thất bại. Hãy ghi đè cổng nếu 5434 cũng đã bị chiếm:
+
+```bash
+AIDEV_DB_PORT=5440 make db-up
+```
+
+Sau đó cấu hình aidev và áp dụng lược đồ:
+
+```bash
+make install                                            # puts aidev on your PATH
+mkdir -p ~/.config/aidev
+cp conf/conf.example.json ~/.config/aidev/conf.json     # then edit if you changed the port
+export AIDEV_CONFIG="$HOME/.config/aidev/conf.json"     # put this line in your shell profile
+aidev migrate
+```
+
+aidev chỉ đọc đúng tập tin mà `AIDEV_CONFIG` chỉ tới, vì vậy lệnh export phải có mặt trong mọi terminal mới. Hãy đặt dòng đó vào hồ sơ shell của bạn (`~/.bashrc`, `~/.zshrc`, hoặc tập tin tương đương của shell bạn dùng) và đây là việc thiết lập một lần duy nhất. `aidev config` sẽ in ra nó đã dùng tập tin nào.
+
+Một conf.json chứa mật khẩu cơ sở dữ liệu, vì vậy hãy giữ nó ngoài git. Hãy sao chép nó tới `conf/conf.json` nếu bạn thích — đường dẫn đó vốn đã bị bỏ qua — hoặc đơn giản là đừng bao giờ commit đường dẫn mà bạn dùng. `aidev config` che các bí mật, nên đọc lại cũng an toàn.
+
+`aidev migrate` có tính lũy đẳng — hãy chạy lại tùy thích. Các migration được nhúng trong chương trình; không cần cài thêm công cụ migration riêng nào.
+
+## Cấu hình
+
+aidev chỉ đọc cấu hình từ một tập tin JSON duy nhất: conf.json mà `AIDEV_CONFIG` chỉ tới. Không có gì khác trong môi trường được dùng để cấu hình — một biến còn sót trong hồ sơ shell không được âm thầm lấn át tập tin mà người dùng đang đọc và sửa.
+
+Mọi thiết lập đều tùy chọn, trừ `database.url`. Các giá trị mặc định bên dưới là những gì chương trình dùng khi thiếu khóa; conf/conf.example.json trình bày tất cả trong một tập tin.
+
+| Thiết lập | Mặc định | Mục đích |
+|---|---|---|
+| `database.url` | *(required)* | chuỗi kết nối PostgreSQL |
+| `workspace_root` | `~/.local/share/aidev/worktrees` | nơi tạo các worktree của task; mọi đường dẫn worktree đều phải nằm bên trong nó |
+| `tasks.timeout` | `30m` | giới hạn một lần chạy agent khi task không tự đặt giá trị riêng |
+| `tasks.verification_timeout` | `10m` | giới hạn một bước verification |
+| `tasks.max_output_bytes` | `1048576` | giới hạn thu output cho mỗi luồng; phần output vượt quá sẽ bị bỏ và đánh dấu đã cắt ngắn |
+| `tasks.worktree_cleanup` | `on-success` | `on-success` commit công việc rồi xóa worktree; `never` giữ lại mọi worktree. Không chế độ nào xóa công việc đã thất bại |
+| `agent.backend` | `opencode` | implementation agent nào chạy các task: `opencode` hoặc `codex` |
+| `agent.opencode.command` | `opencode` | chương trình thực thi OpenCode |
+| `agent.opencode.model` | `opencode/muse-spark-1.3-contributor-free` | không cần chứng thực; đặt thành chuỗi rỗng để OpenCode tự chọn |
+| `agent.opencode.agent` | `build` | agent OpenCode mặc định |
+| `agent.codex.command` | `codex` | chương trình thực thi Codex |
+| `agent.codex.profile` | *(none)* | được truyền thành `--profile` khi có đặt |
+| `agent.codex.model` | *(none)* | được truyền thành `-m` khi có đặt; để trống thì Codex tự chọn |
+| `agent.codex.sandbox` | `workspace-write` | được truyền thành `--sandbox` khi có đặt |
+| `agent.routing` | *(none)* | một đối tượng ánh xạ độ khó của task (`TRIVIAL`, `STANDARD`, `HARD`) tới mô hình xứng đáng với độ khó đó; độ khó nào không có mục sẽ để backend tự chọn |
+| `log_level` | `info` | `debug`, `info`, `warn` hoặc `error` |
+| `tracing.endpoint` | *(none)* | URL HTTP OTLP cơ sở; không bật tracing khi chưa đặt gì |
+| `tracing.traces_endpoint` | *(none)* | URL đầy đủ mà bộ xuất traces gửi tới, được ưu tiên hơn `tracing.endpoint` |
+| `tracing.headers` | *(none)* | một đối tượng chứa các header OTLP bổ sung, chẳng hạn `Authorization` |
+| `tracing.service_name` | `aidev` | tên dịch vụ mà các span mang theo |
+| `tracing.sample_ratio` | `1` | tỉ lệ traces mới được lấy mẫu, từ 0 tới 1 |
+
+`agent.routing` và `tracing.headers` là các đối tượng, không phải giá trị đơn: các mục của chúng là giá trị bạn tự viết, không phải thiết lập con.
+
+Giá trị mặc định cho thời gian chờ của task được cố ý để rộng rãi: lần chạy đầu tiên của OpenCode trên một kho mã chưa từng gặp đã được đo mất hơn bốn phút mới cho ra output đầu tiên, rồi sau đó chỉ còn vài giây. Một giá trị mặc định ngắn sẽ khiến task đầu tiên của mọi lập trình viên mới đều thất bại theo cách trông như lỗi của aidev.
+
+Để xem chính xác aidev đã chốt những gì — với mật khẩu cơ sở dữ liệu đã được che:
+
+```bash
+aidev config
+aidev config --json
+```
+
+## Task đầu tiên của bạn
+
+Khi PostgreSQL đã chạy và lược đồ đã được áp dụng, từ bên trong bất kỳ kho git nào:
+
+```bash
+aidev task create \
+  --title "Add a Greet function" \
+  --description "Create greet.go with Greet(name string) string returning \"Hello, \" + name" \
+  --verify 'go test ./...' \
+  --verify 'go vet ./...'
+# created TASK-000001  Add a Greet function
+#   run it with: aidev task run TASK-000001
+
+aidev task run TASK-000001
+```
+
+Việc này mất vài phút chứ không phải vài giây — phần lớn thời gian là OpenCode chạy. Trong khi chạy, nhật ký event cho thấy nó đang ở đâu:
+
+```bash
+aidev task events TASK-000001
+#   1  task.created
+#   2  task.ready
+#   3  task.started
+#   4  task.worktree_created
+#   5  task.worker_started
+```
+
+Một lần chạy thật của đúng ví dụ này, trên một kho mã mà test không biên dịch được cho tới khi công việc hoàn tất:
+
+```text
+TASK-000001 succeeded: 2/2 verification steps passed, work committed on aidev/TASK-000001
+
+agent (opencode)
+  outcome       SUCCEEDED
+  changed files 1
+  took          10m56s
+  says          Tests: The=": chúng, DP eng 들어 ஆக ree? (embцион upcoming…
+
+verification (run by aidev)
+  ✓ PASSED    go test ./...
+  ✓ PASSED    go vet ./...
+
+worktree
+  REMOVED  /home/you/.local/share/aidev/worktrees/TASK-000001-a1
+  branch  aidev/TASK-000001
+```
+
+Hãy chú ý dòng `says`. Lần chạy đó dùng một mô hình miễn phí mà tóm tắt cuối của nó khá lộn xộn — nhưng điều đó không quan trọng. Đoạn mã nó viết ra đúng, và điều khẳng định điều đó là aidev đã tự chạy `go test` và `go vet`. Lời tường thuật của agent về công việc của chính nó được ghi lại vì có ích cho việc chẩn đoán, chứ không bao giờ là bằng chứng.
+
+Mặt còn lại của cùng một đồng xu, với một agent báo cáo thành công mà không chạm vào gì:
+
+```text
+TASK-000002 FAILED (VERIFICATION): verification did not pass: 0/1 steps passed
+
+agent (opencode)
+  outcome       SUCCEEDED
+  changed files 0
+  says          Done! I implemented the function and all tests pass.
+
+verification (run by aidev)
+  ✗ FAILED    test -f farewell.go  (exit 1)
+
+the work was kept for inspection
+  cd /home/you/.local/share/aidev/worktrees/TASK-000002-a1
+```
+
+`aidev task run` thoát với mã khác không khi một task không thành công, nên `aidev task run TASK-000001 && ./deploy.sh` sẽ hành xử đúng như bạn mong đợi.
