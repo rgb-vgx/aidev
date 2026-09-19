@@ -107,6 +107,9 @@ func TestDefaultsMatchDockerCompose(t *testing.T) {
 	if port, _ := strconv.Atoi(def("AIDEV_DB_PORT")); o.Port != port {
 		t.Errorf("Port = %d, compose default %d", o.Port, port)
 	}
+	if !strings.Contains(compose, `"127.0.0.1:${AIDEV_DB_PORT:-5434}:5432"`) {
+		t.Error("docker-compose.yml must publish PostgreSQL on 127.0.0.1 only, as setup does")
+	}
 	if o.Volume != "aidev-pgdata" || !strings.Contains(compose, "aidev-pgdata:/var/lib/postgresql/data") {
 		t.Errorf("Volume = %q, want aidev-pgdata as in docker-compose.yml", o.Volume)
 	}
@@ -165,7 +168,8 @@ func TestMissingContainerIsCreatedWithTheChosenImageAndComposeSettings(t *testin
 		"-e POSTGRES_PASSWORD=" + o.Password,
 		"-e POSTGRES_DB=" + o.Database,
 		"-e POSTGRES_INITDB_ARGS=--encoding=UTF8 --locale=C",
-		fmt.Sprintf("-p %d:5432", o.Port),
+		// Loopback only: the default password must not be reachable from the network.
+		fmt.Sprintf("-p 127.0.0.1:%d:5432", o.Port),
 		"-v aidev-pgdata:/var/lib/postgresql/data",
 		"--health-cmd pg_isready -U " + o.User + " -d " + o.Database,
 		"--health-interval 2s",
