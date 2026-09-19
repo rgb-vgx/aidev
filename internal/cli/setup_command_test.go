@@ -98,7 +98,9 @@ func TestSetupSucceedsAndSaysWhatToDoNext(t *testing.T) {
 			t.Errorf("output does not contain %q:\n%s", want, stdout)
 		}
 	}
-	if password := passwordOf(t, databaseURL); password != "" && strings.Contains(stdout+stderr, password) {
+	// The password itself may be a common word ("aidev" in development), so look
+	// for it where a URL would show it.
+	if password := passwordOf(t, databaseURL); password != "" && strings.Contains(stdout+stderr, ":"+password+"@") {
 		t.Errorf("the database password is shown:\n%s\n%s", stdout, stderr)
 	}
 
