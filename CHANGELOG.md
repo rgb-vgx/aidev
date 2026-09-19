@@ -40,6 +40,8 @@ the agent says about its work is recorded, never trusted.
 - **Documentation**: README and README.vi.md, and an HTML guide in English and
   Vietnamese (`docs/guide`).
 
+aidev is released under the MIT license.
+
 Known limits: no Windows build (aidev relies on Unix process groups); the agent
 is not sandboxed beyond its worktree; a failed task is not retried
 automatically.
