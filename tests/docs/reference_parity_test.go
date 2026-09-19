@@ -136,8 +136,10 @@ func TestReadmeOpensWithAQuickStart(t *testing.T) {
 	}
 	section := text[start+1:]
 	section = section[:strings.Index(section, "\n## ")+1]
-	for _, want := range []string{"make install", "aidev setup", "--postgres-image", "--database-url",
-		"AIDEV_CONFIG", "aidev doctor", "claude plugin install aidev@aidev"} {
+	// A new user installs the released binary; cloning is for working on aidev.
+	for _, want := range []string{"curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh",
+		"aidev setup", "--postgres-image", "--database-url",
+		"AIDEV_CONFIG", "aidev doctor", "claude plugin marketplace add rgb-vgx/aidev", "claude plugin install aidev@aidev"} {
 		if !strings.Contains(section, want) {
 			t.Errorf("the quick start does not mention %s", want)
 		}
