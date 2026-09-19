@@ -1,4 +1,6 @@
-# pushing a v* tag runs the gate, builds the archives with scripts/build-release.sh and publishes them with SHA256SUMS as a GitHub release, which install.sh downloads.
+# Pushing a v* tag runs the gate, builds the archives with scripts/build-release.sh
+# and publishes them with SHA256SUMS as a GitHub release, which install.sh
+# downloads. The release notes are the tag's section of CHANGELOG.md.
 name: release
 on:
   push:

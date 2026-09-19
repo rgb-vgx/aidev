@@ -1,4 +1,25 @@
 #!/bin/sh
+# Install aidev from its GitHub releases:
+#
+#   curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh
+#
+# Picks the archive for this machine (Linux or macOS, amd64 or arm64), checks it
+# against the release's SHA256SUMS, and installs aidev into ~/.local/bin. Set
+# AIDEV_VERSION=v0.1.0 to pin a release and AIDEV_INSTALL_DIR to install
+# elsewhere. Everything runs inside main, called on the last line, so a
+# truncated download runs nothing.
+
+# download URL FILE, with curl or wget; fails naming the URL.
+download() {
+  if [ "$downloader" = curl ]; then
+    curl -fsSL -o "$2" "$1" && return 0
+  else
+    wget -qO "$2" "$1" && return 0
+  fi
+  echo "install.sh: failed to download $1" >&2
+  exit 1
+}
+
 main() {
   set -eu
   download_base=${AIDEV_DOWNLOAD_BASE:-https://github.com/rgb-vgx/aidev/releases}
@@ -36,28 +57,8 @@ main() {
   trap 'rm -rf "$tmpdir"' EXIT
   asset_file="$tmpdir/$asset"
   sums_file="$tmpdir/SHA256SUMS"
-  if [ "$downloader" = curl ]; then
-    if ! curl -fsSL -o "$asset_file" "$asset_url"; then
-      echo "install.sh: failed to download $asset_url" >&2
-      exit 1
-    fi
-  else
-    if ! wget -qO "$asset_file" "$asset_url"; then
-      echo "install.sh: failed to download $asset_url" >&2
-      exit 1
-    fi
-  fi
-  if [ "$downloader" = curl ]; then
-    if ! curl -fsSL -o "$sums_file" "$sums_url"; then
-      echo "install.sh: failed to download $sums_url" >&2
-      exit 1
-    fi
-  else
-    if ! wget -qO "$sums_file" "$sums_url"; then
-      echo "install.sh: failed to download $sums_url" >&2
-      exit 1
-    fi
-  fi
+  download "$asset_url" "$asset_file"
+  download "$sums_url" "$sums_file"
   expected=$(awk -v want="$asset" '$2 == want {print $1; exit}' "$sums_file")
   if [ -z "$expected" ]; then
     echo "install.sh: checksum entry missing for $asset" >&2
@@ -93,7 +94,7 @@ main() {
   if ! command -v opencode >/dev/null 2>&1; then
     echo "aidev needs OpenCode for its agent: install opencode from https://opencode.ai"
   else
-    echo "aidev uses opencode for its agent."
+    echo "aidev will run its agent with opencode at $(command -v opencode)."
   fi
   echo "Next, run:"
   echo "  aidev setup"
