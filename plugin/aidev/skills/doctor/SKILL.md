@@ -24,17 +24,23 @@ for a developer point to `make install` in the aidev repository.
 
 Work through the failures in order and run `aidev doctor` again after each fix.
 
-- **database**: when the fix says `make db-up` and Docker is installed, you may
-  run it in the aidev repository (it starts a local PostgreSQL container and waits
-  until it answers). If Docker is missing, do not install it yourself: tell the
-  user what to install. If `database.url` points somewhere other than the local
-  container, ask before changing it.
+- **database**: when the database does not answer, offer to run `aidev setup`
+  (safe to run again; it starts PostgreSQL in Docker and migrates). If Docker is
+  missing, do not install it yourself: tell the user what to install. If
+  `database.url` points somewhere other than the local container, ask before
+  changing it.
 - **migrations**: run `aidev migrate`. It only adds tables and columns aidev needs.
 - **workspace**: if the directory cannot be created, show the user the path and
   the error; do not change permissions on their machine without asking.
-- **config**: never invent a configuration. If AIDEV_CONFIG is not set, ask where
-  their conf.json is, or offer to copy `conf/conf.example.json` and fill in the
-  database URL together.
+- **config**: never invent a configuration. With no configuration, ask first and
+  then offer to run `aidev setup` (it writes conf.json and never overwrites an
+  existing one). Its two choices are:
+  - `--postgres-image <image>` when their company pulls images from a private registry.
+  - `--database-url <url>` when they already have a PostgreSQL database (then no Docker is needed).
+  After setup, AIDEV_CONFIG must be set: offer to add the printed
+  `export AIDEV_CONFIG=...` line to their shell profile and the "AIDEV_CONFIG"
+  entry to the "env" object of ~/.claude/settings.json, asking before changing
+  either file.
 - **agent** and **git**: tell the user what to install; installing software is
   their decision.
 

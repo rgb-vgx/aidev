@@ -69,7 +69,7 @@ func Run(ctx context.Context, deps Deps) []Result {
 			Name:    CheckConfig,
 			Status:  StatusFail,
 			Summary: fmt.Sprintf("Cannot read the configuration: %s.", err.Error()),
-			Fix:     "Set AIDEV_CONFIG to the absolute path of your conf.json (copy conf/conf.example.json to start).",
+			Fix:     "Run `aidev setup` to create a configuration and a database, or set AIDEV_CONFIG to the absolute path of your conf.json (copy conf/conf.example.json to start).",
 		})
 		results = append(results, gitResult(deps))
 		skipped := "Skipped: it needs a readable configuration."
@@ -175,9 +175,9 @@ func databaseResult(ctx context.Context, deps Deps, cfg config.Config, results *
 		summary := fmt.Sprintf("Cannot reach the database: %s.", redactDatabaseURL(err.Error(), cfg.DatabaseURL))
 		var fix string
 		if _, dockerErr := deps.LookPath("docker"); dockerErr == nil {
-			fix = "Start PostgreSQL with `make db-up` in the aidev repository and check that database.url in conf.json points at a running PostgreSQL."
+			fix = "Run `aidev setup` to start PostgreSQL in Docker (safe to run again), or check that database.url in conf.json points at a running PostgreSQL."
 		} else {
-			fix = "Install Docker, then run `make db-up` in the aidev repository and check that database.url in conf.json points at a running PostgreSQL."
+			fix = "Install Docker and run `aidev setup`, or check that database.url in conf.json points at a running PostgreSQL."
 		}
 		*results = append(*results, Result{
 			Name:    CheckDatabase,
