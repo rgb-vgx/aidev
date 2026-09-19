@@ -75,31 +75,65 @@ make build
 </section>
 
 <section id="database">
-<h2>Cơ sở dữ liệu: khởi động PostgreSQL và chạy migration</h2>
+<h2>Cơ sở dữ liệu và cấu hình: một lệnh, aidev setup</h2>
 
 <p><strong>PostgreSQL</strong> là nơi aidev cất mọi thứ. <strong>Migration</strong> là tập tin SQL có đánh phiên bản, dùng để tạo hoặc sửa các bảng trong cơ sở dữ liệu. Chạy migration nghĩa là thực thi các tập tin đó theo thứ tự để cấu trúc cơ sở dữ liệu khớp với những gì chương trình mong đợi. Migration được nhúng sẵn trong chính chương trình aidev nên bạn không cần cài thêm công cụ migration nào.</p>
+
+<p>Cách khuyên dùng là một lệnh duy nhất:</p>
+
+<pre><code>aidev setup</code></pre>
+
+<p>Lệnh này làm gì: nó khởi động PostgreSQL trong Docker, trong một container tên aidev-postgres, chỉ nghe trên chính máy này ở 127.0.0.1:5434. Nó ghi ~/.config/aidev/conf.json với database.url, một tập tin riêng tư không bao giờ bị ghi đè nếu đã tồn tại. Nó áp các migration. Rồi nó in ra dòng export và dòng thiết lập cho Claude Code để bạn thêm vào.</p>
+
+<p>Chạy lại thoải mái, không sao cả, ví dụ sau khi khởi động lại máy: nó bật container lên nếu container đã dừng và giữ nguyên cấu hình của bạn.</p>
+
+<p>Dấu hiệu thành công: lệnh kết thúc bằng dòng "aidev is set up." kèm danh sách các bước tiếp theo.</p>
+
+<p>Nếu công ty bạn lấy image Docker từ registry riêng thì hãy cho setup biết cần dùng image nào:</p>
+
+<pre><code>aidev setup --postgres-image registry.example.com/library/postgres:16-alpine</code></pre>
+
+<p>Nếu bạn đã có sẵn PostgreSQL thì trỏ setup tới đó. Nhớ đặt URL trong dấu nháy. Không cần Docker, nhưng cơ sở dữ liệu phải tồn tại sẵn:</p>
+
+<pre><code>aidev setup --database-url 'postgres://user:password@host:5432/aidev'</code></pre>
+
+<p>Nếu cổng 5434 trên máy bạn đã bị chiếm thì chọn cổng khác:</p>
+
+<pre><code>aidev setup --postgres-port 5440</code></pre>
+
+<p>Tiếp theo, trỏ aidev tới tập tin setup vừa ghi, như <a href="#configuration">phần cấu hình</a> dưới đây mô tả, rồi kiểm tra mọi thứ:</p>
+
+<pre><code>export AIDEV_CONFIG="$HOME/.config/aidev/conf.json"
+# put that export line in your shell profile (~/.bashrc, ~/.zshrc, or equivalent)
+aidev doctor</code></pre>
+
+<p>Dấu hiệu thành công: mọi dòng của aidev doctor đều báo ok, và mỗi lỗi đều nói rõ cách sửa.</p>
+
+<h3>Làm thủ công, từ repository</h3>
+
+<p>Nếu bạn làm việc trên chính aidev thì có thể làm các bước trên bằng tay ngay trong kho mã thay vì chạy <code>aidev setup</code>.</p>
 
 <p>Khởi động PostgreSQL:</p>
 
 <pre><code>make db-up
 # starts PostgreSQL and waits until it is healthy</code></pre>
 
-<p>Dấu hiệu thành công: lệnh chờ vài giây rồi báo container đã khỏe. Lệnh này làm gì: nó khởi động một container PostgreSQL lắng nghe trên máy bạn ở <code>127.0.0.1:5434</code>. Địa chỉ đó nghĩa là "chính máy này, cổng 5434". Cổng là 5434 chứ không phải 5432 như thường lệ, vì 5432 và 5433 đã bị chiếm trên máy phát triển aidev. Nếu 5434 trên máy bạn cũng bị chiếm thì đổi cổng:</p>
+<p>Dấu hiệu thành công: lệnh chờ vài giây rồi báo container đã khỏe. Lệnh này khởi động một container PostgreSQL lắng nghe trên máy bạn ở <code>127.0.0.1:5434</code>. Nếu cổng 5434 trên máy bạn cũng bị chiếm thì đổi cổng:</p>
 
 <pre><code>AIDEV_DB_PORT=5440 make db-up</code></pre>
 
-<p>Nếu <code>make db-up</code> hỏng thì thường do hai nguyên nhân: Docker chưa chạy (bật Docker lên rồi thử lại), hoặc cổng đã có chương trình khác dùng (chọn cổng khác như trên). Thông báo lỗi sẽ nêu rõ nguyên nhân. Sửa rồi chạy lại lệnh, chạy lại thoải mái.</p>
+<p>Nếu <code>make db-up</code> hỏng thì thường do hai nguyên nhân: Docker chưa chạy (bật Docker lên rồi thử lại), hoặc cổng đã có chương trình khác dùng (chọn cổng khác như trên). Sửa rồi chạy lại lệnh, chạy lại thoải mái.</p>
 
-<p>Tiếp theo, cấu hình kết nối rồi áp cấu trúc bảng. <strong>Chuỗi kết nối</strong> là một dòng chữ duy nhất cho chương trình biết cách tới cơ sở dữ liệu: đăng nhập tên gì, ở đâu, kèm tùy chọn gì. Bạn chỉ viết nó một lần vào <code>conf.json</code> của mình, ở khóa <code>database.url</code>, như <a href="#configuration">phần cấu hình</a> dưới đây mô tả:</p>
+<p>Tiếp theo, cấu hình kết nối rồi áp cấu trúc bảng. Bạn chỉ viết chuỗi kết nối một lần vào <code>conf.json</code> của mình, ở khóa <code>database.url</code>, như <a href="#configuration">phần cấu hình</a> dưới đây mô tả:</p>
 
 <pre><code>cp conf/conf.example.json conf/conf.json
 # rồi sửa database.url trong conf/conf.json nếu bạn đổi cổng
 export AIDEV_CONFIG="$PWD/conf/conf.json"
-# đặt dòng export đó vào shell profile (~/.bashrc, ~/.zshrc, hoặc tương đương)
+# put that export line in your shell profile (~/.bashrc, ~/.zshrc, or equivalent)
 aidev migrate
 # want: "database is up to date (N migrations)" or a list of "applied ..." lines</code></pre>
 
-<p>Vì sao mỗi dòng quan trọng. Dòng đầu chép các thiết lập mẫu vào <code>conf/conf.json</code>. Nếu đổi cổng thì sửa <code>database.url</code> cho khớp. Dòng thứ hai cho aidev biết tập tin nào là <code>conf.json</code> của nó: <code>AIDEV_CONFIG</code> phải chứa đường dẫn tuyệt đối của tập tin, và đó là biến môi trường duy nhất aidev đọc để cấu hình. Dòng cuối áp các migration còn thiếu. <code>aidev migrate</code> có tính lũy đẳng, tức là chạy hai lần cũng không sao: lần thứ hai chẳng còn gì để làm và nó báo cơ sở dữ liệu đã cập nhật.</p>
+<p>Dòng đầu chép các thiết lập mẫu vào <code>conf/conf.json</code>. Dòng thứ hai cho aidev biết tập tin nào là <code>conf.json</code> của nó. Dòng cuối áp các migration còn thiếu. <code>aidev migrate</code> có tính lũy đẳng, tức là chạy hai lần cũng không sao: lần thứ hai chẳng còn gì để làm và nó báo cơ sở dữ liệu đã cập nhật.</p>
 
 <p>Nếu <code>aidev migrate</code> báo cấu hình không hợp lệ thì nó sẽ nêu tên thiết lập. Nếu không kết nối được thì kiểm tra xem <code>make db-up</code> còn chạy không, và cổng trong <code>database.url</code> có khớp với cổng cơ sở dữ liệu đang nghe không. Nếu bạn sửa một tập tin migration đã áp rồi thì bộ migrator sẽ từ chối khởi động và nói rõ: đừng bao giờ sửa migration đã áp, hãy thêm migration mới.</p>
 </section>
