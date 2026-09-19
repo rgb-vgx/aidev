@@ -1,6 +1,13 @@
 package setup
 
-import "context"
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"aidev/internal/config"
+)
 
 // Options says what Run prepares.
 type Options struct {
@@ -40,7 +47,65 @@ type Report struct {
 }
 
 // Run prepares aidev: the database, conf.json and the schema.
-// Specified by run_test.go; not implemented yet.
+//
+// It validates the config path, reuses an existing conf.json (refusing a
+// contradictory DatabaseURL), starts setup's PostgreSQL container only when
+// the database in use is the container's own, writes conf.json only when none
+// exists and only after the database started, then migrates the database.
 func Run(ctx context.Context, opts Options, steps Steps) (Report, error) {
-	return Report{}, nil
+	if opts.ConfigPath == "" || !filepath.IsAbs(opts.ConfigPath) {
+		return Report{}, fmt.Errorf("setup: ConfigPath must be absolute: %q", opts.ConfigPath)
+	}
+
+	_, statErr := os.Stat(opts.ConfigPath)
+	existed := statErr == nil
+
+	var url string
+	if existed {
+		cfg, err := config.LoadFile(opts.ConfigPath)
+		if err != nil {
+			return Report{}, fmt.Errorf("%s: %w", opts.ConfigPath, err)
+		}
+		if opts.DatabaseURL != "" && opts.DatabaseURL != cfg.DatabaseURL {
+			return Report{}, fmt.Errorf("config file %s already names a different database: edit it, or choose another config path", opts.ConfigPath)
+		}
+		url = cfg.DatabaseURL
+	} else {
+		if opts.DatabaseURL != "" {
+			url = opts.DatabaseURL
+		} else {
+			url = opts.Postgres.DatabaseURL()
+		}
+	}
+
+	var action PostgresAction
+	if url == opts.Postgres.DatabaseURL() {
+		var err error
+		action, err = steps.EnsurePostgres(ctx, opts.Postgres)
+		if err != nil {
+			return Report{}, fmt.Errorf("starting PostgreSQL: %w", err)
+		}
+	}
+
+	var created bool
+	if !existed {
+		var err error
+		created, err = WriteConfig(ConfigOptions{Path: opts.ConfigPath, DatabaseURL: url, WorkspaceRoot: opts.WorkspaceRoot})
+		if err != nil {
+			return Report{}, err
+		}
+	}
+
+	applied, err := steps.Migrate(ctx, url)
+	if err != nil {
+		return Report{}, fmt.Errorf("migrating the database: %w", err)
+	}
+
+	return Report{
+		ConfigPath:    opts.ConfigPath,
+		ConfigCreated: created,
+		DatabaseURL:   url,
+		Postgres:      action,
+		Applied:       applied,
+	}, nil
 }
