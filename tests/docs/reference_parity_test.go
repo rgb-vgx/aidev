@@ -123,3 +123,23 @@ func TestTheOldEnvironmentTemplateIsGone(t *testing.T) {
 		t.Errorf("conf/conf.example.json, the template the docs point at, is missing: %v", err)
 	}
 }
+
+// A new reader should reach a working aidev from the top of the README without
+// reading the development sections: a quick start before Installation that runs
+// aidev setup, checks with aidev doctor and installs the plugin.
+func TestReadmeOpensWithAQuickStart(t *testing.T) {
+	text := readDoc(t, "../../README.md")
+	start := strings.Index(text, "\n## Quick start\n")
+	install := strings.Index(text, "\n## Installation\n")
+	if start < 0 || install < 0 || start > install {
+		t.Fatalf("README needs a \"## Quick start\" section before \"## Installation\" (at %d and %d)", start, install)
+	}
+	section := text[start+1:]
+	section = section[:strings.Index(section, "\n## ")+1]
+	for _, want := range []string{"make install", "aidev setup", "--postgres-image", "--database-url",
+		"AIDEV_CONFIG", "aidev doctor", "claude plugin install aidev@aidev"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("the quick start does not mention %s", want)
+		}
+	}
+}

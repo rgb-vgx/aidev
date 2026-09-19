@@ -167,3 +167,15 @@ func TestDoctorSkillNamesEveryCheck(t *testing.T) {
 		}
 	}
 }
+
+// A new user's first problem is having no configuration and no database; the
+// doctor skill must know the command that makes both, and its flags for a
+// company registry or an existing database.
+func TestDoctorSkillOffersAidevSetup(t *testing.T) {
+	text := readDoc(t, pluginDir+"/skills/doctor/SKILL.md")
+	for _, want := range []string{"`aidev setup`", "--postgres-image", "--database-url", "settings.json"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the doctor skill does not mention %s", want)
+		}
+	}
+}

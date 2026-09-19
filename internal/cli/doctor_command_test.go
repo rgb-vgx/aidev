@@ -48,7 +48,7 @@ func TestDoctorReportsEveryCheckAndFailsOnAnUnreachableDatabase(t *testing.T) {
 			t.Errorf("output does not list the %s check:\n%s", name, stdout)
 		}
 	}
-	if !strings.Contains(stdout, "make db-up") {
+	if !strings.Contains(stdout, "aidev setup") {
 		t.Errorf("output does not say how to start the database:\n%s", stdout)
 	}
 	if strings.Contains(stdout+stderr+err.Error(), "hunter2") {
