@@ -81,7 +81,7 @@ func EnsurePostgres(ctx context.Context, d Docker, o PostgresOptions, poll, time
 			"-e", "POSTGRES_PASSWORD="+o.Password,
 			"-e", "POSTGRES_DB="+o.Database,
 			"-e", "POSTGRES_INITDB_ARGS=--encoding=UTF8 --locale=C",
-			"-p", fmt.Sprintf("%d:5432", o.Port),
+			"-p", fmt.Sprintf("127.0.0.1:%d:5432", o.Port),
 			"-v", o.Volume+":/var/lib/postgresql/data",
 			"--health-cmd", "pg_isready -U "+o.User+" -d "+o.Database,
 			"--health-interval", "2s",
