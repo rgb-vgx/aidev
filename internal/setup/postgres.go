@@ -73,6 +73,29 @@ func EnsurePostgres(ctx context.Context, d Docker, o PostgresOptions, poll, time
 			return "", fmt.Errorf("docker: %w", err)
 		}
 		// The container is missing: create it with the compose settings.
+		// The compose project name is not pinned, so compose's volume is
+		// <project>_aidev-pgdata, and task worktrees leave more of them; see
+		// docs/architecture.md. Creating the container on a new, empty volume
+		// while compose volumes exist would hide earlier data, and picking one
+		// would be a guess, so stop and let the user choose.
+		if _, err := d.Run(ctx, "volume", "inspect", o.Volume); err != nil {
+			if !strings.Contains(strings.ToLower(err.Error()), "no such volume") {
+				return "", fmt.Errorf("docker: %w", err)
+			}
+			lsOut, err := d.Run(ctx, "volume", "ls", "-q", "--filter", "label=com.docker.compose.volume=aidev-pgdata")
+			if err != nil {
+				return "", fmt.Errorf("docker: %w", err)
+			}
+			var names []string
+			for _, line := range strings.Split(lsOut, "\n") {
+				if name := strings.TrimSpace(line); name != "" {
+					names = append(names, name)
+				}
+			}
+			if len(names) > 0 {
+				return "", fmt.Errorf("docker compose volumes exist that may hold earlier aidev data: %s; run `aidev setup --postgres-volume <name>` to use one of them, or run `docker volume create %s` and then `aidev setup` again to start with an empty database", strings.Join(names, ", "), o.Volume)
+			}
+		}
 		if _, err := d.Run(ctx, "run",
 			"-d",
 			"--name", o.Container,

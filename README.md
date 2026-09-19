@@ -307,7 +307,8 @@ the work was kept for inspection
 ```bash
 aidev version
 aidev setup [--config PATH] [--database-url URL] [--postgres-image IMAGE]
-            [--postgres-port N] [--workspace-root DIR]   # prepare a new machine
+            [--postgres-port N] [--postgres-volume NAME]
+            [--workspace-root DIR]                        # prepare a new machine
 aidev doctor [--json]                 # check that aidev can work, and how to fix it
 aidev config [--json]                 # the resolved configuration, password redacted
 aidev migrate [--json]                # apply pending migrations
@@ -634,8 +635,12 @@ project after the directory. They are empty litter rather than data:
 `docker volume prune` removes them. The project name is left unpinned on purpose —
 see [the reasoning](docs/architecture.md#postgresql-data-and-why-the-compose-project-name-is-not-pinned).
 
-**Is the database persistent?** Yes: a named volume, `aidev-pgdata`. `make db-down`
-keeps it and only `make db-reset` destroys it. There is no PersistentVolumeClaim
+**Is the database persistent?** Yes: a named volume. `make db-up` keeps it in
+`aidev_aidev-pgdata` (Compose prefixes the project name), `aidev setup` in
+`aidev-pgdata`. `make db-down` keeps it and only `make db-reset` destroys it. If
+`aidev setup` must create its container while Compose volumes exist, it stops and
+lists them rather than start on an empty database: pass
+`--postgres-volume aidev_aidev-pgdata` to keep the `make db-up` data. There is no PersistentVolumeClaim
 because there is no Kubernetes.
 
 **A task failed and you want to know why.**
