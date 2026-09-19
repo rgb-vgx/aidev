@@ -137,9 +137,6 @@ func waitHealthy(ctx context.Context, d Docker, o PostgresOptions, action Postgr
 			return "", fmt.Errorf("waiting for postgres container %s: %w: run `docker logs %s` to investigate", o.Container, ctx.Err(), o.Container)
 		case <-time.After(poll):
 		}
-		if time.Now().After(deadline) {
-			return "", fmt.Errorf("postgres container %s did not become healthy within %s: run `docker logs %s` to investigate", o.Container, timeout, o.Container)
-		}
 	}
 }
 
