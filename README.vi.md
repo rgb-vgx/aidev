@@ -78,7 +78,7 @@ Cài đặt bản phát hành chính thức:
 curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh
 ```
 
-Lệnh này tải bản phát hành cho Linux hoặc macOS (amd64 hoặc arm64), đối chiếu với `SHA256SUMS` của bản phát hành rồi cài aidev vào `~/.local/bin`, và sẽ báo cho bạn biết nếu thư mục đó chưa nằm trên `PATH`. Để ghim một phiên bản cụ thể, hãy đặt `AIDEV_VERSION=v0.1.0`. Muốn tự biên dịch từ mã nguồn, hãy xem mục Installation bên dưới.
+Lệnh này tải bản phát hành cho Linux hoặc macOS (amd64 hoặc arm64), đối chiếu với `SHA256SUMS` của bản phát hành rồi cài aidev vào `~/.local/bin`, và sẽ báo cho bạn biết nếu thư mục đó chưa nằm trên `PATH`. Để ghim một phiên bản cụ thể, hãy đặt `AIDEV_VERSION=v0.1.0`. Muốn tự biên dịch từ mã nguồn, hãy xem mục Cài đặt bên dưới.
 
 Chuẩn bị aidev bằng một lệnh duy nhất:
 
@@ -130,7 +130,7 @@ Rồi nhờ Claude "giao việc này cho aidev"; các skill của plugin sẽ lo
 ## Cài đặt
 
 ```bash
-git clone <this repository> aidev
+git clone https://github.com/rgb-vgx/aidev.git
 cd aidev
 make build            # produces bin/aidev
 ```
@@ -424,7 +424,7 @@ diff vượt ra ngoài các test xanh, hợp nhất, báo cáo theo cách nói c
 ```bash
 make install                                   # the plugin runs `aidev mcp` from PATH
 export AIDEV_CONFIG="$PWD/conf/conf.json"      # in your shell profile; the plugin passes it on
-claude plugin marketplace add /abs/path/to/aidev
+claude plugin marketplace add rgb-vgx/aidev
 claude plugin install aidev@aidev
 
 claude mcp list

@@ -130,7 +130,7 @@ For the step-by-step guide see [docs/guide/getting-started.html](docs/guide/gett
 ## Installation
 
 ```bash
-git clone <this repository> aidev
+git clone https://github.com/rgb-vgx/aidev.git
 cd aidev
 make build            # produces bin/aidev
 ```
@@ -450,7 +450,7 @@ the diff beyond the green tests, merge, report in the user's terms).
 ```bash
 make install                                   # the plugin runs `aidev mcp` from PATH
 export AIDEV_CONFIG="$PWD/conf/conf.json"      # in your shell profile; the plugin passes it on
-claude plugin marketplace add /abs/path/to/aidev
+claude plugin marketplace add rgb-vgx/aidev
 claude plugin install aidev@aidev
 
 claude mcp list
