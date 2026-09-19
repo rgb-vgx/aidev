@@ -125,7 +125,7 @@ claude plugin install aidev@aidev
 
 Rồi nhờ Claude "giao việc này cho aidev"; các skill của plugin sẽ lo việc ủy thác, đánh giá và sửa lỗi (`aidev:delegate`, `aidev:review`, `aidev:doctor`).
 
-Để xem hướng dẫn từng bước, hãy đọc [docs/guide/getting-started.html](docs/guide/vi/getting-started.html); các mục bên dưới giải thích từng phần một cách thủ công.
+Để xem hướng dẫn từng bước, hãy đọc [docs/guide/vi/getting-started.html](docs/guide/vi/getting-started.html); các mục bên dưới giải thích từng phần một cách thủ công.
 
 ## Cài đặt
 
@@ -598,7 +598,7 @@ aidev task events TASK-000001          # what happened, in order
 
 | | |
 |---|---|
-| **[docs/guide/index.html](docs/guide/vi/index.html)** | **Hãy bắt đầu ở đây nếu bạn là người mới.** Hướng dẫn bốn trang viết cho tuần đầu tiên: aidev là gì, bắt đầu, gỡ lỗi, và tham khảo đầy đủ. Hãy mở nó trong trình duyệt |
+| **[docs/guide/vi/index.html](docs/guide/vi/index.html)** | **Hãy bắt đầu ở đây nếu bạn là người mới.** Hướng dẫn bốn trang viết cho tuần đầu tiên: aidev là gì, bắt đầu, gỡ lỗi, và tham khảo đầy đủ. Hãy mở nó trong trình duyệt |
 | [docs/research.md](docs/research.md) | Những gì Claude Code, OpenCode, git và PostgreSQL đã cài đặt thật sự làm — đã đo đạc, với các giả định và câu hỏi mở được đánh dấu |
 | [docs/architecture.md](docs/architecture.md) | Cách sắp xếp các gói, các quyết định thiết kế và cái giá của chúng, các khe mở rộng |
 | [docs/database.md](docs/database.md) | Lược đồ, các ràng buộc, vòng đời, đồng thời, các migration |
