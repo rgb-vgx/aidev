@@ -277,3 +277,200 @@ the work was kept for inspection
 ```
 
 `aidev task run` thoát với mã khác không khi một task không thành công, nên `aidev task run TASK-000001 && ./deploy.sh` sẽ hành xử đúng như bạn mong đợi.
+
+## Các lệnh
+
+```bash
+aidev version
+aidev setup [--config PATH] [--database-url URL] [--postgres-image IMAGE]
+            [--postgres-port N] [--postgres-volume NAME]
+            [--workspace-root DIR]                        # prepare a new machine
+aidev doctor [--json]                 # check that aidev can work, and how to fix it
+aidev config [--json]                 # the resolved configuration, password redacted
+aidev migrate [--json]                # apply pending migrations
+
+aidev task create --title T --verify CMD [--repo .] [--description D]
+                  [--acceptance A] [--agent build] [--priority N]
+                  [--requires-approval] [--base-ref REF] [--timeout 30m]
+aidev task list   [--status S,S] [--repo .] [--limit N] [--json]
+aidev task get    <task> [--json]
+aidev task run    <task> [--json]
+aidev task result <task> [--logs] [--json]
+aidev task events <task> [--payload] [--after SEQ] [--json]
+aidev task cancel <task> [--reason R] [--json]
+aidev task approve <task> [--deny] [--by WHO] [--reason R] [--json]
+```
+
+`<task>` là mã tham chiếu (`TASK-000001`, không phân biệt chữ hoa chữ thường) hoặc UUID.
+Mọi lệnh trừ `setup` đều nhận `--json` để in kết quả cho máy đọc; dạng cho người đọc là
+mặc định. Nhật ký luôn ghi ra stderr, nên `aidev task get TASK-000001 --json | jq`
+vẫn chạy được trong khi các chẩn đoán hiển thị bình thường.
+
+Các task bị đánh dấu `--requires-approval` sẽ dừng lại trước khi làm bất cứ việc gì — không worktree, không
+lần thử nào — cho tới khi `aidev task approve` cho phép chúng tiếp tục.
+
+## Chuyện gì xảy ra bên trong
+
+```text
+create task ──▶ isolate in a git worktree ──▶ run the agent there
+                                                      │
+  record in PostgreSQL ◀── verify independently ◀──────┘
+                                   │
+                    passed ──▶ commit to aidev/<ref>, remove the worktree
+                    failed ──▶ keep the worktree for inspection
+```
+
+Một task thành công để lại một commit trên nhánh riêng của nó, nên kết quả xem lại được
+bằng git thông thường:
+
+```bash
+git log --oneline aidev/TASK-000001
+git diff main..aidev/TASK-000001
+```
+
+Không có gì được hợp nhất, và không có gì bao giờ được commit lên nhánh làm việc của bạn.
+
+Một task thất bại để lại worktree của nó nguyên vẹn đúng như agent đã bỏ lại, nằm dưới
+`workspace_root`, vì công việc dở dang thường là thứ hữu ích nhất của một thất bại.
+`git worktree remove` từ chối xóa công việc chưa commit và aidev không bao giờ
+tự ý vượt qua điều đó, nên điều này đúng bất kể cấu hình ra sao. Xem
+[chính sách dọn dẹp](docs/architecture.md#cleanup-policy).
+
+Output cho người đọc đi ra **stdout**; log có cấu trúc đi ra **stderr**. Sự phân tách
+này mang tính quyết định: khi aidev chạy như một máy chủ MCP, stdout mang giao thức
+JSON-RPC, nên không có gì khác được phép ghi ra đó.
+
+## Thiết lập OpenCode
+
+Hãy cài OpenCode sao cho gọi được trên `PATH`, hoặc đặt `agent.opencode.command`. Không
+cần chứng thực API nào: các mô hình công khai `opencode/*` chạy được và báo chi phí bằng
+không, và đó là cách test đầu cuối của dự án này chạy mà không cần khóa.
+
+Mô hình mặc định là `opencode/muse-spark-1.3-contributor-free`, được chọn bằng
+đo đạc chứ không phải theo tên. Trên cùng những prompt đơn giản giống hệt nhau, nó trả lời trong
+3.2–3.9s qua các lần chạy lặp lại; mô hình miễn phí còn lại dao động giữa 3.9s và 100.5s
+cho cùng công việc — tức là khác biệt giữa một task một phút và một
+task mười một phút. Hãy đặt `agent.opencode.model` thành bất kỳ mô hình nào bạn có chứng thực, hoặc
+thành chuỗi rỗng để OpenCode tự quyết.
+
+```bash
+opencode --version          # verified against 1.18.30
+opencode models | head      # the opencode/* entries need no credentials
+```
+
+aidev gọi `opencode run --dir <worktree> --format json -- <prompt>` rồi đọc
+luồng event phân tách bằng xuống dòng. Bạn không bao giờ tự gõ lệnh đó; biết nó là việc của
+aidev, không phải của planner.
+
+Hai hành vi đã đo đạc đáng biết trước task đầu tiên của bạn:
+
+- **Một task lâu đúng bằng thời gian mô hình chạy.** Phần việc của chính aidev trong một lần chạy —
+  worktree, diff, verification, mọi lần ghi cơ sở dữ liệu — được đo chỉ 0.2 giây
+  so với thời gian agent từ 9 tới 656 giây. Độ trễ của bậc miễn phí là biến số quyết định,
+  và không phải lúc nào cũng đoán trước được, đó là lý do
+  `tasks.timeout` mặc định 30 phút.
+- **OpenCode ghi tập tin mà không hỏi**, ngay cả khi không có cờ `--auto`. Đó
+  là lý do mọi task chạy trong một worktree riêng và aidev từ chối đường dẫn worktree
+  nằm bên trong kho mã của bạn.
+
+Xem [docs/research.md](docs/research.md) để biết các số đo đằng sau tất cả những điều này.
+
+## Thiết lập MCP cho Claude Code
+
+Đây chính là lý do aidev tồn tại: Claude Code lập kế hoạch và đánh giá, aidev cách ly, chạy và
+kiểm chứng.
+
+```bash
+make install                                          # aidev on your PATH
+claude mcp add --scope user -e AIDEV_CONFIG=/abs/path/conf.json aidev -- /abs/path/aidev mcp
+
+claude mcp list
+# aidev: /abs/path/aidev mcp - ✔ Connected
+```
+
+**Hãy dùng `--scope user`.** Lệnh này đăng ký aidev cho mọi dự án, và đó đúng là ý nghĩa của nó:
+bạn mở Claude Code trong bất kỳ kho mã nào mình đang làm việc rồi ủy thác ngay tại đó.
+`--scope local` giam nó trong một thư mục dự án duy nhất, còn `--scope project`
+ghi một tập tin `.mcp.json` dùng chung mà mỗi người phải duyệt một lần.
+
+<!-- Ghi chú của người dịch: bản gốc có span mã nội tuyến "` writes a shareable `" do ngắt dòng giữa chừng; giữ nguyên văn tại đây để khớp với bản gốc. -->
+
+Không có chứng thực nào nằm trên lệnh đăng ký: `AIDEV_CONFIG` chỉ tới conf.json, và
+aidev đọc mật khẩu cơ sở dữ liệu từ đó, nên `~/.claude.json` không chứa
+chuỗi kết nối nào. Hãy dùng đúng tập tin và đường dẫn mà `aidev config` báo, để máy chủ
+khởi động đã có sẵn cấu hình. Tám công cụ sau đây sẽ khả dụng:
+
+| Công cụ | Mục đích |
+|---|---|
+| `aidev_create_task` | tạo task; bắt buộc phải có lệnh verification |
+| `aidev_run_task` | cách ly, ủy thác, kiểm chứng, ghi nhận |
+| `aidev_get_task_result` | kết quả, kèm bằng chứng verification |
+| `aidev_get_task_events` | lịch sử, và tiến độ khi task đang chạy |
+| `aidev_list_tasks` / `aidev_get_task` | tìm công việc |
+| `aidev_cancel_task` | dừng task; worktree của nó được giữ lại |
+| `aidev_approve_task` | con người cho phép task bị chặn chạy tiếp |
+
+Một lần chạy mất vài phút, nên `aidev_run_task` chờ một khoảng thời gian giới hạn rồi trả về với
+`still_running: true` trong khi task vẫn tiếp tục; planner thăm dò
+`aidev_get_task_result`. Trường cần đọc là `succeeded`, chỉ đúng khi
+verification của chính aidev đã qua.
+
+### Hoặc cài plugin Claude Code
+
+Kho mã này cũng là một chợ plugin. plugin `aidev` đăng ký cùng một
+máy chủ MCP và thêm hai skill dạy Claude quy trình xung quanh nó:
+`aidev:delegate` (thống nhất thế nào là "xong", viết test lỗi trên nhánh `spec/*`,
+giữ các task nhỏ, ủy thác, khôi phục sau một task thất bại) và `aidev:review` (soát
+diff vượt ra ngoài các test xanh, hợp nhất, báo cáo theo cách nói của người dùng).
+
+```bash
+make install                                   # the plugin runs `aidev mcp` from PATH
+export AIDEV_CONFIG="$PWD/conf/conf.json"      # in your shell profile; the plugin passes it on
+claude plugin marketplace add /abs/path/to/aidev
+claude plugin install aidev@aidev
+
+claude mcp list
+# plugin:aidev:aidev: aidev mcp - ✔ Connected
+```
+
+Máy chủ của plugin đọc `AIDEV_CONFIG` từ môi trường nơi Claude Code khởi động,
+nên hãy export nó trong hồ sơ shell của bạn. Chỉ dùng hoặc plugin hoặc lệnh đăng ký `claude mcp
+add` ở trên, đừng dùng cả hai: dùng cả hai thì mọi công cụ bị liệt kê hai lần.
+
+Hai điều cần biết trước khi ủy thác việc trong một kho mã thật.
+
+**Hãy nói cho agent biết lệnh verification nào phù hợp.** Trong monorepo, `go test ./...`
+từ gốc hiếm khi là kiểm tra đúng. Hãy nêu đúng cái bao phủ thay đổi:
+`--verify 'go test ./backend/...'`, hoặc lệnh test riêng của một dịch vụ.
+
+**Worktree là một bản checkout sạch: chỉ gồm các tập tin đã được theo dõi.** Các phụ thuộc nằm
+ngoài git không có ở đó. `go test` vẫn ổn, vì module cache được dùng chung,
+nhưng `npm test` hoặc `pytest` sẽ thất bại trong một worktree mới trừ khi verification
+của task cài đặt những gì nó cần trước — ví dụ
+`--verify 'npm --prefix web ci'` trước `--verify 'npm --prefix web test'`.
+
+Đầy đủ lược đồ, lỗi và tác dụng phụ: **[docs/mcp-tools.md](docs/mcp-tools.md)**.
+
+### Việc này đã được chạy thật, không chỉ đấu nối xong
+
+Claude Code được giao một kho mã có test không biên dịch được, được dặn chỉ dùng
+các công cụ MCP của aidev, và bị từ chối rõ ràng `Edit`, `Write`, `Read` và `Bash` —
+nên công việc không thể đến từ đâu khác ngoài aidev. Nó đã tạo và chạy
+task, rồi báo cáo lại:
+
+```text
+The task is TASK-000008 and it succeeded (status SUCCEEDED, first attempt, about 9 seconds).
+
+| Command         | Exit code | Result                        |
+| go test ./...   | 0         | PASSED: ok  demo (cached)     |
+| go vet ./...    | 0         | PASSED, no output             |
+
+What changed: one new file, reverse.go. reverse_test.go was not modified.
+Where the work is: committed on branch aidev/TASK-000008 (commit 1aeca30).
+Nothing was merged into your branch, and the task's worktree has been removed.
+```
+
+Đã kiểm tra lại sau đó mà không tin vào bất cứ điều gì trong đó: task nằm trong PostgreSQL với cả hai
+bước verification ở mã thoát 0, cây làm việc của chính kho mã sạch sẽ và
+không có reverse.go, còn nhánh kia thì có, và `go clean -testcache && go test` chạy tay
+trên nhánh đó cho `TestReverse` qua. Toàn bộ cuộc trao đổi mất 35 giây.
