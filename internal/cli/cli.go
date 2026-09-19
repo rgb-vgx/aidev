@@ -84,6 +84,11 @@ func Run(ctx context.Context, version string, args []string, stdout, stderr io.W
 			summary: "check that aidev can work here, and say how to fix what cannot",
 			run:     runDoctor,
 		},
+		"setup": {
+			name:    "setup",
+			summary: "prepare aidev on this machine: database, conf.json and schema",
+			run:     runSetup,
+		},
 	}
 
 	if len(args) == 0 {
