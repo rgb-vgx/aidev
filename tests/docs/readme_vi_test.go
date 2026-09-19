@@ -82,9 +82,24 @@ func proseOnly(section string) string {
 }
 
 var (
-	inlineCode = regexp.MustCompile("`([^`\n]+)`")
+	inlineCode = regexp.MustCompile("`([^`]+)`")
 	linkTarget = regexp.MustCompile(`\]\(([^)\s]+)\)`)
+	whitespace = regexp.MustCompile(`\s+`)
 )
+
+// inlineSpans returns the inline code spans of the prose, paragraph by paragraph,
+// with whitespace collapsed: a span may wrap onto the next line, and pairing
+// backticks across a whole section would read the text between two spans as
+// code.
+func inlineSpans(prose string) []string {
+	var spans []string
+	for paragraph := range strings.SplitSeq(prose, "\n\n") {
+		for _, m := range inlineCode.FindAllStringSubmatch(whitespace.ReplaceAllString(paragraph, " "), -1) {
+			spans = append(spans, m[1])
+		}
+	}
+	return spans
+}
 
 // linkedFrom accepts the original target or its Vietnamese counterpart. The
 // English README's link to this translation becomes a link back to the original.
@@ -125,9 +140,10 @@ func TestReadmeVietnameseSections(t *testing.T) {
 					t.Errorf("section %02d (%s) drops or changes the code line %q", i, heading, line)
 				}
 			}
-			for _, m := range inlineCode.FindAllStringSubmatch(proseOnly(en), -1) {
-				if !strings.Contains(v, "`"+m[1]+"`") {
-					t.Errorf("section %02d (%s) drops or changes the inline code `%s`", i, heading, m[1])
+			flat := whitespace.ReplaceAllString(v, " ")
+			for _, span := range inlineSpans(proseOnly(en)) {
+				if !strings.Contains(flat, "`"+span+"`") {
+					t.Errorf("section %02d (%s) drops or changes the inline code `%s`", i, heading, span)
 				}
 			}
 			for _, m := range linkTarget.FindAllStringSubmatch(proseOnly(en), -1) {

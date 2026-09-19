@@ -393,8 +393,6 @@ bạn mở Claude Code trong bất kỳ kho mã nào mình đang làm việc r�
 `--scope local` giam nó trong một thư mục dự án duy nhất, còn `--scope project`
 ghi một tập tin `.mcp.json` dùng chung mà mỗi người phải duyệt một lần.
 
-<!-- Ghi chú của người dịch: bản gốc có span mã nội tuyến "` writes a shareable `" do ngắt dòng giữa chừng; giữ nguyên văn tại đây để khớp với bản gốc. -->
-
 Không có chứng thực nào nằm trên lệnh đăng ký: `AIDEV_CONFIG` chỉ tới conf.json, và
 aidev đọc mật khẩu cơ sở dữ liệu từ đó, nên `~/.claude.json` không chứa
 chuỗi kết nối nào. Hãy dùng đúng tập tin và đường dẫn mà `aidev config` báo, để máy chủ
