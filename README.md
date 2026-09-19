@@ -1,5 +1,7 @@
 # aidev
 
+*Tiếng Việt: [README.vi.md](README.vi.md)*
+
 aidev is a local-first control plane for delegating implementation work to a
 coding agent and **verifying the result yourself**.
 
