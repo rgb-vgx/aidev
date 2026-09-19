@@ -472,3 +472,135 @@ Nothing was merged into your branch, and the task's worktree has been removed.
 bước verification ở mã thoát 0, cây làm việc của chính kho mã sạch sẽ và
 không có reverse.go, còn nhánh kia thì có, và `go clean -testcache && go test` chạy tay
 trên nhánh đó cho `TestReverse` qua. Toàn bộ cuộc trao đổi mất 35 giây.
+
+## Phát triển và kiểm thử
+
+```bash
+make check            # the gate: gofmt, go vet, staticcheck, unit tests
+make test             # unit tests only
+make test-integration # everything, including tests that need PostgreSQL
+make test-e2e         # the real OpenCode, end to end (slow: minutes)
+```
+
+`make check` chạy được trên máy không có cơ sở dữ liệu: các test tích hợp tự bỏ qua trừ khi có đặt `TEST_DATABASE_URL`, nên một lần thất bại luôn là lỗi thật chứ không phải do thiếu môi trường.
+
+Để chạy các test cơ sở dữ liệu:
+
+```bash
+make db-up
+make test-db-create        # creates the aidev_test database
+make test-integration
+```
+
+Phân tích tĩnh tùy chọn nhưng nên dùng:
+
+```bash
+go install honnef.co/go/tools/cmd/staticcheck@latest
+```
+
+`make lint` dùng công cụ đó khi có sẵn và sẽ nói rõ khi chưa có.
+
+Các mục tiêu hữu ích khác: `make db-reset` (xóa dữ liệu và bắt đầu sạch), `make db-logs`, `make help`.
+
+### Những gì các test giữ
+
+Bộ test không chỉ để đo độ phủ; một số test tồn tại để giữ các bất biến cụ thể:
+
+- `VERIFYING` là trạng thái duy nhất có thể tới được `SUCCEEDED`.
+- Mọi trạng thái chưa kết thúc đều tới được `CANCELLED`, nên không task nào là không thể dừng.
+- Các kiểu liệt kê trong Go và các ràng buộc `CHECK` của SQL không thể lệch nhau — điều này được kiểm chứng bằng cách xác nhận test sẽ thất bại khi một giá trị bị gỡ khỏi ràng buộc.
+- `UPDATE` trên nhật ký event bị cơ sở dữ liệu từ chối; xóa một task vẫn xóa theo toàn bộ lịch sử của nó.
+- Một task và event tạo ra nó được commit cùng nhau hoặc không commit gì cả.
+- Một agent không thể tạo ra một task thành công chỉ bằng cách tuyên bố thành công.
+- Một tập tin được ghi trong worktree không hiện ra trong kho mã, kho mã vẫn sạch.
+- Việc thu thập diff lộ ra các tập tin mới và không stage bất cứ gì trong worktree.
+- Worktree của lần thử thất bại được giữ lại; công việc của lần thành công được commit trước.
+- Hủy một task giữa chừng vẫn ghi nhận việc hủy, thay vì để hàng đó kẹt ở `RUNNING`.
+- Việc hủy diệt toàn bộ nhóm tiến trình, nên các tiến trình con của lệnh verification không sống sót sau nó.
+
+Một số điều trong đó đã được xác nhận bằng cách cố tình phá hỏng phần cài đặt rồi kiểm tra rằng test thất bại, thay vì cho rằng test xanh là đã có bảo đảm thật.
+
+## Xem một task đã làm gì (tùy chọn)
+
+aidev xuất traces OpenTelemetry khi đã cấu hình đầu OTLP, và không xuất gì cả khi chưa cấu hình. Mỗi lần chạy task có một trace, trong đó lần gọi agent mang theo mức dùng token của nó.
+
+```bash
+make jaeger-up   # one container, UI on :16686
+make jaeger-env  # prints the tracing object to paste into the conf.json that AIDEV_CONFIG names
+aidev task run TASK-000001
+```
+
+Để có góc nhìn hướng LLM kèm chi phí, Langfuse tự host cũng dùng được — gồm sáu dịch vụ, nên nó được khởi động riêng:
+
+```bash
+make langfuse-up   # six services, UI on :3000
+make langfuse-env  # prints the tracing object to paste into the conf.json that AIDEV_CONFIG names
+make langfuse-credentials   # the bootstrapped UI login, on :3000
+```
+
+Một lần chạy thật trông như thế này:
+
+```text
+aidev.task.run            10.97s
+  aidev.worktree.create    0.02s
+  aidev.agent.run         10.86s   usage {input: 9580, output: 457}
+  aidev.verification       0.08s
+    aidev.verification.step   0s   go test ./... → exit 0
+```
+
+Nó cũng cho thấy thời gian đi vào đâu: agent chiếm 10,86 trên 10,97 giây.
+
+Hai ghi chú rút ra khi làm cho việc này chạy. Langfuse v4 đã bỏ `GET /api/public/traces` — hãy dùng `GET /api/public/v2/observations`, và hãy kiểm tra trạng thái HTTP thay vì đọc trường `data` rỗng trong thân lỗi. Và aidev cố ý **không** truyền cấu hình OTLP của mình cho agent: OpenCode cũng đã được gắn đo, và một lần chạy đã từng đẩy 1536 span nội bộ của chính nó vào backend của bạn dưới tên aidev.
+
+## Khi có sự cố
+
+**Hãy bắt đầu với `aidev doctor`.** Lệnh này kiểm tra, theo thứ tự, rằng cấu hình đọc được, rằng git và agent đã cấu hình đã được cài, rằng cơ sở dữ liệu trả lời và đã được migration, và rằng `workspace_root` ghi được. Mỗi vấn đề đi kèm cách xử lý, mật khẩu cơ sở dữ liệu không bao giờ hiện ra, và lệnh thoát với mã 1 khi có gì đó hỏng. `aidev doctor --json` in cùng kết quả dưới dạng danh sách JSON; skill `aidev:doctor` của plugin đọc kết quả đó và sửa những gì nó sửa an toàn được.
+
+```bash
+aidev doctor
+# ok    config      Configuration is readable.
+# ...
+# FAIL  database    Cannot reach the database: ... connection refused.
+#       fix: Start PostgreSQL with `make db-up` in the aidev repository and ...
+```
+
+**aidev bị tắt giữa lúc một task đang chạy.** Task kẹt ở `RUNNING`, và không có gì nhận lại nó nữa. Hãy hủy nó:
+
+```bash
+aidev task list --status RUNNING,VERIFYING
+aidev task cancel TASK-000001 --reason "aidev was killed mid-run"
+```
+
+Công việc dở dang được giữ lại. aidev cố ý không tự hết hạn một task `RUNNING` cũ — xem [lý do](docs/architecture.md#when-a-run-is-interrupted).
+
+**Không gian làm việc đầy dần.** Các task thất bại cố ý giữ lại worktree của chúng:
+
+```bash
+aidev worktree list                        # with tasks, statuses and sizes
+aidev worktree remove TASK-000001          # refused if work is uncommitted
+aidev worktree remove TASK-000001 --force  # discard it deliberately
+```
+
+**Có các volume Docker mang tên task.** Một agent đã chạy `docker compose` bên trong worktree của nó, nơi có một bản sao của `docker-compose.yml`, và Compose đã đặt tên dự án theo thư mục. Chúng chỉ là rác rỗng chứ không phải dữ liệu: `docker volume prune` xóa chúng. Tên dự án cố ý để không ghim — xem [lý do](docs/architecture.md#postgresql-data-and-why-the-compose-project-name-is-not-pinned).
+
+**Cơ sở dữ liệu có được giữ lâu dài không?** Có: nhờ một volume đã đặt tên. `make db-up` giữ nó trong `aidev_aidev-pgdata` (Compose thêm tiền tố tên dự án), `aidev setup` giữ trong `aidev-pgdata`. `make db-down` giữ lại nó và chỉ `make db-reset` mới phá hủy nó. Nếu `aidev setup` phải tạo container của nó trong khi các volume của Compose đã tồn tại, nó sẽ dừng lại và liệt kê chúng thay vì khởi động trên một cơ sở dữ liệu rỗng: hãy truyền `--postgres-volume aidev_aidev-pgdata` để giữ dữ liệu của `make db-up`. Không có PersistentVolumeClaim vì không có Kubernetes.
+
+**Một task thất bại và bạn muốn biết vì sao.**
+
+```bash
+aidev task result TASK-000001 --logs   # verification output, agent transcript, diff
+aidev task events TASK-000001          # what happened, in order
+```
+
+**Một task chạy chậm.** Hầu hết thời gian đó là do mô hình, không phải aidev — đã đo được 0,2 giây việc của chính aidev so với 9 tới 656 giây của agent. Hãy xem `aidev task events` để biết nó đang ở giai đoạn nào, và cân nhắc một mô hình nhanh hơn.
+
+## Tài liệu
+
+| | |
+|---|---|
+| **[docs/guide/index.html](docs/guide/vi/index.html)** | **Hãy bắt đầu ở đây nếu bạn là người mới.** Hướng dẫn bốn trang viết cho tuần đầu tiên: aidev là gì, bắt đầu, gỡ lỗi, và tham khảo đầy đủ. Hãy mở nó trong trình duyệt |
+| [docs/research.md](docs/research.md) | Những gì Claude Code, OpenCode, git và PostgreSQL đã cài đặt thật sự làm — đã đo đạc, với các giả định và câu hỏi mở được đánh dấu |
+| [docs/architecture.md](docs/architecture.md) | Cách sắp xếp các gói, các quyết định thiết kế và cái giá của chúng, các khe mở rộng |
+| [docs/database.md](docs/database.md) | Lược đồ, các ràng buộc, vòng đời, đồng thời, các migration |
+| [docs/mcp-tools.md](docs/mcp-tools.md) | Mọi công cụ MCP: đầu vào, đầu ra, lỗi, tác dụng phụ, và những gì cố ý không lộ ra |
+| [AGENTS.md](AGENTS.md) | Các quy ước cho agent (và con người) đóng góp vào kho mã này |
