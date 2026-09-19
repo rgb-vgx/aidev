@@ -29,6 +29,7 @@ func runSetup(ctx context.Context, env *Env, args []string) error {
 	databaseURL := fs.String("database-url", "", "an existing PostgreSQL database to use instead of starting a container")
 	postgresImage := fs.String("postgres-image", defaults.Image, "image for setup's PostgreSQL container, for example a copy in your company's registry")
 	postgresPort := fs.Int("postgres-port", defaults.Port, "host port for setup's PostgreSQL container (bound to 127.0.0.1)")
+	postgresVolume := fs.String("postgres-volume", defaults.Volume, "Docker volume for setup's PostgreSQL container, for example aidev_aidev-pgdata to keep data from make db-up")
 	workspaceRoot := fs.String("workspace-root", "", "where task worktrees go (default: aidev's own default)")
 	if err := fs.Parse(args); err != nil {
 		return usagef("aidev setup: %v", err)
@@ -44,6 +45,9 @@ func runSetup(ctx context.Context, env *Env, args []string) error {
 	}
 	if set["database-url"] && set["postgres-port"] {
 		return usagef("aidev setup: --postgres-port configures setup's own container and cannot be combined with --database-url")
+	}
+	if set["database-url"] && set["postgres-volume"] {
+		return usagef("aidev setup: --postgres-volume configures setup's own container and cannot be combined with --database-url")
 	}
 
 	configPath := *configFlag
@@ -72,6 +76,7 @@ func runSetup(ctx context.Context, env *Env, args []string) error {
 	postgres := defaults
 	postgres.Image = *postgresImage
 	postgres.Port = *postgresPort
+	postgres.Volume = *postgresVolume
 
 	opts := setup.Options{
 		ConfigPath:    configPath,
