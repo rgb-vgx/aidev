@@ -6,7 +6,8 @@
 # `docker compose up` fail. Override with AIDEV_DB_PORT if 5434 is taken too.
 services:
   postgres:
-    image: postgres:16-alpine
+    # The image can be replaced, for example by a private registry copy.
+    image: ${AIDEV_DB_IMAGE:-postgres:16-alpine}
     # Overridable so that two checkouts of aidev can run their own database:
     # a fixed name makes the second `docker compose up` fail on a name clash.
     container_name: ${AIDEV_DB_CONTAINER:-aidev-postgres}
