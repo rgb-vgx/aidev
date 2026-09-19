@@ -94,7 +94,8 @@ func TestUnreadableConfigFailsAndSkipsWhatNeedsIt(t *testing.T) {
 	results := Run(context.Background(), deps)
 	got := byName(t, results)
 
-	assertFail(t, got[CheckConfig], "AIDEV_CONFIG", "conf.example.json")
+	// A new user has no conf.json yet: `aidev setup` writes one.
+	assertFail(t, got[CheckConfig], "aidev setup", "AIDEV_CONFIG", "conf.example.json")
 	if !strings.Contains(got[CheckConfig].Summary, "AIDEV_CONFIG is not set") {
 		t.Errorf("config summary should carry the loader's message, got %q", got[CheckConfig].Summary)
 	}
@@ -182,7 +183,9 @@ func TestUnreachableDatabaseSuggestsStartingItAndNeverShowsThePassword(t *testin
 
 	results := Run(context.Background(), deps)
 	got := byName(t, results)
-	assertFail(t, got[CheckDatabase], "make db-up", "database.url")
+	// `aidev setup` starts the container without a checkout of the repository,
+	// which `make db-up` needs.
+	assertFail(t, got[CheckDatabase], "aidev setup", "database.url")
 	if !strings.Contains(got[CheckDatabase].Summary, "connection refused") {
 		t.Errorf("database summary should say why it failed, got %q", got[CheckDatabase].Summary)
 	}
@@ -210,7 +213,7 @@ func TestUnreachableDatabaseWithoutDockerSaysToInstallIt(t *testing.T) {
 		return "/usr/bin/" + name, nil
 	}
 	got := byName(t, Run(context.Background(), deps))
-	assertFail(t, got[CheckDatabase], "Docker", "database.url")
+	assertFail(t, got[CheckDatabase], "Docker", "aidev setup", "database.url")
 }
 
 func TestPendingMigrationsFailWithTheCommandThatAppliesThem(t *testing.T) {

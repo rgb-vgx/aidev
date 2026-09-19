@@ -75,9 +75,43 @@ make build
 </section>
 
 <section id="database">
-<h2>Database: starting PostgreSQL and applying migrations</h2>
+<h2>Database and configuration: one command, <code>aidev setup</code></h2>
 
 <p><strong>PostgreSQL</strong> is the database where aidev keeps everything. A <strong>migration</strong> is a versioned SQL file that creates or changes the database tables. Applying migrations means running those files in order so the database schema matches what the program expects. Migrations are embedded in the aidev program itself, so there is no separate migration tool to install.</p>
+
+<p>The recommended way is one command:</p>
+
+<pre><code>aidev setup</code></pre>
+
+<p>What it does: it starts PostgreSQL in Docker in a container named <code>aidev-postgres</code>, listening only on this computer at <code>127.0.0.1:5434</code>. It writes <code>~/.config/aidev/conf.json</code> with <code>database.url</code>, a private file that is never overwritten if it already exists. It applies the migrations. Then it prints the export line and the Claude Code settings line to add.</p>
+
+<p>It is safe to run again, for example after a reboot: it starts the container if it stopped and leaves your configuration alone.</p>
+
+<p>What success looks like: it ends with <code>aidev is set up.</code> and a list of next steps.</p>
+
+<p>If your company pulls Docker images from its own registry, tell setup which image to use:</p>
+
+<pre><code>aidev setup --postgres-image registry.example.com/library/postgres:16-alpine</code></pre>
+
+<p>If you already have PostgreSQL, point setup at it instead. Quote the URL. No Docker is needed, but the database must exist:</p>
+
+<pre><code>aidev setup --database-url 'postgres://user:password@host:5432/aidev'</code></pre>
+
+<p>If port 5434 is taken on your machine, pick another port:</p>
+
+<pre><code>aidev setup --postgres-port 5440</code></pre>
+
+<p>Next, point aidev at the file setup wrote, as described in the <a href="#configuration">configuration section</a> below, and check everything:</p>
+
+<pre><code>export AIDEV_CONFIG="$HOME/.config/aidev/conf.json"
+# put that export line in your shell profile (~/.bashrc, ~/.zshrc, or equivalent)
+aidev doctor</code></pre>
+
+<p>What success looks like: every line of <code>aidev doctor</code> should read <code>ok</code>, and each failure says how to fix it.</p>
+
+<h3>By hand, from the repository</h3>
+
+<p>If you work on aidev itself, you can do the same steps by hand from the repository instead of running <code>aidev setup</code>.</p>
 
 <p>Start PostgreSQL:</p>
 

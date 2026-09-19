@@ -66,6 +66,65 @@ schema.
 | OpenCode | 1.18+ | only needed from Phase 2; verified against 1.18.30 |
 | Claude Code | 2.x | only needed from Phase 4; verified against 2.1.268 |
 
+## Quick start
+
+You need Go 1.25+, git, OpenCode and, unless you already have PostgreSQL, Docker.
+
+Install the binary:
+
+```bash
+git clone <this repository> aidev
+cd aidev
+make install
+```
+
+Prepare aidev with one command:
+
+```bash
+aidev setup
+```
+
+It starts PostgreSQL in Docker (container `aidev-postgres` on `127.0.0.1:5434`), writes `~/.config/aidev/conf.json` (private, never overwritten), applies the schema, and prints what to add next. It is safe to run again, for example after a reboot.
+
+If your company pulls images from a private registry, point setup at it:
+
+```bash
+aidev setup --postgres-image registry.example.com/library/postgres:16-alpine
+```
+
+If you already have PostgreSQL, skip Docker entirely:
+
+```bash
+aidev setup --database-url 'postgres://user:password@host:5432/aidev'
+```
+
+Point `AIDEV_CONFIG` at the file, as setup prints:
+
+```bash
+export AIDEV_CONFIG="$HOME/.config/aidev/conf.json"   # add to ~/.bashrc or ~/.zshrc
+```
+
+For Claude Code, also add `"AIDEV_CONFIG"` to the `"env"` object in `~/.claude/settings.json` (setup prints the exact line).
+
+Check everything:
+
+```bash
+aidev doctor
+```
+
+Every line should say `ok`; each failure says how to fix it.
+
+Use it from Claude Code:
+
+```bash
+claude plugin marketplace add /abs/path/to/aidev
+claude plugin install aidev@aidev
+```
+
+Then ask Claude to "give this to aidev"; the plugin's skills handle delegation, review and fixing problems (`aidev:delegate`, `aidev:review`, `aidev:doctor`).
+
+For the step-by-step guide see [docs/guide/getting-started.html](docs/guide/getting-started.html); the sections below explain each part by hand.
+
 ## Installation
 
 ```bash
@@ -247,6 +306,9 @@ the work was kept for inspection
 
 ```bash
 aidev version
+aidev setup [--config PATH] [--database-url URL] [--postgres-image IMAGE]
+            [--postgres-port N] [--workspace-root DIR]   # prepare a new machine
+aidev doctor [--json]                 # check that aidev can work, and how to fix it
 aidev config [--json]                 # the resolved configuration, password redacted
 aidev migrate [--json]                # apply pending migrations
 
@@ -263,14 +325,12 @@ aidev task approve <task> [--deny] [--by WHO] [--reason R] [--json]
 ```
 
 `<task>` is either the reference (`TASK-000001`, case-insensitive) or the UUID.
-Every command takes `--json` for machine-readable output; human-readable is the
+Every command except `setup` takes `--json` for machine-readable output; human-readable is the
 default. Logs always go to stderr, so `aidev task get TASK-000001 --json | jq`
 works while diagnostics stay visible.
 
 Tasks marked `--requires-approval` stop before doing anything — no worktree, no
 attempt — until `aidev task approve` releases them.
-
-The MCP server for Claude Code arrives in Phase 4.
 
 ## What happens under the hood
 

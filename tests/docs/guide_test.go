@@ -100,6 +100,11 @@ func englishPages() []page {
 			},
 			mustMention: []string{
 				"make db-up",
+				// The one-command setup a new user starts with, and its two
+				// choices: a company registry's image, or an existing database.
+				"aidev setup",
+				"--postgres-image",
+				"--database-url",
 				"aidev migrate",
 				"aidev task create",
 				"aidev task run",
