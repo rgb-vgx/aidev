@@ -150,6 +150,7 @@ func TestSetupRejectsContainerFlagsWithYourOwnDatabase(t *testing.T) {
 	for _, flagArgs := range [][]string{
 		{"--postgres-image", "registry.example.com/postgres:16-alpine"},
 		{"--postgres-port", "6543"},
+		{"--postgres-volume", "aidev_aidev-pgdata"},
 	} {
 		args := append([]string{"setup", "--config", path, "--database-url", unreachableDB}, flagArgs...)
 		_, _, err := runCLI(t, args...)
@@ -169,7 +170,7 @@ func TestSetupFlagsAreDocumented(t *testing.T) {
 	if !errors.As(err, &usage) {
 		t.Fatalf("aidev setup --help: err = %v, want a usage error like every command", err)
 	}
-	for _, name := range []string{"-config", "-database-url", "-postgres-image", "-postgres-port", "-workspace-root"} {
+	for _, name := range []string{"-config", "-database-url", "-postgres-image", "-postgres-port", "-postgres-volume", "-workspace-root"} {
 		if !strings.Contains(stderr, name) {
 			t.Errorf("setup --help does not list %s:\n%s", name, stderr)
 		}

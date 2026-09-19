@@ -16,13 +16,19 @@ import (
 
 // fakeDocker answers `docker inspect` from a script of states and records every
 // other command. Errors mimic docker 29.8 as measured: a missing container makes
-// inspect exit 1 with "error: no such object: <name>".
+// inspect exit 1 with "error: no such object: <name>", and a missing volume makes
+// `docker volume inspect` exit 1 with "Error response from daemon: get <name>: no
+// such volume".
 type fakeDocker struct {
 	exists  bool
 	status  string   // .State.Status
 	healths []string // successive .State.Health.Status answers; the last repeats
 	daemon  error    // when set, every command fails with it
 	calls   [][]string
+	// volumes exist by name; composeVolumes is what `docker volume ls` lists for
+	// the compose label filter.
+	volumes        []string
+	composeVolumes []string
 }
 
 func (f *fakeDocker) Run(_ context.Context, args ...string) (string, error) {
@@ -44,6 +50,25 @@ func (f *fakeDocker) Run(_ context.Context, args ...string) (string, error) {
 			return h + "\n", nil
 		}
 		return f.status + "\n", nil
+	case "volume":
+		switch args[1] {
+		case "inspect":
+			name := args[len(args)-1]
+			for _, v := range f.volumes {
+				if v == name {
+					return name + "\n", nil
+				}
+			}
+			return "", fmt.Errorf("exit status 1: Error response from daemon: get %s: no such volume", name)
+		case "ls":
+			if strings.Join(args, " ") != "volume ls -q --filter label=com.docker.compose.volume=aidev-pgdata" {
+				return "", fmt.Errorf("unexpected docker %v", args)
+			}
+			if len(f.composeVolumes) == 0 {
+				return "", nil
+			}
+			return strings.Join(f.composeVolumes, "\n") + "\n", nil
+		}
 	case "run":
 		f.exists, f.status = true, "running"
 		return "0123456789abcdef\n", nil
@@ -54,10 +79,12 @@ func (f *fakeDocker) Run(_ context.Context, args ...string) (string, error) {
 	return "", fmt.Errorf("unexpected docker %v", args)
 }
 
+// commands lists what changed something: inspecting containers and volumes and
+// listing volumes are left out.
 func (f *fakeDocker) commands() []string {
 	var out []string
 	for _, c := range f.calls {
-		if c[0] != "inspect" {
+		if c[0] != "inspect" && c[0] != "volume" {
 			out = append(out, c[0])
 		}
 	}
@@ -110,6 +137,10 @@ func TestDefaultsMatchDockerCompose(t *testing.T) {
 	if !strings.Contains(compose, `"127.0.0.1:${AIDEV_DB_PORT:-5434}:5432"`) {
 		t.Error("docker-compose.yml must publish PostgreSQL on 127.0.0.1 only, as setup does")
 	}
+	// The same volume key as compose, but not compose's volume: compose prefixes
+	// the project name (aidev_aidev-pgdata), and that name is deliberately not
+	// pinned (docs/architecture.md). EnsurePostgres looks for compose's volumes
+	// instead of guessing.
 	if o.Volume != "aidev-pgdata" || !strings.Contains(compose, "aidev-pgdata:/var/lib/postgresql/data") {
 		t.Errorf("Volume = %q, want aidev-pgdata as in docker-compose.yml", o.Volume)
 	}
@@ -170,7 +201,7 @@ func TestMissingContainerIsCreatedWithTheChosenImageAndComposeSettings(t *testin
 		"-e POSTGRES_INITDB_ARGS=--encoding=UTF8 --locale=C",
 		// Loopback only: the default password must not be reachable from the network.
 		fmt.Sprintf("-p 127.0.0.1:%d:5432", o.Port),
-		"-v aidev-pgdata:/var/lib/postgresql/data",
+		"-v " + o.Volume + ":/var/lib/postgresql/data",
 		"--health-cmd pg_isready -U " + o.User + " -d " + o.Database,
 		"--health-interval 2s",
 		"--health-timeout 3s",
@@ -275,5 +306,61 @@ func TestExecDockerReportsStderr(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	if _, err := d.Run(context.Background(), "version"); err == nil {
 		t.Error("Run succeeded with no docker on PATH")
+	}
+}
+
+// Someone who ran `make db-up` has their data in compose's volume
+// (aidev_aidev-pgdata for a checkout named aidev), and task worktrees leave more
+// of them behind. Creating the container on a new, empty volume would look like
+// lost data; picking one of them would be a guess. So stop before creating
+// anything, list them, and say how to choose.
+func TestMissingContainerDoesNotHideDataInComposeVolumes(t *testing.T) {
+	d := &fakeDocker{composeVolumes: []string{"aidev_aidev-pgdata", "task-000032-a1_aidev-pgdata"}}
+	o := testOptions()
+
+	_, err := EnsurePostgres(context.Background(), d, o, fast, time.Second)
+	if err == nil {
+		t.Fatal("EnsurePostgres created a container on a new volume while compose volumes exist")
+	}
+	if cmds := d.commands(); len(cmds) != 0 {
+		t.Errorf("docker %v ran; nothing may be created before the user chooses", cmds)
+	}
+	for _, want := range []string{"aidev_aidev-pgdata", "task-000032-a1_aidev-pgdata",
+		"--postgres-volume", "docker volume create " + o.Volume} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error does not mention %q:\n%v", want, err)
+		}
+	}
+}
+
+// Once the chosen volume exists (from an earlier setup, `docker volume create`,
+// or --postgres-volume naming compose's), it is used as it is.
+func TestMissingContainerUsesTheChosenVolumeWhenItExists(t *testing.T) {
+	o := testOptions()
+	o.Volume = "aidev_aidev-pgdata"
+	d := &fakeDocker{volumes: []string{o.Volume}, composeVolumes: []string{"aidev_aidev-pgdata", "task-000032-a1_aidev-pgdata"},
+		healths: []string{"healthy"}}
+
+	action, err := EnsurePostgres(context.Background(), d, o, fast, time.Second)
+	if err != nil || action != PostgresCreated {
+		t.Fatalf("EnsurePostgres = %q, %v; want created on the existing volume", action, err)
+	}
+	if !strings.Contains(strings.Join(d.runArgs(t), " "), "-v aidev_aidev-pgdata:/var/lib/postgresql/data") {
+		t.Errorf("docker run does not mount the chosen volume: %v", d.runArgs(t))
+	}
+}
+
+// A container that exists already has its data; its volume is not questioned.
+func TestAnExistingContainerIsNotAskedAboutVolumes(t *testing.T) {
+	d := &fakeDocker{exists: true, status: "exited", healths: []string{"healthy"},
+		composeVolumes: []string{"aidev_aidev-pgdata"}}
+
+	if _, err := EnsurePostgres(context.Background(), d, testOptions(), fast, time.Second); err != nil {
+		t.Fatalf("EnsurePostgres: %v", err)
+	}
+	for _, c := range d.calls {
+		if c[0] == "volume" {
+			t.Errorf("docker %v ran for a container that exists", c)
+		}
 	}
 }
