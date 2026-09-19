@@ -47,29 +47,46 @@ opencode --version
 </section>
 
 <section id="install">
-<h2>Install: building aidev</h2>
+<h2>Install: one command</h2>
 
-<p><strong>Building</strong> means turning the source code into a runnable program. Get the repository first, then build it.</p>
+<p>Install aidev with one command:</p>
+
+<pre><code>curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh</code></pre>
+
+<p>It downloads the release for your system (Linux or macOS, amd64 or arm64), checks the download against the release's <code>SHA256SUMS</code> file (a list of fingerprints: a download that does not match is refused, so a damaged or altered file is never installed), and puts <code>aidev</code> into <code>~/.local/bin</code>. It does not need Go.</p>
+
+<p>What success looks like: it prints "Installed aidev v0.1.0 to ..." and the next steps. Check with:</p>
+
+<pre><code>aidev version
+# want: aidev v0.1.0 or similar</code></pre>
+
+<p>Being "on the PATH" means this: when you type a program name, your shell searches a list of directories called the PATH until it finds a matching program. The installer puts <code>aidev</code> into <code>~/.local/bin</code>, which is one of those directories on many machines. If it is not on the PATH yet, the installer prints an export PATH line to add to ~/.bashrc or ~/.zshrc, so typing <code>aidev ...</code> works from any directory, in any terminal you open, instead of only from one folder.</p>
+
+<p>To install a specific version:</p>
+
+<pre><code>curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | AIDEV_VERSION=v0.1.0 sh</code></pre>
+
+<p>To install somewhere else:</p>
+
+<pre><code>curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | AIDEV_INSTALL_DIR="$HOME/bin" sh</code></pre>
+
+<h3>From source, for working on aidev</h3>
+
+<p>If you want to change aidev itself, build it from source instead.</p>
 
 <pre><code>git clone &lt;this repository&gt; aidev
 cd aidev
 make build
-# produces bin/aidev</code></pre>
-
-<p>What success looks like: the last command finishes with no error, and <code>bin/aidev</code> exists. Check with:</p>
-
-<pre><code>ls bin/aidev
+# produces bin/aidev
 ./bin/aidev version
 # want: aidev &lt;version&gt;, for example: aidev dev</code></pre>
 
-<p>If <code>make build</code> fails, read the error. A missing Go installation says <code>go: command not found</code>. A network problem during the toolchain download says something about fetching the toolchain. Fix the named problem and run <code>make build</code> again. It is safe to repeat.</p>
+<p>What success looks like: the build finishes with no error, and <code>bin/aidev</code> exists. If <code>make build</code> fails, read the error, fix the named problem, and run <code>make build</code> again. It is safe to repeat.</p>
 
 <p>Put <code>aidev</code> on your PATH so every terminal finds it:</p>
 
 <pre><code>make install
 # runs: go install ./cmd/aidev</code></pre>
-
-<p>Being "on the PATH" means this: when you type a program name, your shell searches a list of directories called the PATH until it finds a matching program. <code>make install</code> puts <code>aidev</code> into one of those directories. After that, typing <code>aidev ...</code> works from any directory, in any terminal you open, instead of only as <code>./bin/aidev</code> from inside this repository. If you have never met the idea before, think of it as installing a tool once so its name works everywhere.</p>
 
 <p>This guide uses <code>aidev</code> from here on. If you did not install it, type <code>./bin/aidev</code> wherever you see <code>aidev</code>.</p>
 </section>
