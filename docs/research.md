@@ -1009,6 +1009,116 @@ So the shape the measurements support:
   (`spec/reviewer-findings`, `spec/reviewer-findings-2`), which is also how a false positive gets
   caught before any code changes.
 
+## 7h. Git submodules in a task worktree **[OBSERVED]**
+
+Measured on git 2.43.0 against throwaway repositories in `.probe/sub/`. The question was how to give
+a task worktree the submodule content its verification commands need, without two concurrent tasks
+on the same parent repository interfering with each other.
+
+### `git worktree add` from the submodule's own repository works, and isolates HEAD
+
+```
+$ SHA=$(git -C parent ls-tree HEAD vendor/child | awk '{print $3}')
+$ git -C parent/.git/modules/vendor/child worktree add --detach /abs/wt1/vendor/child $SHA
+Preparing worktree (detached HEAD 9c8318b)
+$ git -C wt1 status --porcelain        # nothing: the gitlink matches what the parent pins
+$ git -C wt1 submodule status
+ 9c8318b9e00672022837885848dacd4bcfbce77a vendor/child (9c8318b)
+```
+
+The path must be absolute. `git -C <gitdir> worktree add ../wt1/...` resolves the relative path
+against the *gitdir*, so it silently creates the checkout at `parent/.git/modules/vendor/wt1/...`
+and leaves the intended directory empty.
+
+Moving HEAD in `wt1`'s submodule checkout left `wt2`'s and the parent's main checkout untouched.
+Six concurrent `worktree add` invocations against the same submodule repository all exited 0; git
+assigned distinct administrative names (`child`, `child1`, … `child5`).
+
+### `git submodule update --init` in a linked worktree does **not** share the gitdir
+
+This contradicts the obvious assumption, which is why it is recorded. In 2.43 the submodule gitdir
+for a linked worktree is **per worktree**:
+
+```
+$ git -C wt1 submodule update --init
+Cloning into '/abs/wt1/vendor/child'...
+$ cat wt1/vendor/child/.git
+gitdir: ../../../parent/.git/worktrees/wt1/modules/vendor/child
+```
+
+So HEAD is already isolated that way too. It is still the wrong mechanism here, for reasons that
+have nothing to do with HEAD:
+
+- it is a **fresh clone from the submodule's URL** — a network fetch per task per submodule, needing
+  whatever credentials that remote wants, inside a step that is supposed to be local and fast;
+- there are **no alternates**, so every task duplicates the whole object store on disk
+  (200K against 224K for the shared copy, on a two-commit probe; a real submodule is not two commits);
+- it clones even when `.git/modules/<name>` is already present locally.
+
+`worktree add` from the local submodule repository needs no network and shares objects.
+
+### The submodule's repository is in one of two places, and a real repository has both
+
+`~/work/pingpong` pins three submodules. One of them (`app_hnspl`) is absorbed: its `.git` is a
+*file* reading `gitdir: ../.git/modules/app_hnspl`. The other two (`backend`, `hnspl-web`) hold an
+ordinary `.git` *directory*, because they were cloned rather than absorbed, and `.git/modules` has no
+entry for them at all. Guessing either layout would fail on that repository. Asking git works for
+both:
+
+```
+$ git -C <repo>/<submodule-path> rev-parse --path-format=absolute --show-toplevel --git-common-dir
+```
+
+with one guard: run inside an **empty** submodule directory, `rev-parse` walks up and answers for the
+*parent* repository. The returned toplevel therefore has to be compared against the directory asked
+about before the answer is used.
+
+`.git/modules/<name>` uses the submodule's **name**, which is the section name in `.gitmodules` and
+need not equal its path (`git submodule add --name MYNAME ../other libs/other` produces
+`.git/modules/MYNAME`). The pinned commit itself comes from `git ls-tree`, which is authoritative in
+a way that `.gitmodules` is not: `hnspl-web` in pingpong is checked out at a different commit than
+the parent pins.
+
+### Removal has two traps
+
+```
+$ git -C parent worktree remove /abs/conc/w1
+fatal: working trees containing submodules cannot be moved or removed
+```
+
+The submodule worktrees must be removed first. And once they are, the parent worktree is *dirty*:
+
+```
+$ git -C conc/w2 status --porcelain
+ D vendor/child
+$ git -C parent worktree remove /abs/conc/w2
+fatal: '/abs/conc/w2' contains modified or untracked files, use --force to delete it
+```
+
+`git worktree remove` deletes the submodule directory itself, and the missing gitlink reads as a
+deletion. Recreating the empty directory afterwards restores a clean status and lets the parent
+worktree be removed **without** `--force` — which matters, because that refusal is aidev's guard
+against discarding a failed attempt's work (§7b).
+
+### A dirty submodule breaks the commit path unless status ignores it
+
+With content edited inside a populated submodule and no new submodule commit:
+
+```
+$ git -C w3 status --porcelain
+ M vendor/child
+$ git -C w3 add --all -- . && git -C w3 commit -m probe
+	modified:   vendor/child (modified content)
+no changes added to commit
+$ echo $?
+1
+```
+
+`Status` reports work to commit, `add --all` stages nothing for a gitlink whose commit has not moved,
+and the commit fails. `--ignore-submodules=dirty` makes status agree with what `add` can actually do,
+and still reports a moved gitlink (`--ignore-submodules=all` would hide that too). On a repository
+without submodules the flag changes nothing.
+
 ## 8. Reproducing this research
 
 Probes ran in a gitignored `.probe/` directory inside the repository (scratch repo, worktrees,
