@@ -9,7 +9,7 @@ import (
 	"aidev/internal/task"
 )
 
-const projectColumns = `id, name, repo_path, default_branch, created_at, updated_at`
+const projectColumns = `id, name, repo_path, default_branch, submodules, created_at, updated_at`
 
 // EnsureProject registers repoPath as a project, or returns the existing
 // project for that path unchanged.
@@ -83,6 +83,25 @@ func (s *Store) ListProjects(ctx context.Context) ([]task.Project, error) {
 	return projects, nil
 }
 
+// SetProjectSubmodules changes how a project's task worktrees treat git
+// submodules and returns the project as it now stands.
+//
+// It is a separate call rather than an argument to EnsureProject because
+// EnsureProject runs on every task creation: passing the mode there would let a
+// task creation silently reset a setting an operator had chosen.
+func (s *Store) SetProjectSubmodules(ctx context.Context, id uuid.UUID, mode task.SubmoduleMode) (task.Project, error) {
+	row := s.db.QueryRow(ctx, `
+		UPDATE projects SET submodules = $2, updated_at = now()
+		WHERE id = $1
+		RETURNING `+projectColumns, id, string(mode))
+
+	p, err := scanProject(row)
+	if err != nil {
+		return task.Project{}, fmt.Errorf("set submodules for project %s: %w", id, err)
+	}
+	return p, nil
+}
+
 // scanner is satisfied by both pgx.Row and pgx.Rows.
 type scanner interface {
 	Scan(dest ...any) error
@@ -90,7 +109,7 @@ type scanner interface {
 
 func scanProject(row scanner) (task.Project, error) {
 	var p task.Project
-	err := row.Scan(&p.ID, &p.Name, &p.RepoPath, &p.DefaultBranch, &p.CreatedAt, &p.UpdatedAt)
+	err := row.Scan(&p.ID, &p.Name, &p.RepoPath, &p.DefaultBranch, &p.Submodules, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return task.Project{}, classify(err)
 	}

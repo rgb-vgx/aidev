@@ -31,8 +31,13 @@ type Project struct {
 	Name          string
 	RepoPath      string // absolute path to the repository's main working tree
 	DefaultBranch string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+
+	// Submodules says whether a task worktree of this project is given the
+	// content of the repository's git submodules. Default SubmodulesNone.
+	Submodules SubmoduleMode
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // Task is a unit of work delegated to an agent and verified by aidev.

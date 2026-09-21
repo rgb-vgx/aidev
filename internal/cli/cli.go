@@ -64,6 +64,11 @@ func Run(ctx context.Context, version string, args []string, stdout, stderr io.W
 			summary: "create, inspect and run tasks",
 			run:     runTask,
 		},
+		"project": {
+			name:    "project",
+			summary: "list the repositories aidev knows, and set their per-repository options",
+			run:     runProject,
+		},
 		"worktree": {
 			name:    "worktree",
 			summary: "inspect and reclaim the worktrees tasks left behind",

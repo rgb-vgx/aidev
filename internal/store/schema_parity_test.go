@@ -34,6 +34,8 @@ func TestEnumsMatchMigrationConstraints(t *testing.T) {
 		{"events_type_valid", strs(event.AllTypes())},
 		// "" is allowed: a task need not state a hardness.
 		{"tasks_hardness_valid", append([]string{""}, strs(task.AllHardnesses())...)},
+		// No "" member: every project has a submodule mode, defaulting to NONE.
+		{"projects_submodules_valid", strs(task.AllSubmoduleModes())},
 	}
 
 	for _, tc := range cases {
@@ -125,8 +127,10 @@ func readSchema(t *testing.T) string {
 var quoted = regexp.MustCompile(`'([^']*)'`)
 
 // constraintValues extracts the quoted literals belonging to one named
-// constraint. Constraints are separated by the CONSTRAINT keyword, so the slice
-// between this constraint's name and the next one contains exactly its literals.
+// constraint. The slice runs from this constraint's name to whichever comes
+// first: the next CONSTRAINT keyword, or the end of the statement. Stopping at
+// the statement is what keeps a later migration's own literals — a column
+// default, or an apostrophe in a comment — out of the previous constraint.
 // The last definition is the one that holds: migrations widen a constraint by
 // dropping and re-adding it under the same name.
 func constraintValues(t *testing.T, schema, name string) []string {
@@ -137,8 +141,10 @@ func constraintValues(t *testing.T, schema, name string) []string {
 		t.Fatalf("constraint %s not found in the migrations", name)
 	}
 	rest := schema[start+len("CONSTRAINT "+name):]
-	if next := strings.Index(rest, "CONSTRAINT "); next >= 0 {
-		rest = rest[:next]
+	for _, end := range []string{"CONSTRAINT ", ";"} {
+		if next := strings.Index(rest, end); next >= 0 {
+			rest = rest[:next]
+		}
 	}
 
 	var values []string
@@ -185,6 +191,20 @@ func difference(a, b []string) []string {
 		}
 	}
 	return out
+}
+
+// A migration that follows the one declaring a constraint must not contribute
+// its literals to it. This bit once: the quoted default of a new column, added
+// in a later file, read as an extra allowed value of the constraint above it.
+func TestConstraintValuesStopsAtTheEndOfTheStatement(t *testing.T) {
+	schema := `ALTER TABLE x ADD CONSTRAINT x_s_valid CHECK (s IN ('a', 'b'));
+-- A later migration, whose comment mentions the table's own quirks.
+ALTER TABLE y ADD COLUMN m TEXT NOT NULL DEFAULT 'NONE';
+`
+	got := constraintValues(t, schema, "x_s_valid")
+	if want := []string{"a", "b"}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("constraintValues = %v, want %v; it read past the statement", got, want)
+	}
 }
 
 // A constraint a later migration redefines is what the schema is after both run.

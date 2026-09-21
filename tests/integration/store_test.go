@@ -75,6 +75,43 @@ func TestEnsureProjectIsIdempotent(t *testing.T) {
 	}
 }
 
+// A project defaults to leaving submodules alone, and the setting survives the
+// EnsureProject that runs on every task creation — otherwise creating a task
+// would silently undo an operator's choice.
+func TestProjectSubmoduleModeIsStickyAcrossEnsureProject(t *testing.T) {
+	db, ctx := openStore(t)
+
+	path := "/tmp/aidev-submodules-" + uuid.NewString()
+	created, err := db.EnsureProject(ctx, "aidev", path, "main")
+	if err != nil {
+		t.Fatalf("EnsureProject: %v", err)
+	}
+	if created.Submodules != task.SubmodulesNone {
+		t.Errorf("a new project has submodules %q, want %q", created.Submodules, task.SubmodulesNone)
+	}
+
+	updated, err := db.SetProjectSubmodules(ctx, created.ID, task.SubmodulesReadOnly)
+	if err != nil {
+		t.Fatalf("SetProjectSubmodules: %v", err)
+	}
+	if updated.Submodules != task.SubmodulesReadOnly {
+		t.Errorf("after setting, submodules = %q, want %q", updated.Submodules, task.SubmodulesReadOnly)
+	}
+
+	again, err := db.EnsureProject(ctx, "aidev", path, "main")
+	if err != nil {
+		t.Fatalf("second EnsureProject: %v", err)
+	}
+	if again.Submodules != task.SubmodulesReadOnly {
+		t.Errorf("EnsureProject reset submodules to %q; an operator's setting must survive it",
+			again.Submodules)
+	}
+
+	if _, err := db.SetProjectSubmodules(ctx, uuid.Must(uuid.NewV7()), task.SubmodulesReadOnly); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("SetProjectSubmodules for an unknown project = %v, want ErrNotFound", err)
+	}
+}
+
 func TestTaskRoundTrip(t *testing.T) {
 	db, ctx := openStore(t)
 	p := seedProject(t, ctx, db)

@@ -593,6 +593,10 @@ func (r *run) prepareWorktree(ctx context.Context) error {
 		Name:       worktreeName(r.task, r.attempt),
 		Branch:     branchName(r.task, r.attempt),
 		BaseRef:    baseRef,
+		// A failure to load submodules is a failure to prepare the checkout,
+		// so it lands in FailureWorktree with every other one: the caller
+		// already classifies whatever prepareWorktree returns that way.
+		LoadSubmodules: project.Submodules == task.SubmodulesReadOnly,
 	})
 	if err != nil {
 		return err
@@ -603,6 +607,7 @@ func (r *run) prepareWorktree(ctx context.Context) error {
 	span.SetAttributes(
 		attribute.String("aidev.worktree.path", wt.Path),
 		attribute.String("aidev.worktree.branch", wt.Branch),
+		attribute.Int("aidev.worktree.submodules", len(wt.Submodules)),
 	)
 	r.log = r.log.With(logging.FieldWorktreePath, wt.Path)
 
@@ -623,11 +628,17 @@ func (r *run) prepareWorktree(ctx context.Context) error {
 		}
 		r.record = &recorded
 
-		return appendEvent(writeCtx, tx, r.task.ID, &r.attempt.ID, event.TypeWorktreeCreated, map[string]any{
+		payload := map[string]any{
 			"path":        wt.Path,
 			"branch":      wt.Branch,
 			"base_commit": wt.BaseCommit,
-		})
+		}
+		// Only when there are some: an empty list in every event of every
+		// single-repository project would be noise.
+		if len(wt.Submodules) > 0 {
+			payload["submodules"] = wt.Submodules
+		}
+		return appendEvent(writeCtx, tx, r.task.ID, &r.attempt.ID, event.TypeWorktreeCreated, payload)
 	})
 }
 

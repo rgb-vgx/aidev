@@ -138,6 +138,8 @@ something failed* without the domain knowing anything about OpenCode.
         └────────────┬────────────┘
                      │
               create worktree ──────── failure ──▶ FAILED (WORKTREE)
+              (+ submodules, if the
+               project asks for them)
                      │
               run agent in it ──────── failure ──▶ FAILED (agent's own kind)
                      │                             worktree RETAINED
@@ -197,6 +199,10 @@ changes, so the guard is the tool's own behaviour rather than aidev's diligence
 (docs/research.md §7b). `ListRetainedWorktrees` is how an operator finds abandoned
 work.
 
+A project with submodules removes its submodule checkouts first, because git will
+not remove a working tree that contains them. The empty directories are put back,
+so the `--force` guard above still behaves exactly as it does without submodules.
+
 ## Design decisions
 
 Each of these is a decision with a cost, recorded so it can be revisited rather
@@ -212,6 +218,48 @@ Therefore: every task runs with the agent's working directory set to a dedicated
 worktree, worktree paths are validated to resolve inside `workspace_root`, and the
 repository's main working tree is never a valid target. This is enforced in code
 and asserted by tests, not stated as a convention.
+
+### Submodules are a worktree each, read-only, and off by default
+
+A repository that keeps its sources in git submodules gets a task worktree whose
+submodule directories are **empty**, because `git worktree add` does not populate
+them. Every verification command that reads those sources then fails — and since
+aidev only accepts work it can check by command, the whole class of task cannot be
+delegated at all.
+
+With `projects.submodules` set to `READ_ONLY`, each submodule the base commit pins
+becomes a **linked worktree of the submodule's own repository**, checked out at the
+pinned commit and placed at the gitlink. The task's checkout is then complete, and
+its submodule HEADs are its own.
+
+The obvious alternative, `git submodule update --init` inside the worktree, was
+measured and rejected. On git 2.43 it does isolate HEAD — it gives a linked worktree
+its own submodule git directory under `.git/worktrees/<wt>/modules/<name>` — but it
+does so by **re-cloning every submodule from its remote, for every task**, with no
+alternates: a network fetch and a full copy of the object store each time, needing
+whatever credentials that remote wants, inside a step that is meant to be local and
+fast. A linked worktree needs neither (docs/research.md §7h).
+
+Three consequences worth knowing:
+
+- **Removal is ordered.** Git refuses outright to remove a working tree containing
+  submodules, so `Remove` takes the submodule checkouts back first — and then
+  recreates the empty directories, because a missing gitlink reads as ` D <path>`
+  and would make git demand `--force`. That refusal is the guard on a failed
+  attempt's work, so it has to keep working without it.
+- **Status ignores dirty submodules.** Content edited inside a submodule made
+  `git status` report work to commit while `git add --all` staged nothing for an
+  unmoved gitlink, and the commit then failed. `--ignore-submodules=dirty` makes the
+  two agree; a moved gitlink is still reported, and a repository without submodules
+  is unaffected.
+- **aidev never fetches.** A pinned commit no local repository holds is reported as
+  such, naming the repository to fetch it in, rather than surfacing as an unknown
+  revision from a directory the operator would have to go and find.
+
+Off by default because populating submodules registers a worktree in the
+submodule's own repository, and no single-repository project should pay for a
+feature it cannot use. With the mode at `NONE`, worktree creation runs exactly the
+git commands it ran before.
 
 ### Only aidev's own verification can declare success
 
@@ -559,7 +607,17 @@ Known limitations that are not missing features:
 - **Behaviour under concurrent `opencode run` invocations against worktrees of the
   same repository is unverified** (docs/research.md §5 of the unresolved list). The
   MVP is single-flight per task and does not depend on it; it must be settled before
-  concurrent workers.
+  concurrent workers. The git half of the question is now measured for submodules:
+  six concurrent `worktree add` invocations against one submodule repository all
+  succeeded, and the resulting checkouts do not share a HEAD (docs/research.md §7h).
+  What remains unverified is the agent, not git.
+- **Submodules are read-only.** A task leaves one commit on one branch of one
+  repository, so nothing inside a submodule is collected: content edited there is
+  ignored, and the submodule's own history is never committed to or pushed. Only
+  top-level submodules are loaded, not nested ones. An agent that moves a gitlink
+  does produce a parent-repository change that the task's commit records, and the
+  commit it points at may exist only in the local object store — review that as you
+  would any submodule bump.
 - **A verification pass is bounded per step, not in total.** Worst case is 20 steps ×
   the step timeout.
 - **Migrations are forward-only.** There are no down migrations.
