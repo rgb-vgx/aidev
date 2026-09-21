@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -233,12 +234,62 @@ func classify(proc procexec.Result, events transcript, req Request) (task.Worker
 	// "tool-calls", recorded as a clean success until verification disagreed. A
 	// rejected permission produces the same shape (docs/research.md 7g).
 	if reason, cut := cutShort[events.FinishReason]; cut {
+		// Which of the two it was is in the stream, so say it. "The agent
+		// stopped halfway" and "the agent was blocked" read identically in the
+		// record and have nothing in common as problems: one is a model to
+		// change, the other is a task asking for something outside the worktree.
+		if events.Refusals > 0 {
+			return task.WorkerFailed, task.FailureAgentError,
+				refusalError(events, req.WorkingDir)
+		}
 		return task.WorkerFailed, task.FailureAgentError, fmt.Errorf(
 			"opencode ended with finish reason %q: %s, so it never stopped of its own accord",
 			events.FinishReason, reason)
 	}
 
 	return task.WorkerSucceeded, task.FailureNone, nil
+}
+
+// refusalError explains a run that a refused tool call cut short, and says where
+// the agent was reaching when it happened.
+//
+// The distinction it draws is the useful one. A refusal for a path outside the
+// worktree is aidev's containment doing its job, and the remedy is the task: it
+// asked for something that is not in the checkout. A refusal inside the worktree
+// is a permission configuration, and the remedy is elsewhere entirely.
+func refusalError(events transcript, workingDir string) error {
+	also := ""
+	if events.Refusals > 1 {
+		also = fmt.Sprintf(" (%d refused in all)", events.Refusals)
+	}
+
+	switch path := events.RefusedPath; {
+	case path == "":
+		return fmt.Errorf("opencode stopped because a tool call was refused%s; a refusal ends "+
+			"the session, so nothing after it ran", also)
+	case outside(workingDir, path):
+		return fmt.Errorf("opencode stopped because the agent reached outside its worktree, for %s%s; "+
+			"a refusal ends the session, so nothing after it ran. The task is asking for something "+
+			"that is not in the checkout", path, also)
+	default:
+		return fmt.Errorf("opencode stopped because a tool call for %s was refused%s; a refusal ends "+
+			"the session, so nothing after it ran", path, also)
+	}
+}
+
+// outside reports whether path is not under dir. It compares the paths as
+// written: this decides the wording of a message, not access to anything, and
+// the guarantee that an agent stays in its worktree is enforced in internal/git
+// against resolved paths.
+func outside(dir, path string) bool {
+	if dir == "" || !filepath.IsAbs(path) {
+		return false
+	}
+	rel, err := filepath.Rel(filepath.Clean(dir), filepath.Clean(path))
+	if err != nil {
+		return true
+	}
+	return rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // cutShort maps a finish reason that is not a completion to what it means. A reason

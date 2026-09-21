@@ -664,3 +664,134 @@ func TestASessionThatEndedAfterToolCallsIsStillASuccess(t *testing.T) {
 		t.Errorf("status = %s, want SUCCEEDED", res.Status)
 	}
 }
+
+// These two are verbatim from TASK-000084 and TASK-000082 against
+// ~/work/pingpong on 2026-09-21. Both tasks failed as "the session ended while
+// the agent was still calling tools", which was true and said nothing: the
+// agent had in fact been blocked reaching outside its worktree for a directory
+// that is gitignored in the repository, so it is in no commit and can be in no
+// checkout. Diagnosing that meant reading the raw event stream.
+const (
+	fixtureRefusedRead = `{"type":"tool_use","timestamp":1790004930423,"sessionID":"ses_f3b64cc2cffe2QpAM8khQAdcoN","part":{"type":"tool","tool":"read","callID":"call_01a0c49ba52577e4bb0afeb9567cd329","state":{"status":"error","input":{"filePath":"/home/thuyetmt/work/pingpong/ocr-service/Makefile"},"error":"The user rejected permission to use this specific tool call.","time":{"start":1790004930399,"end":1790004930414}},"id":"prt_0c49ba6760013VYJKIh0vjGQ41","sessionID":"ses_f3b64cc2cffe2QpAM8khQAdcoN","messageID":"msg_0c49b968400113NY83p8deppgZ"}}`
+
+	// A bash call carries its location in "workdir", and its command line —
+	// which aidev deliberately does not read out — in "command".
+	fixtureRefusedBash = `{"type":"tool_use","timestamp":1790004930500,"sessionID":"ses_f3b66e5c2ffebxrHXkI6dWeo5w","part":{"type":"tool","tool":"bash","callID":"call_01a0c49ba52577e4bb0afeb9567cd330","state":{"status":"error","input":{"command":"grep -n \"OCR_VLM_API_URL\" .env.example docker-compose.yml","workdir":"/home/thuyetmt/work/pingpong/ocr-service"},"error":"The user rejected permission to use this specific tool call.","time":{"start":1790004930499,"end":1790004930500}},"id":"prt_0c49ba6760013VYJKIh0vjGQ42","sessionID":"ses_f3b66e5c2ffebxrHXkI6dWeo5w","messageID":"msg_0c49b968400113NY83p8deppgZ"}}`
+)
+
+// A refused tool call outside the worktree must be named as such. The remedy is
+// the task — it asked for something that is not in the checkout — and nothing
+// about "the session ended while calling tools" points there.
+func TestARefusedCallOutsideTheWorktreeSaysSo(t *testing.T) {
+	command, _ := fakeOpenCode(t, emit(
+		fixtureStepStart, fixtureRefusedRead, fixtureStepFinishTools,
+	)+"exit 0")
+
+	o := NewOpenCode(command, "")
+	res, err := o.Run(context.Background(), openCodeRequest(t))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Status != task.WorkerFailed || res.FailureKind != task.FailureAgentError {
+		t.Fatalf("status = %s (%s), want FAILED/AGENT_ERROR", res.Status, res.FailureKind)
+	}
+	if res.Err == nil {
+		t.Fatal("a run cut short by a refusal reported no error")
+	}
+	message := res.Err.Error()
+	for _, want := range []string{"outside its worktree", "/home/thuyetmt/work/pingpong/ocr-service/Makefile", "refus"} {
+		if !strings.Contains(message, want) {
+			t.Errorf("error = %q, want it to contain %q", message, want)
+		}
+	}
+}
+
+// The location of a bash call is its working directory, and its command line
+// must stay out of the message: it is arbitrary text the agent composed.
+func TestARefusedBashCallReportsItsDirectoryNotItsCommand(t *testing.T) {
+	command, _ := fakeOpenCode(t, emit(
+		fixtureStepStart, fixtureRefusedBash, fixtureStepFinishTools,
+	)+"exit 0")
+
+	o := NewOpenCode(command, "")
+	res, err := o.Run(context.Background(), openCodeRequest(t))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Err == nil {
+		t.Fatal("a run cut short by a refusal reported no error")
+	}
+	message := res.Err.Error()
+	if !strings.Contains(message, "/home/thuyetmt/work/pingpong/ocr-service") {
+		t.Errorf("error = %q, want the refused working directory", message)
+	}
+	if strings.Contains(message, "OCR_VLM_API_URL") || strings.Contains(message, "grep") {
+		t.Errorf("error = %q, want the command line left out of it", message)
+	}
+}
+
+// Several refusals are one problem, so the message says how many rather than
+// repeating them, and the transcript holds a count rather than a growing list.
+func TestRepeatedRefusalsAreCountedNotAccumulated(t *testing.T) {
+	command, _ := fakeOpenCode(t, emit(
+		fixtureStepStart, fixtureRefusedRead, fixtureRefusedRead, fixtureRefusedBash, fixtureStepFinishTools,
+	)+"exit 0")
+
+	o := NewOpenCode(command, "")
+	res, err := o.Run(context.Background(), openCodeRequest(t))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Err == nil || !strings.Contains(res.Err.Error(), "3 refused in all") {
+		t.Errorf("error = %v, want it to count the refusals", res.Err)
+	}
+	// The first one is the one that matters: it is where it started going wrong.
+	if !strings.Contains(res.Err.Error(), "Makefile") {
+		t.Errorf("error = %v, want the first refused path", res.Err)
+	}
+}
+
+// A refusal inside the worktree is a different problem — a permission
+// configuration, not a task reaching out of bounds — and must not be reported
+// as containment.
+func TestARefusalInsideTheWorktreeIsNotCalledContainment(t *testing.T) {
+	req := openCodeRequest(t)
+	inside := fmt.Sprintf(
+		`{"type":"tool_use","timestamp":1,"sessionID":"ses_x","part":{"type":"tool","tool":"write",`+
+			`"state":{"status":"error","input":{"filePath":%q},`+
+			`"error":"The user rejected permission to use this specific tool call."}}}`,
+		filepath.Join(req.WorkingDir, "main.go"))
+
+	command, _ := fakeOpenCode(t, emit(fixtureStepStart, inside, fixtureStepFinishTools)+"exit 0")
+	o := NewOpenCode(command, "")
+	res, err := o.Run(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Err == nil || !strings.Contains(res.Err.Error(), "refused") {
+		t.Fatalf("error = %v, want it to name the refusal", res.Err)
+	}
+	if strings.Contains(res.Err.Error(), "outside its worktree") {
+		t.Errorf("error = %q, want it not to blame containment for a refusal inside the worktree", res.Err)
+	}
+}
+
+// A tool that failed for its own reasons is not a refusal, and the run must
+// still be reported as the agent stopping halfway.
+func TestAnOrdinaryToolFailureIsNotReportedAsARefusal(t *testing.T) {
+	notRefused := `{"type":"tool_use","timestamp":1,"sessionID":"ses_x","part":{"type":"tool","tool":"read",` +
+		`"state":{"status":"error","input":{"filePath":"/tmp/wt/missing.go"},"error":"File not found: /tmp/wt/missing.go"}}}`
+
+	command, _ := fakeOpenCode(t, emit(fixtureStepStart, notRefused, fixtureStepFinishTools)+"exit 0")
+	o := NewOpenCode(command, "")
+	res, err := o.Run(context.Background(), openCodeRequest(t))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Err == nil || !strings.Contains(res.Err.Error(), "tool-calls") {
+		t.Errorf("error = %v, want the unchanged cut-short message", res.Err)
+	}
+	if strings.Contains(res.Err.Error(), "refus") {
+		t.Errorf("error = %q, want a plain tool failure not read as a refusal", res.Err)
+	}
+}

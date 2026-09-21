@@ -32,7 +32,28 @@ type openCodeToolPart struct {
 	Tool  string `json:"tool"`
 	State struct {
 		Status string `json:"status"`
+		Error  string `json:"error"`
+
+		// Only the location is read out of a tool's input. The input of a bash
+		// call is an arbitrary command line, and aidev does not put one in a
+		// failure message or the event log; where it was aimed answers the
+		// question without carrying whatever the agent happened to type.
+		Input struct {
+			FilePath string `json:"filePath"`
+			Path     string `json:"path"`
+			WorkDir  string `json:"workdir"`
+		} `json:"input"`
 	} `json:"state"`
+}
+
+// location is the path a tool call was aimed at, whichever field carries it.
+func (p openCodeToolPart) location() string {
+	for _, candidate := range []string{p.State.Input.FilePath, p.State.Input.Path, p.State.Input.WorkDir} {
+		if strings.TrimSpace(candidate) != "" {
+			return candidate
+		}
+	}
+	return ""
 }
 
 type openCodeTokens struct {
@@ -81,6 +102,17 @@ type transcript struct {
 	Cost          float64
 	Errors        []string
 	UnknownEvents map[string]int
+
+	// Refusals counts tool calls a permission prompt turned down, and
+	// RefusedPath is where the first one was aimed.
+	//
+	// They exist because a refusal ends an OpenCode session outright
+	// (docs/research.md §7g): the run then looks exactly like a model that
+	// stopped halfway, and the two have entirely different remedies. A count and
+	// one path, rather than every refusal, so the record stays bounded whatever
+	// the stream does.
+	Refusals    int
+	RefusedPath string
 
 	// OversizedLines counts lines longer than maxEventLine, which were dropped.
 	OversizedLines int
@@ -203,6 +235,12 @@ func (s *eventScanner) consume(line []byte) {
 			if part.State.Status != "" && part.State.Status != "completed" {
 				s.result.FailedTools++
 			}
+			if isRefusal(part.State.Error) {
+				s.result.Refusals++
+				if s.result.RefusedPath == "" {
+					s.result.RefusedPath = part.location()
+				}
+			}
 		}
 
 	case "step_finish":
@@ -246,4 +284,11 @@ func (s *eventScanner) consume(line []byte) {
 		// wrong response.
 		s.result.UnknownEvents[ev.Type]++
 	}
+}
+
+// isRefusal recognises the error OpenCode records when a permission prompt turns
+// a tool call down. Matching the text is the only way: the event carries no
+// distinct code, and the status is the same "error" every failed tool gets.
+func isRefusal(message string) bool {
+	return strings.Contains(strings.ToLower(message), "rejected permission")
 }

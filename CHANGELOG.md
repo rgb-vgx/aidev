@@ -25,6 +25,15 @@ curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh
 - `aidev project list` shows the repositories aidev has run tasks against, with
   each one's default branch and submodule mode.
 
+- **A run stopped by a refused tool call now says so.** A refusal ends an
+  OpenCode session outright, which looked identical in the record to a model
+  that quit halfway: both were reported only as "the session ended while the
+  agent was still calling tools". The failure now names the refusal, counts them,
+  and gives the path the agent was reaching for — and says when that path was
+  outside the worktree, which means the task is asking for something that is not
+  in the checkout. The failure kind is unchanged (`AGENT_ERROR`); a bash call's
+  command line is deliberately left out of the message.
+
 ## v0.1.0
 
 The first release: prebuilt binaries for Linux and macOS (amd64 and arm64),
