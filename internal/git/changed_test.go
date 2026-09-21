@@ -11,15 +11,23 @@ import (
 	"testing"
 )
 
-// gitIn runs git in dir with the same isolation newRepo uses.
-func gitIn(t *testing.T, dir string, args ...string) {
+// gitIn runs git in dir with the same isolation newRepo uses, and returns its
+// trimmed output so a test can assert on what git reports. The identity is
+// supplied here so that a repository the test did not configure can still
+// commit.
+func gitIn(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+	cmd.Env = append(os.Environ(),
+		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+		"GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.com",
+		"GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.com")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s in %s: %v\n%s", strings.Join(args, " "), dir, err, out)
 	}
+	return strings.TrimSpace(string(out))
 }
 
 // covers reports whether changed accounts for path: an exact entry, or an entry

@@ -39,4 +39,10 @@ var (
 	// ErrInvalidName means a worktree name contains characters aidev will not
 	// put into a filesystem path.
 	ErrInvalidName = errors.New("invalid worktree name")
+
+	// ErrSubmoduleUnavailable means a submodule the base commit pins could not
+	// be checked out into the worktree: no local repository holds it, or that
+	// repository has not fetched the pinned commit. aidev never fetches to fix
+	// this, because a worktree creation is meant to be local and fast.
+	ErrSubmoduleUnavailable = errors.New("submodule cannot be checked out")
 )

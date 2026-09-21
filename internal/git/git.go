@@ -140,6 +140,12 @@ type CreateRequest struct {
 
 	// BaseRef is what the branch starts from. Empty means HEAD.
 	BaseRef string
+
+	// LoadSubmodules asks for the submodules the base commit pins to be
+	// checked out inside the worktree, so that verification commands can read
+	// their sources. Off by default; a project opts in
+	// (task.SubmodulesReadOnly).
+	LoadSubmodules bool
 }
 
 // Worktree is a created, isolated checkout.
@@ -147,6 +153,10 @@ type Worktree struct {
 	Path       string
 	Branch     string
 	BaseCommit string
+
+	// Submodules are the submodule paths checked out inside this worktree,
+	// relative to Path. Empty unless the project asked for them.
+	Submodules []string
 
 	repo Repository
 	m    *Manager
@@ -201,13 +211,27 @@ func (m *Manager) Create(ctx context.Context, req CreateRequest) (*Worktree, err
 		return nil, classifyWorktreeAdd(res.Stderr, req.Branch, path)
 	}
 
-	return &Worktree{
+	w := &Worktree{
 		Path:       path,
 		Branch:     req.Branch,
 		BaseCommit: baseCommit,
 		repo:       req.Repository,
 		m:          m,
-	}, nil
+	}
+
+	// Only when asked: a project that does not use submodules runs no extra git
+	// command here.
+	if req.LoadSubmodules {
+		if err := m.loadSubmodules(ctx, w); err != nil {
+			// A half-populated worktree would be worse than none: the agent
+			// would read some sources and not others, and verification would
+			// fail for a reason that has nothing to do with the task.
+			_ = m.Remove(ctx, w, true)
+			return nil, err
+		}
+	}
+
+	return w, nil
 }
 
 // StatusEntry is one line of porcelain status.
@@ -229,7 +253,14 @@ var statusLine = regexp.MustCompile(`^(..) (.*)$`)
 
 // Status reports the worktree's modified and untracked files.
 func (w *Worktree) Status(ctx context.Context) (Status, error) {
-	res, err := w.m.run(ctx, w.Path, nil, "status", "--porcelain", "--untracked-files=all")
+	// --ignore-submodules=dirty keeps status in agreement with what `git add`
+	// can actually stage. Content edited inside a submodule makes status report
+	// work to commit while `add --all` stages nothing for a gitlink whose commit
+	// has not moved, and the commit then fails (docs/research.md §7h). A moved
+	// gitlink is still reported. On a repository without submodules the flag
+	// changes nothing.
+	res, err := w.m.run(ctx, w.Path, nil, "status", "--porcelain", "--untracked-files=all",
+		"--ignore-submodules=dirty")
 	if err != nil {
 		return Status{}, err
 	}
@@ -285,8 +316,8 @@ func (w *Worktree) Diff(ctx context.Context) (Diff, error) {
 	// A diff against the index loses work the agent committed, when the index
 	// matches the files. Comparing against the base commit keeps it in the
 	// record (docs/research.md 7e).
-	patchArgs := []string{"diff", "--no-color"}
-	statArgs := []string{"diff", "--numstat"}
+	patchArgs := []string{"diff", "--no-color", "--ignore-submodules=dirty"}
+	statArgs := []string{"diff", "--numstat", "--ignore-submodules=dirty"}
 	if strings.TrimSpace(w.BaseCommit) != "" {
 		patchArgs = append(patchArgs, w.BaseCommit)
 		statArgs = append(statArgs, w.BaseCommit)
@@ -384,6 +415,12 @@ func (w *Worktree) Commit(ctx context.Context, message string) (string, error) {
 // human has asked. Without it git refuses, which is exactly the guard that keeps
 // a failed attempt's work from being thrown away.
 func (m *Manager) Remove(ctx context.Context, w *Worktree, force bool) error {
+	// Git refuses outright to remove a working tree that still contains
+	// submodule checkouts, so they go first (docs/research.md §7h).
+	if err := m.removeSubmoduleWorktrees(ctx, w, force); err != nil {
+		return err
+	}
+
 	args := []string{"worktree", "remove"}
 	if force {
 		args = append(args, "--force")
