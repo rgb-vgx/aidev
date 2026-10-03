@@ -449,6 +449,74 @@ func TestListAgentsReportsFailures(t *testing.T) {
 	}
 }
 
+// countingOpenCode returns a backend whose `agent list` writes one line to a
+// file on every spawn, so a test can count how often the lookup really ran.
+func countingOpenCode(t *testing.T, script string) (*OpenCode, string) {
+	t.Helper()
+	counter := filepath.Join(t.TempDir(), "spawns")
+	command, _ := fakeOpenCode(t, "echo spawn >> "+shellQuote(counter)+"\n"+script)
+	return NewOpenCode(command, ""), counter
+}
+
+func spawns(t *testing.T, counter string) int {
+	t.Helper()
+	data, err := os.ReadFile(counter)
+	if err != nil {
+		// The lookup never ran, which the caller's assertions will report.
+		return 0
+	}
+	return strings.Count(string(data), "\n")
+}
+
+// Task creation validates the agent name on every task, and each lookup spawns
+// the OpenCode CLI. A burst of tasks must pay that spawn once, not once per
+// task.
+func TestListAgentsIsCachedAcrossValidations(t *testing.T) {
+	o, counter := countingOpenCode(t, "printf 'build (primary)\\nplan (primary)\\n'\nexit 0")
+
+	for i := 0; i < 3; i++ {
+		if err := o.ValidateAgentName(context.Background(), "build"); err != nil {
+			t.Fatalf("validation %d: %v", i, err)
+		}
+	}
+	if got := spawns(t, counter); got != 1 {
+		t.Errorf("`agent list` ran %d times across three validations, want 1", got)
+	}
+}
+
+// A cached answer must not outlive its window: when OpenCode is reconfigured,
+// the next validation has to see the new agent list.
+func TestListAgentsRefetchesAfterTheCacheExpires(t *testing.T) {
+	previous := agentListTTL
+	agentListTTL = 0
+	t.Cleanup(func() { agentListTTL = previous })
+
+	o, counter := countingOpenCode(t, "printf 'build (primary)\\n'\nexit 0")
+	for i := 0; i < 2; i++ {
+		if err := o.ValidateAgentName(context.Background(), "build"); err != nil {
+			t.Fatalf("validation %d: %v", i, err)
+		}
+	}
+	if got := spawns(t, counter); got != 2 {
+		t.Errorf("`agent list` ran %d times with an expired cache, want 2", got)
+	}
+}
+
+// A failure must not become the standing answer: the next validation gets a
+// fresh attempt at a lookup that may only have failed once.
+func TestAgentListFailuresAreNotCached(t *testing.T) {
+	o, counter := countingOpenCode(t, "echo 'boom' >&2\nexit 1")
+
+	for i := 0; i < 2; i++ {
+		if _, err := o.ListAgents(context.Background()); err == nil {
+			t.Fatalf("attempt %d: a failing agent list was accepted", i)
+		}
+	}
+	if got := spawns(t, counter); got != 2 {
+		t.Errorf("`agent list` ran %d times across two failures, want 2: a failure was cached", got)
+	}
+}
+
 func TestNewOpenCodeDefaultsTheCommand(t *testing.T) {
 	if got := NewOpenCode("  ", "").command(); got != DefaultOpenCodeCommand {
 		t.Errorf("command = %q, want %q", got, DefaultOpenCodeCommand)

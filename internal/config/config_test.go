@@ -133,6 +133,7 @@ func TestLoadAppliesDefaults(t *testing.T) {
 		{"database url", cfg.DatabaseURL, testDSN},
 		{"task timeout", cfg.DefaultTaskTimeout, 30 * time.Minute},
 		{"verification timeout", cfg.DefaultVerificationTimeout, 10 * time.Minute},
+		{"verification total timeout", cfg.VerificationTotalTimeout, 30 * time.Minute},
 		{"backend", cfg.AgentBackend, BackendOpenCode},
 		{"opencode command", cfg.OpenCodeCommand, DefaultOpenCodeCommand},
 		{"opencode model", cfg.OpenCodeModel, DefaultOpenCodeModel},
@@ -181,7 +182,7 @@ func TestEverySettingIsRead(t *testing.T) {
 	cfg := mustLoad(t, `{
   "database": {"url": "postgres://a:b@db:5432/other"},
   "workspace_root": "/srv/aidev/worktrees",
-  "tasks": {"timeout": "45m", "verification_timeout": "2m", "max_output_bytes": 4096, "worktree_cleanup": "never"},
+  "tasks": {"timeout": "45m", "verification_timeout": "2m", "verification_total_timeout": "45m", "max_output_bytes": 4096, "worktree_cleanup": "never"},
   "agent": {
     "backend": "codex",
     "opencode": {"command": "/opt/opencode", "model": "anthropic/claude-opus-5", "agent": "plan"},
@@ -204,6 +205,7 @@ func TestEverySettingIsRead(t *testing.T) {
 		{"workspace root", cfg.WorkspaceRoot, filepath.Clean("/srv/aidev/worktrees")},
 		{"task timeout", cfg.DefaultTaskTimeout, 45 * time.Minute},
 		{"verification timeout", cfg.DefaultVerificationTimeout, 2 * time.Minute},
+		{"verification total timeout", cfg.VerificationTotalTimeout, 45 * time.Minute},
 		{"max output bytes", cfg.MaxOutputBytes, 4096},
 		{"worktree cleanup", cfg.WorktreeCleanup, CleanupNever},
 		{"backend", cfg.AgentBackend, BackendCodex},
@@ -260,6 +262,21 @@ func TestEnvironmentVariablesAreIgnored(t *testing.T) {
 	}
 }
 
+// EnvUser and EnvConfigPath are the only two values the rest of the code is
+// allowed from the environment; they exist so no other package has to call
+// os.Getenv itself.
+func TestEnvHelpersAreTheSanctionedEnvironmentReads(t *testing.T) {
+	t.Setenv("AIDEV_CONFIG", "/srv/aidev/conf.json")
+	t.Setenv("USER", "alice")
+
+	if got := EnvConfigPath(); got != "/srv/aidev/conf.json" {
+		t.Errorf("EnvConfigPath() = %q, want the AIDEV_CONFIG value", got)
+	}
+	if got := EnvUser(); got != "alice" {
+		t.Errorf("EnvUser() = %q, want the USER value", got)
+	}
+}
+
 // The MCP server runs with the working directory of whatever repository is open, so
 // a relative workspace_root can only mean relative to the file that states it.
 func TestRelativeWorkspaceRootIsRelativeToTheConfigFile(t *testing.T) {
@@ -281,6 +298,7 @@ func TestInvalidValuesAreRejected(t *testing.T) {
 		{"bad duration", `"tasks": {"timeout": "30 minutes"}`, []string{"tasks.timeout", "is not a duration"}},
 		{"zero duration", `"tasks": {"timeout": "0s"}`, []string{"tasks.timeout", "must be positive"}},
 		{"negative duration", `"tasks": {"verification_timeout": "-1m"}`, []string{"tasks.verification_timeout", "must be positive"}},
+		{"zero total verification timeout", `"tasks": {"verification_total_timeout": "0s"}`, []string{"tasks.verification_total_timeout", "must be positive"}},
 		{"tiny output bytes", `"tasks": {"max_output_bytes": 10}`, []string{"tasks.max_output_bytes", "at least 1024"}},
 		{"unknown cleanup policy", `"tasks": {"worktree_cleanup": "delete"}`, []string{"tasks.worktree_cleanup", "on-success"}},
 		{"bad log level", `"log_level": "verbose"`, []string{"log_level", "not one of debug"}},
@@ -442,7 +460,7 @@ var wantKeys = []string{
 	"agent.routing",
 	"database.url",
 	"log_level",
-	"tasks.max_output_bytes", "tasks.timeout", "tasks.verification_timeout", "tasks.worktree_cleanup",
+	"tasks.max_output_bytes", "tasks.timeout", "tasks.verification_timeout", "tasks.verification_total_timeout", "tasks.worktree_cleanup",
 	"tracing.endpoint", "tracing.headers", "tracing.sample_ratio", "tracing.service_name", "tracing.traces_endpoint",
 	"workspace_root",
 }

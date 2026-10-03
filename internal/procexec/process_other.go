@@ -25,3 +25,8 @@ func terminateGroup(cmd *exec.Cmd) error {
 func killGroupAfter(cmd *exec.Cmd, _ time.Time) error {
 	return nil
 }
+
+// groupAlive is the existence probe that drives the reap. Without process
+// groups there is only the direct child, which Wait has already reaped, so
+// nothing can be left over.
+func groupAlive(*exec.Cmd) bool { return false }

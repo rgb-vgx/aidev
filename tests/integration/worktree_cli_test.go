@@ -18,22 +18,44 @@ import (
 	"aidev/internal/task"
 )
 
-// runCLI drives the real command surface, with the configuration file the commands read.
-// It exists because the worktree commands are the operator's only way to act on the
-// cleanup policy, and testing them below the CLI would leave the part an operator
+// runCLIWithDatabase drives the real command surface, with a configuration file
+// naming databaseURL — the file the commands actually read. It exists because
+// the worktree commands are the operator's only way to act on the cleanup
+// policy, and testing them below the CLI would leave the part an operator
 // actually touches unexercised.
-func (h *harness) runCLI(t *testing.T, args ...string) (stdout, stderr string, err error) {
+func runCLIWithDatabase(t *testing.T, databaseURL, workspace string, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
 
+	dir := t.TempDir()
+
+	// `task create` validates the agent name by spawning the configured
+	// OpenCode binary, so whether a developer machine happens to have
+	// `opencode` installed — CI does not — would decide the test's outcome.
+	// The stub answers `agent list` and fails loudly on anything else.
+	opencode := filepath.Join(dir, "opencode")
+	stub := "#!/bin/sh\n" +
+		"if [ \"$1\" = agent ] && [ \"$2\" = list ]; then\n" +
+		"  printf 'build (primary)\\nplan (primary)\\n'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"echo \"unexpected opencode invocation: $*\" >&2\n" +
+		"exit 1\n"
+	if err := os.WriteFile(opencode, []byte(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
 	body, err := json.Marshal(map[string]any{
-		"database":       map[string]any{"url": os.Getenv(envDatabaseURL)},
-		"workspace_root": h.workspace,
+		"database":       map[string]any{"url": databaseURL},
+		"workspace_root": workspace,
 		"log_level":      "error",
+		"agent": map[string]any{
+			"opencode": map[string]any{"command": opencode},
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	conf := filepath.Join(t.TempDir(), "conf.json")
+	conf := filepath.Join(dir, "conf.json")
 	if err := os.WriteFile(conf, body, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -42,6 +64,12 @@ func (h *harness) runCLI(t *testing.T, args ...string) (stdout, stderr string, e
 	var out, errOut bytes.Buffer
 	err = cli.Run(context.Background(), "test", args, &out, &errOut)
 	return out.String(), errOut.String(), err
+}
+
+// runCLI runs the CLI against the harness's database and workspace.
+func (h *harness) runCLI(t *testing.T, args ...string) (stdout, stderr string, err error) {
+	t.Helper()
+	return runCLIWithDatabase(t, os.Getenv(envDatabaseURL), h.workspace, args...)
 }
 
 // A failed attempt's worktree must be findable, or "the work is kept for

@@ -10,6 +10,7 @@ package verification
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -24,13 +25,19 @@ type Runner struct {
 	// DefaultTimeout bounds a step that does not specify its own.
 	DefaultTimeout time.Duration
 
+	// TotalTimeout bounds the whole pass: every step together. Zero disables
+	// it. Without it, N steps multiply into N × DefaultTimeout, and a sequence
+	// of hanging checks holds the worker for hours.
+	TotalTimeout time.Duration
+
 	// MaxOutputBytes bounds each captured stream per step.
 	MaxOutputBytes int
 }
 
-// NewRunner returns a runner with the given bounds.
-func NewRunner(defaultTimeout time.Duration, maxOutputBytes int) *Runner {
-	return &Runner{DefaultTimeout: defaultTimeout, MaxOutputBytes: maxOutputBytes}
+// NewRunner returns a runner with the given bounds. totalTimeout of zero means
+// the pass is bounded only by the caller's own context.
+func NewRunner(defaultTimeout, totalTimeout time.Duration, maxOutputBytes int) *Runner {
+	return &Runner{DefaultTimeout: defaultTimeout, TotalTimeout: totalTimeout, MaxOutputBytes: maxOutputBytes}
 }
 
 // Request is one verification pass over a worktree.
@@ -127,6 +134,15 @@ func (r *Runner) Run(ctx context.Context, req Request) (Report, error) {
 		return report, fmt.Errorf("verification: no steps defined, so nothing could be verified")
 	}
 
+	// The total budget wraps the caller's context rather than replacing it, so
+	// a cancellation and an exhausted budget stay distinguishable below.
+	runCtx := ctx
+	if r.TotalTimeout > 0 {
+		var cancel context.CancelFunc
+		runCtx, cancel = context.WithTimeout(ctx, r.TotalTimeout)
+		defer cancel()
+	}
+
 	report.Runs = make([]task.VerificationRun, 0, len(req.Steps))
 	stopped := false
 
@@ -136,17 +152,30 @@ func (r *Runner) Run(ctx context.Context, req Request) (Report, error) {
 			continue
 		}
 
-		// A cancellation between steps must not look like a skip: the step was
-		// never attempted because the caller stopped, not because an earlier
-		// step failed.
-		if err := ctx.Err(); err != nil {
-			report.Runs = append(report.Runs, r.cancelled(req.AttemptID, i, step))
+		// A stop between steps must not look like a skip: the step was never
+		// attempted because the pass was stopped, not because an earlier step
+		// failed. Running out of budget is a timeout, not a cancellation — the
+		// operator did not ask for it, and the failure kinds say different things.
+		if err := runCtx.Err(); err != nil {
 			stopped = true
-			report.FailureKind = task.FailureCancelled
+			if errors.Is(err, context.DeadlineExceeded) {
+				report.Runs = append(report.Runs, r.timedOut(req.AttemptID, i, step))
+				report.FailureKind = task.FailureTimeout
+			} else {
+				report.Runs = append(report.Runs, r.cancelled(req.AttemptID, i, step))
+				report.FailureKind = task.FailureCancelled
+			}
 			continue
 		}
 
-		run, outcome := r.runStep(ctx, req, i, step)
+		run, outcome := r.runStep(runCtx, req, i, step)
+		// procexec reports any caller-context error as a cancellation; a budget
+		// that expired mid-step is still a timeout, and recording it as a
+		// cancellation would blame the operator for aidev's own deadline.
+		if outcome == procexec.OutcomeCancelled && errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+			outcome = procexec.OutcomeTimedOut
+			run.Status = task.VerificationTimedOut
+		}
 		report.Runs = append(report.Runs, run)
 
 		if run.Status != task.VerificationPassed {
@@ -241,6 +270,15 @@ func (r *Runner) skipped(attemptID uuid.UUID, index int, step task.VerificationS
 func (r *Runner) cancelled(attemptID uuid.UUID, index int, step task.VerificationStep) task.VerificationRun {
 	run := r.skipped(attemptID, index, step)
 	run.Status = task.VerificationCancelled
+	return run
+}
+
+// timedOut marks the step at which the pass ran out of budget: the command
+// itself never got (or never finished) its turn, which is a timeout of the
+// pass, not a failure of that check.
+func (r *Runner) timedOut(attemptID uuid.UUID, index int, step task.VerificationStep) task.VerificationRun {
+	run := r.skipped(attemptID, index, step)
+	run.Status = task.VerificationTimedOut
 	return run
 }
 

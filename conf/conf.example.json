@@ -6,6 +6,7 @@
   "tasks": {
     "timeout": "30m",
     "verification_timeout": "10m",
+    "verification_total_timeout": "30m",
     "max_output_bytes": 1048576,
     "worktree_cleanup": "on-success"
   },

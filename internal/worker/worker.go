@@ -79,7 +79,7 @@ func New(st *store.Store, gm *git.Manager, backend agent.Backend, cfg config.Con
 		Store:    st,
 		Git:      gm,
 		Backend:  backend,
-		Verifier: verification.NewRunner(cfg.DefaultVerificationTimeout, cfg.MaxOutputBytes),
+		Verifier: verification.NewRunner(cfg.DefaultVerificationTimeout, cfg.VerificationTotalTimeout, cfg.MaxOutputBytes),
 		Config:   cfg,
 		Logger:   logger,
 	}
@@ -267,30 +267,45 @@ func (o *Orchestrator) Approve(ctx context.Context, idOrRef string, granted bool
 // useful, and discarding it would be the one thing the cleanup policy
 // promises never to do.
 func (o *Orchestrator) Cancel(ctx context.Context, idOrRef, reason string) (Outcome, error) {
-	t, err := o.Store.ResolveTask(ctx, idOrRef)
-	if err != nil {
-		return Outcome{}, err
-	}
-	if t.Status.Terminal() {
-		return Outcome{}, fmt.Errorf("%s is already %s: %w", t.Identifier(), t.Status, ErrNotRunnable)
-	}
+	// A cancel can lose its compare-and-set to a transition the run itself is
+	// making at the same instant — READY → RUNNING as the task starts,
+	// RUNNING → VERIFYING as the agent finishes. That is normal concurrency
+	// between two processes looking at one task, not an error to hand the
+	// user: re-read the task and cancel whatever status it is in now, up to a
+	// few times, before giving up.
+	const maxAttempts = 3
 
-	err = o.Store.InTx(ctx, func(tx *store.Store) error {
-		if err := tx.TransitionTask(ctx, t.ID, t.Status, task.StatusCancelled); err != nil {
-			return err
+	var t task.Task
+	var err error
+	for attempt := 1; ; attempt++ {
+		t, err = o.Store.ResolveTask(ctx, idOrRef)
+		if err != nil {
+			return Outcome{}, err
 		}
-		if err := finishOpenAttempts(ctx, tx, t.ID, task.AttemptCancelled, task.FailureCancelled, reason); err != nil {
-			return err
+		if t.Status.Terminal() {
+			return Outcome{}, fmt.Errorf("%s is already %s: %w", t.Identifier(), t.Status, ErrNotRunnable)
 		}
-		if err := retainWorktrees(ctx, tx, t.ID); err != nil {
-			return err
-		}
-		return appendEvent(ctx, tx, t.ID, nil, event.TypeTaskCancelled, map[string]any{
-			"reason":            reason,
-			"previous_status":   t.Status.String(),
-			"worktree_retained": true,
+
+		err = o.Store.InTx(ctx, func(tx *store.Store) error {
+			if err := tx.TransitionTask(ctx, t.ID, t.Status, task.StatusCancelled); err != nil {
+				return err
+			}
+			if err := finishOpenAttempts(ctx, tx, t.ID, task.AttemptCancelled, task.FailureCancelled, reason); err != nil {
+				return err
+			}
+			if err := retainWorktrees(ctx, tx, t.ID); err != nil {
+				return err
+			}
+			return appendEvent(ctx, tx, t.ID, nil, event.TypeTaskCancelled, map[string]any{
+				"reason":            reason,
+				"previous_status":   t.Status.String(),
+				"worktree_retained": true,
+			})
 		})
-	})
+		if err == nil || !errors.Is(err, store.ErrConflict) || attempt == maxAttempts {
+			break
+		}
+	}
 	if err != nil {
 		return Outcome{}, err
 	}
@@ -801,14 +816,22 @@ func (r *run) persistWorkerRun(ctx context.Context, result agent.Result) *task.W
 		record.Stderr = appendDetail(record.Stderr, result.Err.Error())
 	}
 
-	if diff, err := r.worktree.Diff(ctx); err != nil {
+	// A cancelled run's context is already done by the time this runs, and a
+	// cancel is exactly when the diff matters most: it is the only record of
+	// what the agent managed to do. The git calls therefore get a detached
+	// context with their own deadline — the same treatment commitWork gives
+	// them — instead of inheriting a context that is already closed.
+	gitCtx, cancelGit := context.WithTimeout(context.WithoutCancel(ctx), git.DefaultTimeout)
+	defer cancelGit()
+
+	if diff, err := r.worktree.Diff(gitCtx); err != nil {
 		r.log.WarnContext(ctx, "could not collect the worktree diff", "error", err.Error())
 	} else {
 		record.Diff = diff.Patch
 		record.DiffTruncated = diff.Truncated
 		record.ChangedFiles = diff.ChangedFiles
 	}
-	if head, err := r.worktree.HeadCommit(ctx); err == nil && r.record != nil {
+	if head, err := r.worktree.HeadCommit(gitCtx); err == nil && r.record != nil {
 		writeCtx, cancel := writeContext(ctx)
 		defer cancel()
 		if err := r.o.Store.SetWorktreeHead(writeCtx, r.record.ID, head); err != nil {

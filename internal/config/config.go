@@ -36,8 +36,14 @@ import (
 const (
 	DefaultTaskTimeout         = 30 * time.Minute
 	DefaultVerificationTimeout = 10 * time.Minute
-	DefaultOpenCodeCommand     = "opencode"
-	DefaultOpenCodeAgent       = "build"
+
+	// DefaultVerificationTotalTimeout bounds the whole verification pass. The
+	// per-step timeout alone lets N steps multiply into N × 10 minutes, so a
+	// task whose checks hang one after another would hold a worker for hours.
+	DefaultVerificationTotalTimeout = 30 * time.Minute
+
+	DefaultOpenCodeCommand = "opencode"
+	DefaultOpenCodeAgent   = "build"
 
 	// DefaultOpenCodeModel is chosen on measured behaviour, not on branding.
 	// On identical trivial prompts it returned in 3.2-3.9s across repeated runs,
@@ -124,6 +130,10 @@ type Config struct {
 	// DefaultVerificationTimeout bounds a single verification step.
 	DefaultVerificationTimeout time.Duration
 
+	// VerificationTotalTimeout bounds one whole verification pass: every step
+	// together, not each one on its own.
+	VerificationTotalTimeout time.Duration
+
 	// OpenCodeCommand is the executable used by the OpenCode backend.
 	OpenCodeCommand string
 
@@ -186,6 +196,18 @@ type Lookup func(key string) (string, bool)
 // OSLookup reads the real process environment.
 func OSLookup(key string) (string, bool) { return os.LookupEnv(key) }
 
+// EnvUser is the login name of the account running the process, used as the
+// default decider in `aidev task approve`. It is read here, beside every other
+// piece of environment access, because internal/config is the only package
+// that reads the environment (AGENTS.md); the caller keeps the fallback for
+// when the variable is unset.
+func EnvUser() string { return os.Getenv("USER") }
+
+// EnvConfigPath is the raw AIDEV_CONFIG value, empty when unset. `aidev setup`
+// compares it against the file it just wrote to decide whether the shell
+// already points there or still needs the export line.
+func EnvConfigPath() string { return os.Getenv("AIDEV_CONFIG") }
+
 // configSchema is the vocabulary of conf.json: every key aidev understands and
 // the kind of value it takes. SettingKeys, the unknown-key check and the type
 // check are all derived from it, so the schema is stated once for them.
@@ -195,10 +217,11 @@ var configSchema = map[string]any{
 	},
 	"workspace_root": kindString,
 	"tasks": map[string]any{
-		"timeout":              kindString,
-		"verification_timeout": kindString,
-		"max_output_bytes":     kindInteger,
-		"worktree_cleanup":     kindString,
+		"timeout":                    kindString,
+		"verification_timeout":       kindString,
+		"verification_total_timeout": kindString,
+		"max_output_bytes":           kindInteger,
+		"worktree_cleanup":           kindString,
 	},
 	"agent": map[string]any{
 		"backend": kindString,
@@ -295,10 +318,11 @@ type fileConfig struct {
 	} `json:"database"`
 	WorkspaceRoot *string `json:"workspace_root"`
 	Tasks         *struct {
-		Timeout             *string `json:"timeout"`
-		VerificationTimeout *string `json:"verification_timeout"`
-		MaxOutputBytes      *int    `json:"max_output_bytes"`
-		WorktreeCleanup     *string `json:"worktree_cleanup"`
+		Timeout                  *string `json:"timeout"`
+		VerificationTimeout      *string `json:"verification_timeout"`
+		VerificationTotalTimeout *string `json:"verification_total_timeout"`
+		MaxOutputBytes           *int    `json:"max_output_bytes"`
+		WorktreeCleanup          *string `json:"worktree_cleanup"`
 	} `json:"tasks"`
 	Agent *struct {
 		Backend  *string `json:"backend"`
@@ -388,6 +412,7 @@ func LoadFile(path string) (Config, error) {
 		ConfigFile:                 path,
 		DefaultTaskTimeout:         DefaultTaskTimeout,
 		DefaultVerificationTimeout: DefaultVerificationTimeout,
+		VerificationTotalTimeout:   DefaultVerificationTotalTimeout,
 		OpenCodeCommand:            DefaultOpenCodeCommand,
 		OpenCodeModel:              DefaultOpenCodeModel,
 		OpenCodeAgent:              DefaultOpenCodeAgent,
@@ -455,6 +480,14 @@ func LoadFile(path string) (Config, error) {
 				fail("%v", err)
 			} else {
 				cfg.DefaultVerificationTimeout = d
+			}
+		}
+		if file.Tasks.VerificationTotalTimeout != nil && strings.TrimSpace(*file.Tasks.VerificationTotalTimeout) != "" {
+			d, err := parseDuration("tasks.verification_total_timeout", strings.TrimSpace(*file.Tasks.VerificationTotalTimeout))
+			if err != nil {
+				fail("%v", err)
+			} else {
+				cfg.VerificationTotalTimeout = d
 			}
 		}
 		if file.Tasks.MaxOutputBytes != nil {

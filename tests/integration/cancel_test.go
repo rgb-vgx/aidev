@@ -2,6 +2,8 @@ package integration
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -140,6 +142,93 @@ func TestCancelInTheSameProcessStopsTheAgentWithoutPolling(t *testing.T) {
 		assertCancelledAndKept(t, h, created, res)
 	case <-time.After(5 * time.Second):
 		t.Fatal("the agent was still running 5s after the same orchestrator cancelled the task")
+	}
+}
+
+// A cancelled run's diff is the record of what the agent managed to do — the
+// audit record is most valuable precisely then — but persistWorkerRun used to
+// collect it on the run's own context, which a cancel has already closed, so
+// worker_runs.diff came out empty for exactly the runs that needed it most.
+func TestCancelledRunStillRecordsTheDiff(t *testing.T) {
+	h := newHarness(t, nil)
+	h.orchestrator.CancelPoll = 100 * time.Millisecond
+	h.backend.Work = func(ctx context.Context, req agent.Request) error {
+		if err := doTheWork(ctx, req); err != nil {
+			return err
+		}
+		// Block until the cancel reaches us: the file above is the work whose
+		// diff must survive the cancellation.
+		<-ctx.Done()
+		return nil
+	}
+
+	created := h.createTask(nil)
+	done := runInBackground(h, created.Ref)
+	waitUntilStatus(t, h, created.Ref, task.StatusRunning)
+	time.Sleep(200 * time.Millisecond)
+
+	if _, err := otherProcess(h).Cancel(h.ctx, created.Ref, "stop it"); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+
+	select {
+	case res := <-done:
+		assertCancelledAndKept(t, h, created, res)
+		if res.outcome.Attempt == nil {
+			t.Fatal("the outcome carries no attempt")
+		}
+		runs, err := h.store.ListWorkerRuns(h.ctx, res.outcome.Attempt.ID)
+		if err != nil {
+			t.Fatalf("ListWorkerRuns: %v", err)
+		}
+		if len(runs) != 1 {
+			t.Fatalf("worker runs = %d, want exactly 1", len(runs))
+		}
+		if !strings.Contains(runs[0].Diff, "marker.txt") {
+			t.Errorf("diff = %q, want it to contain the file the agent wrote", runs[0].Diff)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the run did not stop within 10s of the cancel")
+	}
+}
+
+// Two processes cancelling one task at the same instant is normal use — the
+// CLI and the MCP server are different processes. The loser of the
+// compare-and-set must not be told "conflict": Cancel re-reads the task and
+// reports it as already cancelled (ErrNotRunnable) instead, up to its retry
+// budget, and exactly one cancel wins per task.
+func TestConcurrentCancelNeverSurfacesAConflict(t *testing.T) {
+	h := newHarness(t, nil)
+
+	for round := 0; round < 10; round++ {
+		created := h.createTask(nil)
+
+		start := make(chan struct{})
+		errs := make(chan error, 2)
+		for i := 0; i < 2; i++ {
+			go func() {
+				<-start
+				_, err := otherProcess(h).Cancel(h.ctx, created.Ref, "stop it")
+				errs <- err
+			}()
+		}
+		close(start)
+
+		var successes int
+		for i := 0; i < 2; i++ {
+			err := <-errs
+			switch {
+			case err == nil:
+				successes++
+			case errors.Is(err, worker.ErrNotRunnable):
+				// The loser's verdict: the task is already cancelled.
+			default:
+				t.Errorf("round %d: Cancel = %v; a concurrent cancel must resolve to success or ErrNotRunnable, never a raw conflict", round, err)
+			}
+		}
+		if successes != 1 {
+			t.Errorf("round %d: successes = %d, want exactly 1", round, successes)
+		}
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"aidev/internal/agent"
@@ -13,6 +14,7 @@ import (
 	"aidev/internal/store"
 	"aidev/internal/tracing"
 	"aidev/internal/worker"
+	"aidev/migrations"
 )
 
 // connectTimeout bounds startup so a wrong database.url fails quickly instead of
@@ -68,6 +70,13 @@ func connectApp(ctx context.Context, cfg config.Config, logger *slog.Logger) (*a
 	db, err := store.Open(connectCtx, cfg.DatabaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("%w\n\nIs PostgreSQL running? `make db-up` starts it, and `aidev migrate` applies the schema", err)
+	}
+	// Refuse a schema this binary does not recognise before anything is built
+	// on top of it: otherwise a stale database fails halfway through a command,
+	// or mid-run inside a worker, as a missing column.
+	if err := requireCurrentSchema(connectCtx, db); err != nil {
+		db.Close()
+		return nil, err
 	}
 
 	gitManager, err := git.NewManager(cfg.WorkspaceRoot)
@@ -127,4 +136,30 @@ func connectApp(ctx context.Context, cfg config.Config, logger *slog.Logger) (*a
 			db.Close()
 		},
 	}, nil
+}
+
+// requireCurrentSchema reports the migrations this binary carries that the
+// database has not applied yet. `aidev migrate`, `aidev doctor` and `aidev
+// setup` do not connect through connectApp, so the commands that repair the
+// schema stay reachable exactly when this refuses everything else.
+func requireCurrentSchema(ctx context.Context, db *store.Store) error {
+	loaded, err := store.LoadMigrations(migrations.FS)
+	if err != nil {
+		return fmt.Errorf("read the embedded migrations: %w", err)
+	}
+	pending, err := db.PendingMigrations(ctx, loaded)
+	if err != nil {
+		// Includes an edited applied migration: Migrate refuses that too, and a
+		// command must not be the first thing to trip over it.
+		return fmt.Errorf("check the database schema: %w", err)
+	}
+	if len(pending) == 0 {
+		return nil
+	}
+	noun := "migrations"
+	if len(pending) == 1 {
+		noun = "migration"
+	}
+	return fmt.Errorf("database schema is behind: %d %s pending (%s); run `aidev migrate` to apply them",
+		len(pending), noun, strings.Join(pending, ", "))
 }

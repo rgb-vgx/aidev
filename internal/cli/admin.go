@@ -92,6 +92,7 @@ func runConfig(_ context.Context, env *Env, args []string) error {
 			"workspace_root":               cfg.WorkspaceRoot,
 			"default_task_timeout":         cfg.DefaultTaskTimeout.String(),
 			"default_verification_timeout": cfg.DefaultVerificationTimeout.String(),
+			"verification_total_timeout":   cfg.VerificationTotalTimeout.String(),
 			"agent_backend":                cfg.AgentBackend.String(),
 			"opencode_command":             cfg.OpenCodeCommand,
 			"opencode_model":               cfg.OpenCodeModel,
@@ -133,6 +134,7 @@ func runConfig(_ context.Context, env *Env, args []string) error {
 	fmt.Fprintf(env.Stdout, "workspace root                %s\n", cfg.WorkspaceRoot)
 	fmt.Fprintf(env.Stdout, "default task timeout          %s\n", cfg.DefaultTaskTimeout)
 	fmt.Fprintf(env.Stdout, "default verification timeout  %s\n", cfg.DefaultVerificationTimeout)
+	fmt.Fprintf(env.Stdout, "verification total timeout    %s\n", cfg.VerificationTotalTimeout)
 	fmt.Fprintf(env.Stdout, "agent backend                 %s\n", cfg.AgentBackend)
 	fmt.Fprintf(env.Stdout, "opencode command              %s\n", cfg.OpenCodeCommand)
 	fmt.Fprintf(env.Stdout, "opencode model                %s\n", model)

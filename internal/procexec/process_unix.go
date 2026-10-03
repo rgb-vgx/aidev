@@ -63,3 +63,16 @@ func killGroupAfter(cmd *exec.Cmd, deadline time.Time) error {
 
 // groupPollInterval is how often killGroupAfter checks whether the group is gone.
 const groupPollInterval = 50 * time.Millisecond
+
+// groupAlive reports whether any member of the child's process group is still
+// running. It is the existence probe that decides whether a finished run owes
+// the group a reap: ESRCH means the group is already gone, which is the normal
+// case, and anything else counts as alive — EPERM included, because a group we
+// cannot signal is still a group that is running.
+func groupAlive(cmd *exec.Cmd) bool {
+	if cmd.Process == nil {
+		return false
+	}
+	err := syscall.Kill(-cmd.Process.Pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
+}

@@ -22,3 +22,6 @@
 
 # Python bytecode from tools/anthropic-shim
 __pycache__/
+
+# built binary (the extensionless /aidev is already covered)
+/aidev.exe

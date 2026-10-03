@@ -156,14 +156,44 @@ func TestOutputIsBoundedAndFlagged(t *testing.T) {
 	if res.Outcome != OutcomeSucceeded {
 		t.Fatalf("outcome = %s, want SUCCEEDED: exceeding the cap must not fail the process", res.Outcome)
 	}
-	if len(res.Stdout) != 1024 {
-		t.Errorf("stdout length = %d, want exactly the 1024-byte cap", len(res.Stdout))
+	// 5000 in, 1024 kept: half at the start, half at the end, and the middle
+	// announced rather than silently missing.
+	if !strings.HasPrefix(res.Stdout, strings.Repeat("x", 512)) || !strings.HasSuffix(res.Stdout, strings.Repeat("x", 512)) {
+		t.Errorf("stdout does not keep both ends (len %d): %.80q…%.80q", len(res.Stdout), res.Stdout, res.Stdout)
+	}
+	if !strings.Contains(res.Stdout, "…[truncated 3976 bytes]…") {
+		t.Errorf("stdout = %q, want it to say how many bytes were dropped", res.Stdout)
 	}
 	if !res.StdoutTruncated {
 		t.Error("stdout was capped but not flagged as truncated")
 	}
-	if len(res.Stderr) != 1024 || !res.StderrTruncated {
-		t.Errorf("stderr length = %d truncated = %v, want 1024 and true", len(res.Stderr), res.StderrTruncated)
+	if !strings.HasPrefix(res.Stderr, strings.Repeat("y", 512)) || !strings.HasSuffix(res.Stderr, strings.Repeat("y", 512)) {
+		t.Errorf("stderr does not keep both ends (len %d)", len(res.Stderr))
+	}
+	if !strings.Contains(res.Stderr, "…[truncated 3976 bytes]…") || !res.StderrTruncated {
+		t.Errorf("stderr = %q truncated = %v, want the marker and the flag", res.Stderr, res.StderrTruncated)
+	}
+}
+
+// The reason a command failed is at the end of its output — the assertion, the
+// error line. A cap that kept only the start cut exactly that, so the tail has
+// to survive truncation.
+func TestTruncatedOutputKeepsTheTail(t *testing.T) {
+	s := spec(t, "sh", "-c", `printf 'a%.0s' $(seq 1 2000); printf 'command failed: boom'`)
+	s.MaxOutputBytes = 1024
+
+	res, err := Run(context.Background(), s)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !res.StdoutTruncated {
+		t.Fatal("stdout was not flagged as truncated; the test would prove nothing")
+	}
+	if !strings.HasSuffix(res.Stdout, "command failed: boom") {
+		t.Errorf("stdout ends with %q, want the last line the command printed", res.Stdout[max(0, len(res.Stdout)-40):])
+	}
+	if !strings.HasPrefix(res.Stdout, "aaaa") {
+		t.Errorf("stdout = %.40q…, want the start kept too", res.Stdout)
 	}
 }
 
@@ -318,8 +348,9 @@ func TestBoundedBufferReportsFullWrites(t *testing.T) {
 	if n != 8 {
 		t.Errorf("n = %d, want 8 (the full input length)", n)
 	}
-	if b.String() != "abcd" {
-		t.Errorf("buffered = %q, want %q", b.String(), "abcd")
+	// Two bytes of head, two of tail, the dropped four named in between.
+	if got, want := b.String(), "ab…[truncated 4 bytes]…gh"; got != want {
+		t.Errorf("buffered = %q, want %q", got, want)
 	}
 	if !b.Truncated() {
 		t.Error("Truncated() = false after exceeding the cap")

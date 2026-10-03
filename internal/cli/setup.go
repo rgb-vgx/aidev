@@ -142,7 +142,7 @@ func printSetupReport(env *Env, opts setup.Options, report setup.Report) {
 	fmt.Fprintln(env.Stdout)
 	fmt.Fprintln(env.Stdout, "Next steps:")
 	fmt.Fprintln(env.Stdout)
-	if os.Getenv("AIDEV_CONFIG") == report.ConfigPath {
+	if config.EnvConfigPath() == report.ConfigPath {
 		fmt.Fprintln(env.Stdout, "  1. AIDEV_CONFIG already names this file.")
 	} else {
 		fmt.Fprintln(env.Stdout, "  1. Add this line to your shell profile (~/.bashrc or ~/.zshrc) and open a new terminal:")

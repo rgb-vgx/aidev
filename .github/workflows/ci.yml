@@ -1,0 +1,41 @@
+# The gate on every change: `make check` as the release workflow already runs
+# it, and the integration tests against a real PostgreSQL. Those tests skip
+# themselves without TEST_DATABASE_URL, so `make check` alone would pass with
+# the persistence layer never exercised — `make test-integration` sets
+# AIDEV_REQUIRE_DB=1 and turns that skip into a failure (AGENTS.md).
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # staticcheck is the half of `make check` that prints "skipping" when the
+      # tool is absent, so without installing it CI would go green with no lint
+      # at all. Installed here; `make lint` picks it up from GOPATH/bin.
+      - name: Install staticcheck
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - run: make check
+
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # The same compose file and make targets a developer runs locally, so CI
+      # cannot drift from the documented workflow: test-db-create talks to the
+      # container through `docker compose exec`, which needs compose's own
+      # database rather than a GitHub service container.
+      - run: make db-up
+      - run: make test-db-create
+      - run: make test-integration

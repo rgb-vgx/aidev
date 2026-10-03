@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"aidev/internal/config"
 	"aidev/internal/store"
 	"aidev/internal/task"
 	"aidev/internal/view"
@@ -541,7 +542,7 @@ func taskApprove(ctx context.Context, env *Env, args []string) error {
 
 	decidedBy := strings.TrimSpace(*by)
 	if decidedBy == "" {
-		decidedBy = os.Getenv("USER")
+		decidedBy = config.EnvUser()
 	}
 	if decidedBy == "" {
 		decidedBy = "unknown"

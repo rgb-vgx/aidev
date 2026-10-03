@@ -17,10 +17,12 @@ import (
 var version = "0.1.0-dev"
 
 func main() {
-	// Ctrl-C and SIGTERM cancel the root context rather than killing the
+	// Ctrl-C, SIGTERM and SIGHUP cancel the root context rather than killing the
 	// process outright, so an in-flight task can record that it was cancelled
-	// instead of leaving a row stuck in RUNNING.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	// instead of leaving a row stuck in RUNNING. SIGHUP is the one a closing
+	// terminal sends: without it, disconnecting the terminal killed the process
+	// before it could write anything.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 
 	if err := cli.Run(ctx, version, os.Args[1:], os.Stdout, os.Stderr); err != nil {

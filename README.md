@@ -195,6 +195,7 @@ binary uses when a key is absent; conf/conf.example.json shows them all in one f
 | `workspace_root` | `~/.local/share/aidev/worktrees` | where task worktrees are created; every worktree path must resolve inside it |
 | `tasks.timeout` | `30m` | bounds one agent run when the task does not set its own |
 | `tasks.verification_timeout` | `10m` | bounds one verification step |
+| `tasks.verification_total_timeout` | `30m` | bounds one whole verification pass, all steps together |
 | `tasks.max_output_bytes` | `1048576` | per-stream capture limit; output beyond it is dropped and flagged as truncated |
 | `tasks.worktree_cleanup` | `on-success` | `on-success` commits the work and removes the worktree; `never` keeps every worktree. Neither discards failed work |
 | `agent.backend` | `opencode` | which agent implementation runs tasks: `opencode` or `codex` |

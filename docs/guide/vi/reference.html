@@ -181,6 +181,7 @@ aidev task events TASK-000001 --after 5 --limit 50
 <tr><td><code>workspace_root</code></td><td><code>~/.local/share/aidev/worktrees</code></td><td>Nơi tạo worktree của task. Mọi đường dẫn worktree phải nằm trong nó.</td></tr>
 <tr><td><code>tasks.timeout</code></td><td><code>30m</code></td><td>Giới hạn một lần chạy agent khi task không đặt timeout riêng. Rộng rãi có chủ ý: lần đầu chạy trên kho chưa từng thấy từng bị đo là mất hàng phút.</td></tr>
 <tr><td><code>tasks.verification_timeout</code></td><td><code>10m</code></td><td>Giới hạn một bước verification.</td></tr>
+<tr><td><code>tasks.verification_total_timeout</code></td><td><code>30m</code></td><td>Giới hạn toàn bộ một lượt verification, tất cả các bước cộng lại, để chuỗi check treo không giữ worker hàng giờ.</td></tr>
 <tr><td><code>tasks.max_output_bytes</code></td><td><code>1048576</code> (1 MiB) cho mỗi luồng thu</td><td>Trần mỗi luồng thu trước khi vào cơ sở dữ liệu. Vượt trần thì bỏ phần dư và gắn cờ đã cắt bớt. Tối thiểu 1024.</td></tr>
 <tr><td><code>tasks.worktree_cleanup</code></td><td><code>on-success</code></td><td><code>on-success</code> commit công việc rồi xóa worktree; <code>never</code> giữ mọi worktree. Không giá trị nào vứt công việc hỏng.</td></tr>
 <tr><td><code>agent.backend</code></td><td><code>opencode</code></td><td>Bộ máy agent nào chạy task: <code>opencode</code> hay <code>codex</code>.</td></tr>
