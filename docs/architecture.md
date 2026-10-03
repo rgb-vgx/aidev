@@ -224,7 +224,13 @@ share refs, config and the stash stack with the main repository: measured, an
 agent inside its worktree can `update-ref` a branch the operator's checkout is on,
 and a `core.fsmonitor` set from there runs on the operator's next `git status`
 (docs/research.md §7i). Ref and config writes are outside what a worktree can
-contain; the security model states the trust that follows from that.
+contain, so aidev adds two layers on top of the tree boundary: every git command
+it runs itself is neutralised (no fsmonitor, no hooks path, no ext-diff), and
+shared state is snapshotted around the agent's run — a write to config, hooks,
+attributes or HEAD fails the attempt as `CONTAINMENT` before verification even
+starts, while a foreign ref moving only warns (docs/research.md §7i.2). This is
+detection after the fact, not a sandbox: the security model states the trust that
+follows from that.
 
 ### Submodules are a worktree each, read-only, and off by default
 
@@ -430,10 +436,14 @@ The boundary is over *files*. It does not extend to git state, which every linke
 worktree shares with the main repository (docs/research.md §7i): from inside its
 worktree an agent can move a branch the operator's checkout is on, push into the
 shared stash, or set `core.fsmonitor`/`core.sshCommand` so the operator's next plain
-git command runs something the task chose. aidev does not sandbox ref or config
-writes. That widens the trust rather than changing it — anyone who can create a
-task can have a verification command run anything anyway, which is the next
-section.
+git command runs something the task chose. aidev does not sandbox those writes —
+it *neutralises* them for its own commands (no fsmonitor, no hooks path, no
+ext-diff on any git command aidev runs) and *detects* them after the agent: shared
+config, hooks, attributes or HEAD changed means the attempt fails as
+`CONTAINMENT` before verification runs; a foreign ref moving only emits a warning
+(docs/research.md §7i.2). Detection is after the fact, so it widens the trust
+rather than changing it — anyone who can create a task can have a verification
+command run anything anyway, which is the next section.
 
 ### Verification commands are arbitrary code, deliberately
 
@@ -656,6 +666,7 @@ from imagination:
 | `VERIFICATION` | the agent finished but verification did not pass |
 | `WORKTREE` | the isolated workspace could not be prepared or inspected |
 | `APPROVAL_DENIED` | policy refused |
+| `CONTAINMENT` | the agent modified state shared with the main repository (config, hooks, attributes, HEAD, or broke base-commit ancestry) — checked after the agent, before verification |
 | `INTERNAL` | aidev itself failed |
 | `UNKNOWN` | unclassifiable — kept as an honest bucket rather than a plausible guess |
 

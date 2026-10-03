@@ -45,11 +45,18 @@ const (
 	TypeApprovalRequired Type = "task.approval_required"
 	TypeApprovalGranted  Type = "task.approval_granted"
 	TypeApprovalDenied   Type = "task.approval_denied"
+
+	// Shared-state containment (docs/research.md §7i). The breach event
+	// accompanies a CONTAINMENT failure; the refs-changed event is a warning
+	// that stands on its own, because a foreign ref moving can be another
+	// task in the same repository rather than the agent.
+	TypeContainmentBreach Type = "task.containment_breach"
+	TypeSharedRefsChanged Type = "task.shared_refs_changed"
 )
 
 // AllTypes lists every event type aidev emits. The migration's CHECK constraint
-// is generated from the same vocabulary; TestEventTypesMatchMigration keeps the
-// two in agreement.
+// is generated from the same vocabulary; TestEnumsMatchMigrationConstraints
+// keeps the two in agreement.
 func AllTypes() []Type {
 	return []Type{
 		TypeTaskCreated, TypeTaskReady, TypeTaskStarted, TypeTaskSucceeded,
@@ -59,6 +66,7 @@ func AllTypes() []Type {
 		TypeVerificationStarted, TypeVerificationStepRan, TypeVerificationCompleted,
 		TypeVerificationIntercepted,
 		TypeApprovalRequired, TypeApprovalGranted, TypeApprovalDenied,
+		TypeContainmentBreach, TypeSharedRefsChanged,
 	}
 }
 

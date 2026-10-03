@@ -335,6 +335,10 @@ type run struct {
 	worktree *git.Worktree
 	record   *task.Worktree
 
+	// sharedBefore is the shared git state recorded once the worktree exists,
+	// for the containment check that runs after the agent (research §7i).
+	sharedBefore git.SharedState
+
 	workerRun *task.WorkerRun
 	report    *verification.Report
 
@@ -405,6 +409,17 @@ func (r *run) execute(ctx context.Context) (outcome Outcome, retErr error) {
 	}
 	if err := r.runAgent(ctx); err != nil {
 		outcome, retErr = r.fail(ctx, r.workerFailureKind(), err)
+		return outcome, retErr
+	}
+	if err := r.checkContainment(ctx); err != nil {
+		kind := task.FailureContainment
+		if errors.Is(err, errSharedStateUnreadable) {
+			// The check could not run. Calling that a breach would blame the
+			// agent for aidev's own inability to look, so it is classified
+			// with the other inspection failures.
+			kind = task.FailureWorktree
+		}
+		outcome, retErr = r.fail(ctx, kind, err)
 		return outcome, retErr
 	}
 	outcome, retErr = r.verify(ctx)
@@ -629,7 +644,7 @@ func (r *run) prepareWorktree(ctx context.Context) error {
 	writeCtx, cancel := writeContext(ctx)
 	defer cancel()
 
-	return r.o.Store.InTx(writeCtx, func(tx *store.Store) error {
+	if err := r.o.Store.InTx(writeCtx, func(tx *store.Store) error {
 		recorded, err := tx.CreateWorktree(writeCtx, task.Worktree{
 			ID:         uuid.Must(uuid.NewV7()),
 			AttemptID:  r.attempt.ID,
@@ -654,7 +669,21 @@ func (r *run) prepareWorktree(ctx context.Context) error {
 			payload["submodules"] = wt.Submodules
 		}
 		return appendEvent(writeCtx, tx, r.task.ID, &r.attempt.ID, event.TypeWorktreeCreated, payload)
-	})
+	}); err != nil {
+		return err
+	}
+
+	// Baseline for the containment check: taken now, after the worktree exists
+	// and is recorded, so a snapshot failure here is a prepared worktree the
+	// failure path can retain rather than a half-created one. From this point
+	// until the check runs, anything that changes this state changed it
+	// deliberately (docs/research.md §7i).
+	shared, err := r.worktree.SnapshotSharedState(ctx)
+	if err != nil {
+		return fmt.Errorf("snapshot shared repository state: %w", err)
+	}
+	r.sharedBefore = shared
+	return nil
 }
 
 // runAgent delegates the implementation and records what the agent did, including
@@ -850,6 +879,96 @@ func (r *run) persistWorkerRun(ctx context.Context, result agent.Result) *task.W
 		return &record
 	}
 	return &stored
+}
+
+// errSharedStateUnreadable marks a containment check that could not run: the
+// shared state could not be re-read, so nothing was found and nothing was
+// proven. Callers classify it as a worktree failure, not as a breach.
+var errSharedStateUnreadable = errors.New("shared repository state could not be re-read")
+
+// checkContainment compares the shared git state the agent ran against with
+// what is there now and reports tampering. It runs after the agent and before
+// verification, because a workspace whose shared state was edited cannot be
+// trusted: verification would be judging evidence the agent has already
+// shaped (docs/research.md §7i).
+//
+// A breach returns an error, which the caller records as FailureContainment.
+// A foreign ref moving is only warned about: another task in the same
+// repository legitimately advances its own branch while this one runs, and
+// the two are not distinguishable from here. The worktree's own branch is
+// ignored for the same reason in reverse — that is where its work belongs,
+// and verification judges it.
+func (r *run) checkContainment(ctx context.Context) error {
+	after, err := r.worktree.SnapshotSharedState(ctx)
+	if err != nil {
+		return fmt.Errorf("%w: %w", errSharedStateUnreadable, err)
+	}
+	changes := r.sharedBefore.Diff(after)
+
+	// The branch must still contain its base commit; otherwise the diff and
+	// the verification would be judged against a history that no longer
+	// exists. A git error here means the check could not conclude.
+	ancestor, err := r.worktree.BaseIsAncestor(ctx)
+	if err != nil {
+		return fmt.Errorf("%w: %w", errSharedStateUnreadable, err)
+	}
+
+	ownRef := "refs/heads/" + r.worktree.Branch
+	foreign := make(map[string]git.RefChange)
+	for ref, ch := range changes.RefChanges {
+		if ref != ownRef {
+			foreign[ref] = ch
+		}
+	}
+	if len(foreign) > 0 {
+		r.emit(ctx, event.TypeSharedRefsChanged, map[string]any{
+			"refs": foreign,
+		})
+	}
+
+	var reasons []string
+	if changes.CommonDirMoved {
+		reasons = append(reasons, fmt.Sprintf("the worktree's gitdir moved from %q to %q", r.sharedBefore.CommonDir, after.CommonDir))
+	}
+	if changes.ConfigChanged {
+		reasons = append(reasons, "the shared config changed")
+	}
+	if len(changes.InfoChanged) > 0 {
+		reasons = append(reasons, "shared info files changed: "+strings.Join(changes.InfoChanged, ", "))
+	}
+	if len(changes.HooksChanged) > 0 {
+		reasons = append(reasons, "shared hooks changed: "+strings.Join(changes.HooksChanged, ", "))
+	}
+	if changes.HeadMoved {
+		reasons = append(reasons, fmt.Sprintf("HEAD moved from %q to %q", r.sharedBefore.HeadRef, after.HeadRef))
+	}
+	if !ancestor {
+		reasons = append(reasons, "the base commit is no longer an ancestor of HEAD")
+	}
+	if len(reasons) == 0 {
+		return nil
+	}
+
+	payload := map[string]any{
+		"reasons":        reasons,
+		"config_changed": changes.ConfigChanged,
+		"head_before":    r.sharedBefore.HeadRef,
+		"head_after":     after.HeadRef,
+	}
+	// Only when there are some: an empty list in every breach event of a
+	// clean run would be noise.
+	if len(changes.InfoChanged) > 0 {
+		payload["info_changed"] = changes.InfoChanged
+	}
+	if len(changes.HooksChanged) > 0 {
+		payload["hooks_changed"] = changes.HooksChanged
+	}
+	if len(foreign) > 0 {
+		payload["refs"] = foreign
+	}
+	r.emit(ctx, event.TypeContainmentBreach, payload)
+
+	return fmt.Errorf("the agent modified state shared with the main repository: %s", strings.Join(reasons, "; "))
 }
 
 // verify runs the task's own commands and decides the outcome.
