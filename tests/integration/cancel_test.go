@@ -2,6 +2,7 @@ package integration
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -188,6 +189,46 @@ func TestCancelledRunStillRecordsTheDiff(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("the run did not stop within 10s of the cancel")
+	}
+}
+
+// Two processes cancelling one task at the same instant is normal use — the
+// CLI and the MCP server are different processes. The loser of the
+// compare-and-set must not be told "conflict": Cancel re-reads the task and
+// reports it as already cancelled (ErrNotRunnable) instead, up to its retry
+// budget, and exactly one cancel wins per task.
+func TestConcurrentCancelNeverSurfacesAConflict(t *testing.T) {
+	h := newHarness(t, nil)
+
+	for round := 0; round < 10; round++ {
+		created := h.createTask(nil)
+
+		start := make(chan struct{})
+		errs := make(chan error, 2)
+		for i := 0; i < 2; i++ {
+			go func() {
+				<-start
+				_, err := otherProcess(h).Cancel(h.ctx, created.Ref, "stop it")
+				errs <- err
+			}()
+		}
+		close(start)
+
+		var successes int
+		for i := 0; i < 2; i++ {
+			err := <-errs
+			switch {
+			case err == nil:
+				successes++
+			case errors.Is(err, worker.ErrNotRunnable):
+				// The loser's verdict: the task is already cancelled.
+			default:
+				t.Errorf("round %d: Cancel = %v; a concurrent cancel must resolve to success or ErrNotRunnable, never a raw conflict", round, err)
+			}
+		}
+		if successes != 1 {
+			t.Errorf("round %d: successes = %d, want exactly 1", round, successes)
+		}
 	}
 }
 
