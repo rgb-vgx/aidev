@@ -379,9 +379,15 @@ func TestOutputIsBounded(t *testing.T) {
 	if !report.Passed {
 		t.Errorf("exceeding the output cap must not fail the check: %s", report.Summary())
 	}
-	if len(report.Runs[0].Stdout) != 512 || !report.Runs[0].StdoutTruncated {
-		t.Errorf("stdout length = %d truncated = %v, want 512 and true",
-			len(report.Runs[0].Stdout), report.Runs[0].StdoutTruncated)
+	if !report.Runs[0].StdoutTruncated {
+		t.Fatal("stdout was not flagged as truncated")
+	}
+	// 4000 bytes in, 512 kept: half the head, half the tail, the rest announced.
+	if got := report.Runs[0].Stdout; !strings.Contains(got, "…[truncated 3488 bytes]…") {
+		t.Errorf("stdout = %q, want it to say how many bytes were dropped", got)
+	}
+	if got := report.Runs[0].Stdout; !strings.HasPrefix(got, strings.Repeat("x", 256)) || !strings.HasSuffix(got, strings.Repeat("x", 256)) {
+		t.Errorf("stdout does not keep both ends (len %d)", len(got))
 	}
 }
 

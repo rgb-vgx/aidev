@@ -283,14 +283,17 @@ func Run(ctx context.Context, spec Spec) (Result, error) {
 	return result, nil
 }
 
-// boundedBuffer keeps at most limit bytes and remembers whether more arrived.
+// boundedBuffer keeps at most limit bytes: the first half as the head, the
+// newest half as the tail, and in the middle a note of how much it dropped.
 // The cap is what stops a runaway process from exhausting memory or the
-// database, and Truncated is what stops a reader from mistaking a capped stream
-// for a complete one.
+// database. Keeping the tail is what keeps the reason a command failed — the
+// assertion, the error line, always at the end — from being precisely the part
+// the cap cuts, and Truncated is what stops a reader from mistaking a capped
+// stream for a complete one.
 type boundedBuffer struct {
-	buf   bytes.Buffer
-	limit int
-	total int
+	head, tail bytes.Buffer
+	limit      int
+	total      int
 }
 
 func newBoundedBuffer(limit int) *boundedBuffer {
@@ -301,20 +304,37 @@ func newBoundedBuffer(limit int) *boundedBuffer {
 // make exec treat the cap as an I/O error and kill the process, which would turn
 // "produced a lot of output" into "failed".
 func (b *boundedBuffer) Write(p []byte) (int, error) {
-	b.total += len(p)
-	if room := b.limit - b.buf.Len(); room > 0 {
-		if len(p) <= room {
-			b.buf.Write(p)
-		} else {
-			b.buf.Write(p[:room])
+	written := len(p)
+	b.total += written
+
+	if room := b.limit/2 - b.head.Len(); room > 0 {
+		if written <= room {
+			b.head.Write(p)
+			return written, nil
 		}
+		b.head.Write(p[:room])
+		p = p[room:]
 	}
-	return len(p), nil
+
+	// The tail keeps the newest bytes that fit in its half; older ones fall out
+	// of the front, which is the middle of the stream the cap gives up.
+	b.tail.Write(p)
+	if overflow := b.tail.Len() - (b.limit - b.limit/2); overflow > 0 {
+		b.tail.Next(overflow)
+	}
+	return written, nil
 }
 
-func (b *boundedBuffer) String() string { return b.buf.String() }
+func (b *boundedBuffer) String() string {
+	head, tail := b.head.String(), b.tail.String()
+	dropped := b.total - b.head.Len() - b.tail.Len()
+	if dropped <= 0 {
+		return head + tail
+	}
+	return fmt.Sprintf("%s…[truncated %d bytes]…%s", head, dropped, tail)
+}
 
-func (b *boundedBuffer) Truncated() bool { return b.total > b.buf.Len() }
+func (b *boundedBuffer) Truncated() bool { return b.total > b.head.Len()+b.tail.Len() }
 
 // stripTelemetryEnv removes OTEL_* from an inherited environment.
 //
