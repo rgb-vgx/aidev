@@ -112,6 +112,12 @@ type Result struct {
 	// Err carries the underlying failure for StartFailed, and the signal or
 	// wait error otherwise. It is informational: Outcome is the decision.
 	Err error
+
+	// OrphansKilled reports that helpers were still alive when the direct
+	// child had already exited, and that Run reaped them. The caller that
+	// reads it can record that the run ended with cleanup, which is the one
+	// interesting fact about a success that left processes behind.
+	OrphansKilled bool
 }
 
 // Succeeded reports whether the process exited 0.
@@ -225,12 +231,22 @@ func Run(ctx context.Context, spec Spec) (Result, error) {
 
 	waitErr := cmd.Wait()
 
-	// Escalate. WaitDelay kills only the direct child once the grace period is
-	// over, so a group member that ignored SIGTERM would outlive the run. The
-	// rest of the group gets what is left of the same grace period, then SIGKILL.
+	// Reap whatever outlived the direct child — on every path, not only after a
+	// cancellation. WaitDelay reaches only the direct child (already a corpse by
+	// now), so an exit-0 run whose helpers held the pipes, or hid behind
+	// redirected output, used to return with those helpers still running. Invariant
+	// 6 has no exception for commands that succeeded.
+	leftovers := groupAlive(cmd)
+	var reapErr error
 	if at := terminatedAt.Load(); at != 0 {
-		_ = killGroupAfter(cmd, time.Unix(0, at).Add(killGrace))
+		// The group already got SIGTERM when cancellation landed. It gets the
+		// rest of the same grace period, then SIGKILL.
+		reapErr = killGroupAfter(cmd, time.Unix(0, at).Add(killGrace))
+	} else if leftovers {
+		_ = terminateGroup(cmd)
+		reapErr = killGroupAfter(cmd, time.Now().Add(killGrace))
 	}
+	result.OrphansKilled = leftovers && reapErr == nil
 
 	result.FinishedAt = time.Now().UTC()
 	result.Duration = result.FinishedAt.Sub(result.StartedAt)
@@ -252,6 +268,13 @@ func Run(ctx context.Context, spec Spec) (Result, error) {
 		result.Outcome = OutcomeTimedOut
 		result.Err = fmt.Errorf("exceeded timeout %s", spec.Timeout)
 	case waitErr == nil:
+		result.Outcome = OutcomeSucceeded
+	case errors.Is(waitErr, exec.ErrWaitDelay) && cmd.ProcessState.ExitCode() == 0:
+		// The child exited 0 by itself; only helpers kept the output pipes open
+		// until WaitDelay, and they have just been reaped above. Reporting this
+		// as FAILED (the old behaviour) recorded a success as a failure — a
+		// `npm run dev &` in verification, or a daemonising test runner, was
+		// condemned for leaving the very processes this package now cleans up.
 		result.Outcome = OutcomeSucceeded
 	default:
 		result.Outcome = OutcomeFailed
