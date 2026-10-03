@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -862,5 +863,90 @@ func TestDatabaseRejectsTaskWithoutVerification(t *testing.T) {
 		t.Fatal("the database accepted a task with no verification steps")
 	} else if !strings.Contains(err.Error(), "tasks_verification_is_nonempty_array") {
 		t.Errorf("error = %v, want the verification constraint to be named", err)
+	}
+}
+
+// BIGSERIAL assigns seq at INSERT time, not at COMMIT time. Without a lock, a
+// transaction that appends an event for a task can commit after another
+// transaction already appended a higher seq for the same task, and a reader
+// paging with seq > last_seen would never come back for the lower one.
+// AppendEvent must therefore hold a per-task lock from the insert until the
+// appending transaction commits: same task blocks, different task does not.
+func TestAppendEventHoldsPerTaskLockUntilCommit(t *testing.T) {
+	db, ctx := openStore(t)
+	p := seedProject(t, ctx, db)
+	tkA := seedTask(t, ctx, db, p, nil)
+	tkB := seedTask(t, ctx, db, p, nil)
+
+	newReady := func(id uuid.UUID) event.Event {
+		e, err := event.New(id, nil, event.TypeTaskReady, map[string]any{"probe": "lock"})
+		if err != nil {
+			t.Fatalf("event.New: %v", err)
+		}
+		return e
+	}
+
+	txStarted := make(chan struct{})
+	release := make(chan struct{})
+	txDone := make(chan error, 1)
+	// Releasing is idempotent so a Fatalf on any assertion still lets the
+	// transaction finish instead of holding the lock until the test binary
+	// times out.
+	var releaseOnce sync.Once
+	giveUp := func() { releaseOnce.Do(func() { close(release) }) }
+	defer giveUp()
+
+	go func() {
+		txDone <- db.InTx(ctx, func(tx *store.Store) error {
+			if _, err := tx.AppendEvent(ctx, newReady(tkA.ID)); err != nil {
+				return err
+			}
+			close(txStarted)
+			<-release
+			return nil
+		})
+	}()
+	select {
+	case <-txStarted:
+	case err := <-txDone:
+		t.Fatalf("InTx failed before it could hold the lock: %v", err)
+	}
+
+	// Same task, transaction still open: the insert must wait for the commit.
+	blockCtx, cancelBlock := context.WithTimeout(ctx, 300*time.Millisecond)
+	defer cancelBlock()
+	_, err := db.AppendEvent(blockCtx, newReady(tkA.ID))
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("same-task append err = %v, want context.DeadlineExceeded (blocked on the advisory lock)", err)
+	}
+
+	// A different task must not wait: the lock is keyed per task, so
+	// concurrent tasks never serialise each other's history writes.
+	waitCtx, cancelWait := context.WithTimeout(ctx, 5*time.Second)
+	defer cancelWait()
+	if _, err := db.AppendEvent(waitCtx, newReady(tkB.ID)); err != nil {
+		t.Fatalf("cross-task append while the lock is held: %v", err)
+	}
+
+	giveUp()
+	if err := <-txDone; err != nil {
+		t.Fatalf("InTx: %v", err)
+	}
+
+	if _, err := db.AppendEvent(ctx, newReady(tkA.ID)); err != nil {
+		t.Fatalf("append after the commit: %v", err)
+	}
+
+	// The committed event sorts before anything appended after the commit, so
+	// a reader resuming from its seq sees exactly the later one.
+	history, err := db.ListEvents(ctx, store.EventFilter{TaskID: tkA.ID})
+	if err != nil {
+		t.Fatalf("ListEvents: %v", err)
+	}
+	if len(history) != 2 {
+		t.Fatalf("got %d events for task A, want 2 (one from the transaction, one after)", len(history))
+	}
+	if history[0].Seq >= history[1].Seq {
+		t.Errorf("seq order = %d then %d, want the committed event first", history[0].Seq, history[1].Seq)
 	}
 }

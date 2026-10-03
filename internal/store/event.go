@@ -21,6 +21,16 @@ const MaxEventLimit = 1000
 // number. There is deliberately no update or delete counterpart: the database
 // rejects an UPDATE on this table, and the way to correct the record is to
 // append.
+//
+// BIGSERIAL assigns seq at INSERT time, not at COMMIT time, so without a lock
+// two transactions appending for the same task can commit in the opposite
+// order of their sequence numbers — a reader paging with seq > last_seen would
+// then never see the event that committed last but sorted first. The advisory
+// lock (keyed per task, so unrelated tasks never contend) is taken in the same
+// statement as the INSERT so it also holds when this method runs in
+// autocommit; when the caller already opened a transaction via InTx, it is
+// held until that transaction ends, which is exactly the window in which a
+// cursor reader could otherwise skip an event.
 func (s *Store) AppendEvent(ctx context.Context, e event.Event) (event.Event, error) {
 	if !e.Type.Valid() {
 		return event.Event{}, fmt.Errorf("append event: %q is not a known event type", e.Type)
@@ -30,11 +40,17 @@ func (s *Store) AppendEvent(ctx context.Context, e event.Event) (event.Event, er
 		payload = []byte("{}")
 	}
 
+	// $2 is typed text by hashtext, so the insert side casts it back to uuid:
+	// PostgreSQL resolves a parameter to one type for the whole statement.
 	row := s.db.QueryRow(ctx, `
+		WITH lock AS (
+			SELECT pg_advisory_xact_lock(hashtext($2::text)::bigint)
+		)
 		INSERT INTO events (id, task_id, attempt_id, type, payload, created_at)
-		VALUES ($1,$2,$3,$4,$5,$6)
+		SELECT $1, $2::uuid, $3, $4, $5, $6
+		FROM lock
 		RETURNING `+eventColumns,
-		e.ID, e.TaskID, e.AttemptID, string(e.Type), []byte(payload), e.CreatedAt)
+		e.ID, e.TaskID.String(), e.AttemptID, string(e.Type), []byte(payload), e.CreatedAt)
 
 	written, err := scanEvent(row)
 	if err != nil {

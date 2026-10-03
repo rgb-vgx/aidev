@@ -95,9 +95,12 @@ func ParseType(raw string) (Type, error) {
 type Event struct {
 	ID uuid.UUID
 
-	// Seq is a database-assigned total ordering. Two events created in the same
+	// Seq is a database-assigned ordering. Two events created in the same
 	// millisecond are still strictly ordered, which timestamps alone cannot
-	// guarantee.
+	// guarantee. Within one task the sequence order is also the commit order,
+	// because AppendEvent takes a per-task advisory lock, so a reader resuming
+	// from a cursor cannot miss an event. Across tasks it is allocation order,
+	// not commit order.
 	Seq int64
 
 	TaskID uuid.UUID

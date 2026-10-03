@@ -176,7 +176,7 @@ The append-only history.
 
 | Column | Notes |
 |---|---|
-| `seq` | `BIGSERIAL UNIQUE`, a total order independent of clock resolution |
+| `seq` | `BIGSERIAL UNIQUE`, independent of clock resolution; per task it is also commit order (see below) |
 | `task_id` | required; `ON DELETE CASCADE` |
 | `attempt_id` | set for events belonging to a specific attempt |
 | `type` | constrained to the known vocabulary |
@@ -185,6 +185,14 @@ The append-only history.
 `seq` exists because timestamps are not a total order: two events written in the
 same millisecond would be unorderable, and history that cannot be ordered cannot
 be replayed. Readers page with `seq > last_seen`.
+
+A sequence is handed out at INSERT time, not at COMMIT time: two transactions
+appending for the same task could otherwise commit in the opposite order of
+their sequence numbers, and a reader paging with `seq > last_seen` would never
+come back for the one that sorted first but committed last. `AppendEvent` takes
+`pg_advisory_xact_lock(hashtext(task_id))` in the same statement as the INSERT,
+so within one task the sequence order is also the commit order. The lock is
+per task — unrelated tasks never contend for it.
 
 `payload` must be a JSON object (`jsonb_typeof(payload) = 'object'`) so consumers
 can always index by field name and new fields can be added without changing the
