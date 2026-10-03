@@ -26,15 +26,36 @@ import (
 func runCLIWithDatabase(t *testing.T, databaseURL, workspace string, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
 
+	dir := t.TempDir()
+
+	// `task create` validates the agent name by spawning the configured
+	// OpenCode binary, so whether a developer machine happens to have
+	// `opencode` installed — CI does not — would decide the test's outcome.
+	// The stub answers `agent list` and fails loudly on anything else.
+	opencode := filepath.Join(dir, "opencode")
+	stub := "#!/bin/sh\n" +
+		"if [ \"$1\" = agent ] && [ \"$2\" = list ]; then\n" +
+		"  printf 'build (primary)\\nplan (primary)\\n'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"echo \"unexpected opencode invocation: $*\" >&2\n" +
+		"exit 1\n"
+	if err := os.WriteFile(opencode, []byte(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
 	body, err := json.Marshal(map[string]any{
 		"database":       map[string]any{"url": databaseURL},
 		"workspace_root": workspace,
 		"log_level":      "error",
+		"agent": map[string]any{
+			"opencode": map[string]any{"command": opencode},
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	conf := filepath.Join(t.TempDir(), "conf.json")
+	conf := filepath.Join(dir, "conf.json")
 	if err := os.WriteFile(conf, body, 0o600); err != nil {
 		t.Fatal(err)
 	}
