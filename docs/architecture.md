@@ -219,6 +219,13 @@ worktree, worktree paths are validated to resolve inside `workspace_root`, and t
 repository's main working tree is never a valid target. This is enforced in code
 and asserted by tests, not stated as a convention.
 
+What the boundary contains is the working *tree*, not git state. Linked worktrees
+share refs, config and the stash stack with the main repository: measured, an
+agent inside its worktree can `update-ref` a branch the operator's checkout is on,
+and a `core.fsmonitor` set from there runs on the operator's next `git status`
+(docs/research.md §7i). Ref and config writes are outside what a worktree can
+contain; the security model states the trust that follows from that.
+
 ### Submodules are a worktree each, read-only, and off by default
 
 A repository that keeps its sources in git submodules gets a task worktree whose
@@ -418,6 +425,15 @@ repository — both comparing physically resolved paths so a planted symlink can
 satisfy a textual prefix. Worktree names are an allowlist of `[A-Za-z0-9._-]` rather
 than a blocklist, because a name arrives from user input and an allowlist cannot be
 defeated by an escape nobody anticipated.
+
+The boundary is over *files*. It does not extend to git state, which every linked
+worktree shares with the main repository (docs/research.md §7i): from inside its
+worktree an agent can move a branch the operator's checkout is on, push into the
+shared stash, or set `core.fsmonitor`/`core.sshCommand` so the operator's next plain
+git command runs something the task chose. aidev does not sandbox ref or config
+writes. That widens the trust rather than changing it — anyone who can create a
+task can have a verification command run anything anyway, which is the next
+section.
 
 ### Verification commands are arbitrary code, deliberately
 

@@ -1119,6 +1119,92 @@ and the commit fails. `--ignore-submodules=dirty` makes status agree with what `
 and still reports a moved gitlink (`--ignore-submodules=all` would hide that too). On a repository
 without submodules the flag changes nothing.
 
+## 7i. A task worktree shares git state with the main repository **[OBSERVED]**
+
+Measured on git 2.43.0 against a throwaway repository in `.probe/e5/`. The question was what an
+agent confined to its own worktree can still change *through git itself*, because the documented
+containment boundary is the working tree (docs/architecture.md, "The git worktree is the only
+containment boundary").
+
+### Refs are shared: a linked worktree can move the main repository's branches
+
+```
+$ git -C repo rev-parse --short main
+9d534d9
+$ git -C wt update-ref refs/heads/main HEAD~1   # run inside the linked worktree
+$ git -C repo rev-parse --short main
+ebe3068
+```
+
+The working trees are separate; the object database and refs are not. Anything that writes a ref
+from inside a worktree — `update-ref`, `commit` on a shared branch, `tag` — is visible to, and
+binds, the main checkout.
+
+### Config, tags and the stash stack are shared too
+
+```
+$ git -C wt config e5.probe shared
+$ git -C repo config e5.probe
+shared
+$ git -C wt tag e5tag && git -C repo tag -l
+e5tag
+$ git -C wt stash push -m e5probe && git -C repo stash list
+stash@{0}: On feature: e5probe
+```
+
+A linked worktree has no local config of its own: `git config` (without `--worktree`, git ≥ 2.20)
+writes the repository's shared `.git/config`. That is not only shared state, it is a delayed
+command-execution channel — measured:
+
+```
+$ git -C wt config core.fsmonitor "/bin/sh -c 'pwd >> /tmp/e5-fsmonitor.log'"
+$ git -C repo status                     # the operator's own checkout
+$ cat /tmp/e5-fsmonitor.log
+.../wt
+.../repo
+```
+
+The hook set from the worktree ran on the *main* repository's next `git status`, with the main
+repository as its working directory. The same applies to `core.sshCommand`, `core.pager` and
+friends: an agent that can run `git config` in its worktree can arrange for the operator's main
+checkout to run a command later.
+
+**Consequence recorded, not assumed:** the worktree boundary contains the working *tree*, not
+git state. aidev does not (and cannot cheaply) sandbox ref or config writes; docs/architecture.md's
+security model states this beside the containment claim.
+
+## 7j. WaitDelay bounds the wait, not the grandchildren **[OBSERVED]**
+
+Measured with `go run .probe/e5/waitdelay.go` on go1.26.8 linux/amd64. The question was what Go's
+`exec.Cmd.WaitDelay` guarantees when the direct child exits but a helper keeps the output pipe
+open, and whether signalling the process group reaches everything — the two facts
+`internal/procexec` builds its reaping on.
+
+### WaitDelay expires with exit code 0 and the helper still alive
+
+```
+$ go run .probe/e5/waitdelay.go
+WaitDelay: waitErr=exec: WaitDelay expired before I/O complete elapsed=2s exitCode=0 helperAliveAfterWait=true
+setsid: helperPid=779227 aliveAfterGroupSIGTERM=true
+```
+
+Probe: `sh -c 'sleep 41 & echo started $!'` with `WaitDelay = 2s` and the child in its own process
+group. The shell exits 0 immediately; `sleep 41` inherits the stdout pipe, so `Wait` blocks in the
+output-copy goroutine until WaitDelay fires. The result is `ErrWaitDelay` with
+`ProcessState.ExitCode() == 0` — an exit code that reads "success" while a process is still
+running and still writing. This is why `procexec` reaps the process group on *every* path (not
+only after cancellation) and reports `OrphansKilled`: WaitDelay alone bounds the wait, never the
+work.
+
+### A setsid'd child escapes the process group
+
+Same probe: a helper started as `setsid sleep 41` survived `SIGTERM` sent to the direct child's
+process group (`Setpgid` on, signal to `-pgid` — exactly what `procexec` does). Group signalling
+therefore covers the ordinary case measured in Phase 0 (§2.7: verification commands like `go test`
+start compilers and test binaries that stay in the group) but cannot reach a child that calls
+`setsid`. A cgroup (or an equivalent per-run containment) is the mechanism that would close that
+gap; recorded here as unmeasured future work rather than assumed to work.
+
 ## 8. Reproducing this research
 
 Probes ran in a gitignored `.probe/` directory inside the repository (scratch repo, worktrees,
