@@ -181,6 +181,7 @@ Mọi thiết lập đều tùy chọn, trừ `database.url`. Các giá trị m�
 | `workspace_root` | `~/.local/share/aidev/worktrees` | nơi tạo các worktree của task; mọi đường dẫn worktree đều phải nằm bên trong nó |
 | `tasks.timeout` | `30m` | giới hạn một lần chạy agent khi task không tự đặt giá trị riêng |
 | `tasks.verification_timeout` | `10m` | giới hạn một bước verification |
+| `tasks.verification_total_timeout` | `30m` | giới hạn toàn bộ một lượt verification, tất cả các bước cộng lại |
 | `tasks.max_output_bytes` | `1048576` | giới hạn thu output cho mỗi luồng; phần output vượt quá sẽ bị bỏ và đánh dấu đã cắt ngắn |
 | `tasks.worktree_cleanup` | `on-success` | `on-success` commit công việc rồi xóa worktree; `never` giữ lại mọi worktree. Không chế độ nào xóa công việc đã thất bại |
 | `agent.backend` | `opencode` | implementation agent nào chạy các task: `opencode` hoặc `codex` |

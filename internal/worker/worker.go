@@ -79,7 +79,7 @@ func New(st *store.Store, gm *git.Manager, backend agent.Backend, cfg config.Con
 		Store:    st,
 		Git:      gm,
 		Backend:  backend,
-		Verifier: verification.NewRunner(cfg.DefaultVerificationTimeout, cfg.MaxOutputBytes),
+		Verifier: verification.NewRunner(cfg.DefaultVerificationTimeout, cfg.VerificationTotalTimeout, cfg.MaxOutputBytes),
 		Config:   cfg,
 		Logger:   logger,
 	}

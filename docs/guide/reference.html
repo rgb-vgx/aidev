@@ -181,6 +181,7 @@ aidev task events TASK-000001 --after 5 --limit 50
 <tr><td><code>workspace_root</code></td><td><code>~/.local/share/aidev/worktrees</code></td><td>Where task worktrees are created. Every worktree path must resolve inside it.</td></tr>
 <tr><td><code>tasks.timeout</code></td><td><code>30m</code></td><td>Bounds one agent run when the task does not set its own timeout. Deliberately generous: first runs against unseen repositories were measured taking minutes.</td></tr>
 <tr><td><code>tasks.verification_timeout</code></td><td><code>10m</code></td><td>Bounds one verification step.</td></tr>
+<tr><td><code>tasks.verification_total_timeout</code></td><td><code>30m</code></td><td>Bounds one whole verification pass, every step together, so a sequence of hanging checks cannot hold a worker for hours.</td></tr>
 <tr><td><code>tasks.max_output_bytes</code></td><td><code>1048576</code> (1 MiB) per captured stream</td><td>Caps each captured stream before it reaches the database. Output beyond it is dropped and flagged as truncated. Minimum 1024.</td></tr>
 <tr><td><code>tasks.worktree_cleanup</code></td><td><code>on-success</code></td><td><code>on-success</code> commits the work and removes the worktree; <code>never</code> keeps every worktree. Neither discards failed work.</td></tr>
 <tr><td><code>agent.backend</code></td><td><code>opencode</code></td><td>Which agent implementation runs tasks: <code>opencode</code> or <code>codex</code>.</td></tr>

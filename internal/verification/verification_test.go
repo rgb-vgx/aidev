@@ -13,7 +13,7 @@ import (
 	"aidev/internal/task"
 )
 
-func runner() *Runner { return NewRunner(20*time.Second, 64*1024) }
+func runner() *Runner { return NewRunner(20*time.Second, 30*time.Second, 64*1024) }
 
 func request(t *testing.T, steps ...task.VerificationStep) Request {
 	t.Helper()
@@ -180,7 +180,7 @@ func TestPerStepTimeout(t *testing.T) {
 }
 
 func TestDefaultTimeoutAppliesWhenStepHasNone(t *testing.T) {
-	r := NewRunner(500*time.Millisecond, 4096)
+	r := NewRunner(500*time.Millisecond, 30*time.Second, 4096)
 	report, err := r.Run(context.Background(), request(t, step("sh", "-c", "sleep 30")))
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -188,6 +188,82 @@ func TestDefaultTimeoutAppliesWhenStepHasNone(t *testing.T) {
 	if report.Runs[0].Status != task.VerificationTimedOut {
 		t.Errorf("status = %s, want TIMED_OUT from the runner default", report.Runs[0].Status)
 	}
+}
+
+// The per-step timeout alone lets N steps multiply into N × the step bound: a
+// pass of hanging checks must still end when the total budget is spent, and
+// that ending must be classified as a timeout — not a cancellation, which would
+// blame the operator, and not a failed check, which would blame the code.
+func TestTotalTimeoutBoundsTheWholePass(t *testing.T) {
+	r := NewRunner(20*time.Second, 300*time.Millisecond, 4096)
+
+	start := time.Now()
+	report, err := r.Run(context.Background(), request(t,
+		step("sh", "-c", "sleep 30"),
+		step("sh", "-c", "exit 0"),
+	))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Fatalf("took %s; the total budget was not applied", elapsed)
+	}
+	if report.Runs[0].Status != task.VerificationTimedOut {
+		t.Errorf("status = %s, want TIMED_OUT: the budget expired during the step", report.Runs[0].Status)
+	}
+	if report.Runs[1].Status != task.VerificationSkipped {
+		t.Errorf("second step = %s, want SKIPPED once the budget is spent", report.Runs[1].Status)
+	}
+	if report.FailureKind != task.FailureTimeout {
+		t.Errorf("failure kind = %s, want TIMEOUT", report.FailureKind)
+	}
+	if report.Passed {
+		t.Error("a pass over budget was reported as passing")
+	}
+	if !strings.Contains(report.Summary(), "timed out") {
+		t.Errorf("summary = %q, want it to say the step timed out", report.Summary())
+	}
+}
+
+// An already-expired budget must still be recorded as a timeout, wherever in
+// the pass it is noticed: nobody cancelled the run, so CANCELLED would send
+// the reader looking for a cancellation that never happened.
+func TestExpiredBudgetIsNeverRecordedAsACancellation(t *testing.T) {
+	r := NewRunner(20*time.Second, time.Nanosecond, 4096)
+
+	report, err := r.Run(context.Background(), request(t,
+		step("sh", "-c", "exit 0"),
+		step("sh", "-c", "exit 0"),
+	))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if report.FailureKind != task.FailureTimeout {
+		t.Errorf("failure kind = %s, want TIMEOUT for an expired budget", report.FailureKind)
+	}
+	var timedOut bool
+	for _, run := range report.Runs {
+		if run.Status == task.VerificationTimedOut {
+			timedOut = true
+		}
+		if run.Status == task.VerificationCancelled {
+			t.Errorf("step %d = CANCELLED, but nobody cancelled this pass", run.StepIndex)
+		}
+	}
+	if !timedOut {
+		t.Errorf("statuses = %v, want at least one TIMED_OUT for the expired budget", statuses(report))
+	}
+	if report.Passed {
+		t.Error("a pass over budget was reported as passing")
+	}
+}
+
+func statuses(report Report) []task.VerificationStatus {
+	out := make([]task.VerificationStatus, 0, len(report.Runs))
+	for _, run := range report.Runs {
+		out = append(out, run.Status)
+	}
+	return out
 }
 
 func TestCancellationDuringAStep(t *testing.T) {
@@ -295,7 +371,7 @@ func TestMissingWorkingDirIsAnError(t *testing.T) {
 }
 
 func TestOutputIsBounded(t *testing.T) {
-	r := NewRunner(20*time.Second, 512)
+	r := NewRunner(20*time.Second, 30*time.Second, 512)
 	report, err := r.Run(context.Background(), request(t, step("sh", "-c", "printf 'x%.0s' $(seq 1 4000)")))
 	if err != nil {
 		t.Fatalf("Run: %v", err)
