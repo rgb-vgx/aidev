@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"aidev/internal/procexec"
@@ -27,6 +28,13 @@ const (
 	agentListTimeout = 30 * time.Second
 )
 
+// agentListTTL is how long a successful agent-name lookup is reused. Task
+// creation validates the agent name on every task, and each lookup spawns the
+// OpenCode CLI, while the list itself changes only when OpenCode is
+// reconfigured — rarer than task creation. A burst of tasks therefore pays the
+// spawn once, not once per task. A variable so tests can expire it.
+var agentListTTL = 5 * time.Minute
+
 // OpenCode runs tasks through the OpenCode CLI.
 //
 // Every flag used here was verified against the installed version (1.18.30)
@@ -45,6 +53,13 @@ type OpenCode struct {
 	// Model is passed as -m when set. Empty lets OpenCode choose, which works
 	// with no credentials configured (docs/research.md §2.10).
 	Model string
+
+	// agents holds the last successful lookup, guarded by agentsMu, which is
+	// also held for the duration of a lookup so that concurrent validations
+	// share one spawn instead of racing to start their own.
+	agentsMu    sync.Mutex
+	agents      []string
+	agentsFresh time.Time
 }
 
 // NewOpenCode returns a backend using the given command, or the default when it
@@ -317,8 +332,17 @@ func startupError(command string, proc procexec.Result, runErr error) error {
 // (docs/research.md §7b).
 var agentLine = regexp.MustCompile(`^(\S+) \((primary|subagent)\)\s*$`)
 
-// ListAgents returns the agent names OpenCode knows about.
+// ListAgents returns the agent names OpenCode knows about. A successful
+// lookup is served from cache for agentListTTL; a failure is never cached, so
+// a transient one does not become the standing answer.
 func (o *OpenCode) ListAgents(ctx context.Context) ([]string, error) {
+	o.agentsMu.Lock()
+	defer o.agentsMu.Unlock()
+
+	if o.agents != nil && time.Since(o.agentsFresh) < agentListTTL {
+		return o.agents, nil
+	}
+
 	// `opencode agent list` needs a working directory; the process's own is
 	// fine, since nothing is written and no repository is involved.
 	dir, err := currentDir()
@@ -349,6 +373,7 @@ func (o *OpenCode) ListAgents(ctx context.Context) ([]string, error) {
 	if len(names) == 0 {
 		return nil, fmt.Errorf("list opencode agents: no agents found in the output of `%s agent list`", o.command())
 	}
+	o.agents, o.agentsFresh = names, time.Now()
 	return names, nil
 }
 
