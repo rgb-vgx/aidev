@@ -262,6 +262,21 @@ func TestEnvironmentVariablesAreIgnored(t *testing.T) {
 	}
 }
 
+// EnvUser and EnvConfigPath are the only two values the rest of the code is
+// allowed from the environment; they exist so no other package has to call
+// os.Getenv itself.
+func TestEnvHelpersAreTheSanctionedEnvironmentReads(t *testing.T) {
+	t.Setenv("AIDEV_CONFIG", "/srv/aidev/conf.json")
+	t.Setenv("USER", "alice")
+
+	if got := EnvConfigPath(); got != "/srv/aidev/conf.json" {
+		t.Errorf("EnvConfigPath() = %q, want the AIDEV_CONFIG value", got)
+	}
+	if got := EnvUser(); got != "alice" {
+		t.Errorf("EnvUser() = %q, want the USER value", got)
+	}
+}
+
 // The MCP server runs with the working directory of whatever repository is open, so
 // a relative workspace_root can only mean relative to the file that states it.
 func TestRelativeWorkspaceRootIsRelativeToTheConfigFile(t *testing.T) {

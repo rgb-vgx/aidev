@@ -65,8 +65,9 @@ A change is not done until `make check` passes.
 - **Errors say what was being done and to what.** `fmt.Errorf("create attempt %d
   for task %s: %w", ...)`. Wrap with `%w`; callers distinguish `store.ErrNotFound`,
   `store.ErrConflict`, `store.ErrAlreadyExists` and `*task.TransitionError`.
-- **Prefer the standard library.** The dependency list is `pgx`, `uuid`, and (from
-  Phase 4) the official MCP SDK. Adding to it needs a reason in the commit message.
+- **Prefer the standard library.** The dependency list is `pgx`, `uuid`, the
+  official MCP SDK (from Phase 4), and the OpenTelemetry SDK. Adding to it needs
+  a reason in the commit message.
 - **Comments explain *why*.** The code already says what it does. Comments that
   restate it will be removed in review.
 - **Tests state the property they protect,** in the test name or a short comment.

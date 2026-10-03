@@ -196,6 +196,18 @@ type Lookup func(key string) (string, bool)
 // OSLookup reads the real process environment.
 func OSLookup(key string) (string, bool) { return os.LookupEnv(key) }
 
+// EnvUser is the login name of the account running the process, used as the
+// default decider in `aidev task approve`. It is read here, beside every other
+// piece of environment access, because internal/config is the only package
+// that reads the environment (AGENTS.md); the caller keeps the fallback for
+// when the variable is unset.
+func EnvUser() string { return os.Getenv("USER") }
+
+// EnvConfigPath is the raw AIDEV_CONFIG value, empty when unset. `aidev setup`
+// compares it against the file it just wrote to decide whether the shell
+// already points there or still needs the export line.
+func EnvConfigPath() string { return os.Getenv("AIDEV_CONFIG") }
+
 // configSchema is the vocabulary of conf.json: every key aidev understands and
 // the kind of value it takes. SettingKeys, the unknown-key check and the type
 // check are all derived from it, so the schema is stated once for them.
