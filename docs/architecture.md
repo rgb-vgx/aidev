@@ -484,10 +484,23 @@ should set per-step `timeout_seconds`.
 ### Secrets
 
 The connection string is redacted wherever configuration is printed or logged
-(`config.RedactURL`), and a test asserts a password does not survive it. The
-environment handed to a subprocess is inherited — OpenCode needs `HOME` for its
-credentials — and is never recorded: `worker_runs` stores the argv, which is
-task-defined, and not the environment.
+(`config.RedactURL`), and a test asserts a password does not survive it. Agent
+and verification subprocesses drop `AIDEV_*` from the inherited environment —
+`AIDEV_CONFIG` names the file holding the database URL, and the agent executes
+instructions we do not control — while `PG*` and whatever database variables
+the project exports for its own tests deliberately stay. The rest of the
+environment is inherited (OpenCode needs `HOME` for its credentials) and is
+never recorded: `worker_runs` stores the argv, which is task-defined, and not
+the environment.
+
+Dropping the variable is not the whole story: the agent runs with the
+operator's privileges, so it can read the config file itself. That path is
+closed only by the sandbox work (report item F). Until then, two things hold
+the line: the environment drop above, and a guard in the database —
+`tasks_transition_guard` (migration 0007) rejects any status transition the Go
+state machine forbids — because the agent's inherited environment still
+contains `PG*` credentials and could reach psql directly. The trigger is
+load-bearing for exactly that reason, not a decorative backstop.
 
 ### MCP transport
 

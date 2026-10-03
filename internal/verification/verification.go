@@ -211,6 +211,9 @@ func (r *Runner) runStep(ctx context.Context, req Request, index int, step task.
 		Dir:            req.WorkingDir,
 		Timeout:        timeout,
 		MaxOutputBytes: r.MaxOutputBytes,
+		// Verification commands come from the task (agent-authored in the
+		// delegation flow); they must not see aidev's own configuration.
+		DropEnv: []string{"AIDEV_"},
 	})
 
 	run := task.VerificationRun{

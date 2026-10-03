@@ -297,6 +297,41 @@ func TestTransitionTaskIsCompareAndSet(t *testing.T) {
 	}
 }
 
+// TransitionTask checks the state machine in Go, but the agent inherits
+// database credentials until the sandbox work closes that path, so the
+// database must refuse an illegal transition on its own: a raw UPDATE that
+// bypasses the Go check has to fail too, or the guard is advisory.
+func TestDatabaseRejectsIllegalStatusTransitions(t *testing.T) {
+	db, ctx := openStore(t)
+	p := seedProject(t, ctx, db)
+	tk := seedTask(t, ctx, db, p, nil)
+	if tk.Status != task.StatusPending {
+		t.Fatalf("seeded task status = %s, want PENDING", tk.Status)
+	}
+
+	// An illegal jump straight to success.
+	_, err := db.Pool().Exec(ctx, `UPDATE tasks SET status = 'SUCCEEDED' WHERE id = $1`, tk.ID)
+	if err == nil {
+		t.Fatal("PENDING -> SUCCEEDED was stored; the transition guard is not enforced")
+	}
+	if !strings.Contains(err.Error(), "illegal task transition") {
+		t.Errorf("rejection = %v, want the transition-guard message", err)
+	}
+
+	// The worker's own first step, and a legal way to stop, still go through.
+	if _, err := db.Pool().Exec(ctx, `UPDATE tasks SET status = 'READY' WHERE id = $1`, tk.ID); err != nil {
+		t.Fatalf("PENDING -> READY rejected: %v", err)
+	}
+	if _, err := db.Pool().Exec(ctx, `UPDATE tasks SET status = 'CANCELLED' WHERE id = $1`, tk.ID); err != nil {
+		t.Fatalf("READY -> CANCELLED rejected: %v", err)
+	}
+
+	// Terminal is terminal, even via raw SQL.
+	if _, err := db.Pool().Exec(ctx, `UPDATE tasks SET status = 'READY' WHERE id = $1`, tk.ID); err == nil {
+		t.Fatal("CANCELLED -> READY was stored; a terminal state can be left")
+	}
+}
+
 func TestUpdatedAtMaintainedByDatabase(t *testing.T) {
 	db, ctx := openStore(t)
 	p := seedProject(t, ctx, db)

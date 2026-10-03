@@ -225,3 +225,44 @@ ALTER TABLE x ADD CONSTRAINT x_s_valid CHECK (s IN ('a', 'b', 'c'));
 		t.Errorf("constraintValues = %v, want %v from the latest definition", got, want)
 	}
 }
+
+// The transition guard in migration 0007 and the transitions map in
+// internal/task/status.go state the same machine twice. Without this test the
+// two drift silently: the Go copy accepts a transition the database rejects
+// (a task stuck failing at the last step), or the database accepts one the Go
+// copy forbids (the guard quietly stops guarding).
+//
+// Same-status writes are skipped: the Go map has no self-loops because a
+// self-loop is not a transition, while the trigger deliberately allows them
+// because UPDATE OF status fires even when the value does not change.
+func TestTransitionGuardMatchesGoStateMachine(t *testing.T) {
+	schema := readSchema(t)
+
+	clause := regexp.MustCompile(`OLD\.status = '([A-Z_]+)' AND NEW\.status IN \(([^)]*)\)`)
+	matches := clause.FindAllStringSubmatch(schema, -1)
+	if len(matches) == 0 {
+		t.Fatal("no transition clauses found in the migrations; the guard was renamed or removed and this test needs updating with it")
+	}
+
+	dbAllowed := map[[2]string]bool{}
+	for _, m := range matches {
+		from := m[1]
+		for _, to := range quoted.FindAllStringSubmatch(m[2], -1) {
+			dbAllowed[[2]string{from, to[1]}] = true
+		}
+	}
+
+	for _, from := range task.AllStatuses() {
+		for _, to := range task.AllStatuses() {
+			if from == to {
+				continue
+			}
+			goOK := from.CanTransitionTo(to)
+			dbOK := dbAllowed[[2]string{string(from), string(to)}]
+			if goOK != dbOK {
+				t.Errorf("%s -> %s: Go state machine says %v, database guard says %v",
+					from, to, goOK, dbOK)
+			}
+		}
+	}
+}

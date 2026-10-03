@@ -75,6 +75,20 @@ type Spec struct {
 	// OTEL_* is the exception: see stripTelemetryEnv.
 	ExtraEnv []string
 
+	// DropEnv entries are variable-name prefixes; every inherited variable
+	// whose name starts with one of them is removed before the process
+	// starts. ExtraEnv is applied afterwards, so a caller can deliberately
+	// re-add a variable it just dropped.
+	//
+	// The agent backends and the verification runner pass ["AIDEV_"] so a
+	// subprocess cannot read aidev's own configuration: AIDEV_CONFIG names
+	// the file holding the database URL, and the agent runs untrusted
+	// instructions. PG* and DATABASE_URL are deliberately NOT dropped — the
+	// project's own test commands may need them — so this is a reduction of
+	// aidev's secrets, not a general environment scrub; the rest of the
+	// containment story waits for the sandbox work (report item F).
+	DropEnv []string
+
 	// Timeout bounds the run. It is required: an unbounded subprocess is the
 	// failure mode this package exists to prevent.
 	Timeout time.Duration
@@ -188,7 +202,7 @@ func Run(ctx context.Context, spec Spec) (Result, error) {
 
 	cmd := exec.CommandContext(runCtx, spec.Command, spec.Args...)
 	cmd.Dir = spec.Dir
-	cmd.Env = append(stripTelemetryEnv(os.Environ()), spec.ExtraEnv...)
+	cmd.Env = append(dropEnv(stripTelemetryEnv(os.Environ()), spec.DropEnv), spec.ExtraEnv...)
 
 	// No stdin. A subprocess that reads stdin would block forever here, and
 	// Phase 0 showed tools behave correctly when it is closed.
@@ -349,6 +363,31 @@ func (b *boundedBuffer) Truncated() bool { return b.total > b.head.Len()+b.tail.
 // aidev's own spans are created in-process, so nothing it needs is lost. A caller
 // that genuinely wants to configure a child's exporter can still do it through
 // ExtraEnv, which is appended afterwards and therefore wins.
+// dropEnv removes every entry whose variable name starts with one of the
+// prefixes. Matching is on the name only — up to the first '=' — so a value
+// that happens to contain a prefix is never a reason to drop an unrelated
+// variable.
+func dropEnv(env, prefixes []string) []string {
+	if len(prefixes) == 0 {
+		return env
+	}
+	kept := make([]string, 0, len(env))
+	for _, entry := range env {
+		name, _, _ := strings.Cut(entry, "=")
+		drop := false
+		for _, prefix := range prefixes {
+			if strings.HasPrefix(name, prefix) {
+				drop = true
+				break
+			}
+		}
+		if !drop {
+			kept = append(kept, entry)
+		}
+	}
+	return kept
+}
+
 func stripTelemetryEnv(env []string) []string {
 	kept := make([]string, 0, len(env))
 	for _, entry := range env {

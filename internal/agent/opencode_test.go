@@ -117,6 +117,34 @@ func TestBuildArgs(t *testing.T) {
 
 // A prompt beginning with a dash must not be read as a flag, which is what the
 // -- separator is for.
+// The agent executes instructions we do not control, so it must never see
+// aidev's own configuration: AIDEV_CONFIG names the file holding the database
+// URL. Every AIDEV_* variable is dropped; the rest of the environment (HOME,
+// PATH) is still inherited, because OpenCode needs it.
+func TestRunDoesNotInheritAidevEnv(t *testing.T) {
+	t.Setenv("AIDEV_CONFIG", "/etc/aidev/conf.json")
+
+	envFile := filepath.Join(t.TempDir(), "env.txt")
+	command, _ := fakeOpenCode(t, "env > "+shellQuote(envFile)+"\nexit 0")
+
+	o := NewOpenCode(command, "")
+	if _, err := o.Run(context.Background(), openCodeRequest(t)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	data, err := os.ReadFile(envFile)
+	if err != nil {
+		t.Fatalf("read child environment: %v", err)
+	}
+	env := string(data)
+	if strings.Contains(env, "AIDEV_") {
+		t.Error("the agent inherited an AIDEV_* variable; aidev's configuration must not be visible to the agent")
+	}
+	if !strings.Contains(env, "HOME=") {
+		t.Error("the agent lost the rest of the environment; only AIDEV_* should be dropped")
+	}
+}
+
 func TestPromptStartingWithDashIsNotAFlag(t *testing.T) {
 	o := NewOpenCode("", "")
 	args := o.buildArgs(Request{WorkingDir: "/tmp/wt", Prompt: "--version"})

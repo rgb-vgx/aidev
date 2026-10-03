@@ -238,6 +238,17 @@ asserted by tests rather than left to review:
 can be added later; the edge is missing rather than present-and-unused, so adding
 it is a deliberate change with a test to update.
 
+The machine also exists in the database: migration 0007 installs a
+`BEFORE UPDATE OF status` trigger (`tasks_transition_guard`) that rejects any
+pair the Go map forbids, so a write that bypasses `TransitionTask` — raw SQL, a
+future buggy path — cannot store an illegal status either. The trigger is
+load-bearing rather than decorative: agent subprocesses still inherit `PG*`
+credentials and can read the config file, so this is the layer that holds until
+the sandbox work (report item F) closes that path.
+`TestTransitionGuardMatchesGoStateMachine` parses the trigger's clauses and
+compares them against `transitions`, the same way the CHECK constraints are
+compared against the Go enums.
+
 ### Concurrency
 
 Status changes are compare-and-set:
@@ -250,7 +261,8 @@ Zero rows affected means someone else moved the task first. `TransitionTask` the
 re-reads to distinguish "no such task" (`ErrNotFound`) from "status moved"
 (`ErrConflict`) and names the status it actually found. The domain state machine is
 checked before the statement runs, so an illegal transition never reaches the
-database.
+database — and if one ever does, the `tasks_transition_guard` trigger (see Task
+lifecycle above) rejects it there as well.
 
 ## Migrations
 
