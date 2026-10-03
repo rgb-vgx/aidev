@@ -801,14 +801,22 @@ func (r *run) persistWorkerRun(ctx context.Context, result agent.Result) *task.W
 		record.Stderr = appendDetail(record.Stderr, result.Err.Error())
 	}
 
-	if diff, err := r.worktree.Diff(ctx); err != nil {
+	// A cancelled run's context is already done by the time this runs, and a
+	// cancel is exactly when the diff matters most: it is the only record of
+	// what the agent managed to do. The git calls therefore get a detached
+	// context with their own deadline — the same treatment commitWork gives
+	// them — instead of inheriting a context that is already closed.
+	gitCtx, cancelGit := context.WithTimeout(context.WithoutCancel(ctx), git.DefaultTimeout)
+	defer cancelGit()
+
+	if diff, err := r.worktree.Diff(gitCtx); err != nil {
 		r.log.WarnContext(ctx, "could not collect the worktree diff", "error", err.Error())
 	} else {
 		record.Diff = diff.Patch
 		record.DiffTruncated = diff.Truncated
 		record.ChangedFiles = diff.ChangedFiles
 	}
-	if head, err := r.worktree.HeadCommit(ctx); err == nil && r.record != nil {
+	if head, err := r.worktree.HeadCommit(gitCtx); err == nil && r.record != nil {
 		writeCtx, cancel := writeContext(ctx)
 		defer cancel()
 		if err := r.o.Store.SetWorktreeHead(writeCtx, r.record.ID, head); err != nil {
