@@ -255,6 +255,9 @@ func (r *gitRecorder) reset(t *testing.T) {
 }
 
 // subcommands returns the first non-flag argument of each recorded invocation.
+// `-c key=value` counts as one option: its value would otherwise be mistaken
+// for the subcommand (run prepends such pairs for the shared-repository
+// containment flags).
 func (r *gitRecorder) subcommands(t *testing.T) []string {
 	t.Helper()
 	data, err := os.ReadFile(r.log)
@@ -266,9 +269,14 @@ func (r *gitRecorder) subcommands(t *testing.T) []string {
 	}
 	var out []string
 	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
-		for _, field := range strings.Fields(line) {
-			if !strings.HasPrefix(field, "-") {
-				out = append(out, field)
+		fields := strings.Fields(line)
+		for i := 0; i < len(fields); i++ {
+			if fields[i] == "-c" {
+				i++
+				continue
+			}
+			if !strings.HasPrefix(fields[i], "-") {
+				out = append(out, fields[i])
 				break
 			}
 		}
