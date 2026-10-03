@@ -18,16 +18,17 @@ import (
 	"aidev/internal/task"
 )
 
-// runCLI drives the real command surface, with the configuration file the commands read.
-// It exists because the worktree commands are the operator's only way to act on the
-// cleanup policy, and testing them below the CLI would leave the part an operator
+// runCLIWithDatabase drives the real command surface, with a configuration file
+// naming databaseURL — the file the commands actually read. It exists because
+// the worktree commands are the operator's only way to act on the cleanup
+// policy, and testing them below the CLI would leave the part an operator
 // actually touches unexercised.
-func (h *harness) runCLI(t *testing.T, args ...string) (stdout, stderr string, err error) {
+func runCLIWithDatabase(t *testing.T, databaseURL, workspace string, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
 
 	body, err := json.Marshal(map[string]any{
-		"database":       map[string]any{"url": os.Getenv(envDatabaseURL)},
-		"workspace_root": h.workspace,
+		"database":       map[string]any{"url": databaseURL},
+		"workspace_root": workspace,
 		"log_level":      "error",
 	})
 	if err != nil {
@@ -42,6 +43,12 @@ func (h *harness) runCLI(t *testing.T, args ...string) (stdout, stderr string, e
 	var out, errOut bytes.Buffer
 	err = cli.Run(context.Background(), "test", args, &out, &errOut)
 	return out.String(), errOut.String(), err
+}
+
+// runCLI runs the CLI against the harness's database and workspace.
+func (h *harness) runCLI(t *testing.T, args ...string) (stdout, stderr string, err error) {
+	t.Helper()
+	return runCLIWithDatabase(t, os.Getenv(envDatabaseURL), h.workspace, args...)
 }
 
 // A failed attempt's worktree must be findable, or "the work is kept for
