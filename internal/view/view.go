@@ -130,6 +130,7 @@ type Worker struct {
 
 	StdoutTruncated bool `json:"stdout_truncated,omitempty" jsonschema:"true if captured output hit the size limit"`
 	StderrTruncated bool `json:"stderr_truncated,omitempty" jsonschema:"true if captured error output hit the size limit"`
+	LogsPruned      bool `json:"logs_pruned,omitempty" jsonschema:"the run's captured output and diff were cleared by aidev prune; empty logs then mean removed, not silent"`
 }
 
 // NewWorker converts a domain worker run.
@@ -146,6 +147,7 @@ func NewWorker(r task.WorkerRun) *Worker {
 		DurationMS:      r.Duration().Milliseconds(),
 		StdoutTruncated: r.StdoutTruncated,
 		StderrTruncated: r.StderrTruncated,
+		LogsPruned:      r.LogsPruned,
 	}
 }
 
@@ -164,6 +166,8 @@ type Verification struct {
 	// page of a long one and ask for the next page.
 	StdoutTotalBytes int `json:"stdout_total_bytes,omitempty" jsonschema:"size of the whole captured output, when only a window of it was returned"`
 	StderrTotalBytes int `json:"stderr_total_bytes,omitempty" jsonschema:"size of the whole captured error output, when only a window of it was returned"`
+
+	LogsPruned bool `json:"logs_pruned,omitempty" jsonschema:"the step's captured output was cleared by aidev prune; empty output then means removed, not silent"`
 }
 
 // OutputLimit bounds how much of a failing step's output is included when the
@@ -182,6 +186,7 @@ func NewVerifications(runs []task.VerificationRun, includeOutput bool) []Verific
 			Status:     r.Status.String(),
 			ExitCode:   r.ExitCode,
 			DurationMS: r.Duration.Milliseconds(),
+			LogsPruned: r.LogsPruned,
 		}
 		switch {
 		case includeOutput:

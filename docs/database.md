@@ -172,6 +172,15 @@ point, would be invisible (docs/research.md §4.4).
 Environment variables are deliberately **not** stored. The argv is task-defined
 and safe to record; an environment can carry credentials.
 
+`logs_pruned` (migration `0016_logs_pruned`, also on `verification_runs`) is set
+when `aidev prune --logs-older-than` cleared the run's `stdout`, `stderr` and `diff`
+for retention. Only runs of finished tasks are pruned, and only these columns; the
+row, its outcome and every event stay. A task can also be deleted outright with
+`aidev task delete` once it has finished and its worktree is off the disk: the
+`ON DELETE CASCADE` foreign keys then remove its attempts, runs, worktree records,
+approvals and events together — the retention operation migration 0001 leaves
+DELETE unblocked for.
+
 ### `verification_runs`
 One row per verification step that aidev ran itself, with
 `UNIQUE (attempt_id, step_index)` so results always map back to the step that

@@ -415,7 +415,7 @@ func scanWorktree(row scanner) (task.Worktree, error) {
 
 const workerRunColumns = `id, attempt_id, backend, model, agent, status, failure_kind, command, working_dir,
 	exit_code, stdout, stdout_truncated, stderr, stderr_truncated, session_id, summary,
-	finish_reason, tokens, cost, diff, diff_truncated, changed_files, started_at, finished_at`
+	finish_reason, tokens, cost, diff, diff_truncated, changed_files, started_at, finished_at, logs_pruned`
 
 // CreateWorkerRun records what an agent backend did.
 func (s *Store) CreateWorkerRun(ctx context.Context, r task.WorkerRun) (task.WorkerRun, error) {
@@ -477,7 +477,7 @@ func scanWorkerRun(row scanner) (task.WorkerRun, error) {
 	err := row.Scan(&r.ID, &r.AttemptID, &r.Backend, &r.Model, &r.Agent, &status, &kind, &r.Command, &r.WorkingDir,
 		&r.ExitCode, &r.Stdout, &r.StdoutTruncated, &r.Stderr, &r.StderrTruncated,
 		&r.SessionID, &r.Summary, &r.FinishReason, &tokens, &r.Cost, &r.Diff,
-		&r.DiffTruncated, &r.ChangedFiles, &r.StartedAt, &r.FinishedAt)
+		&r.DiffTruncated, &r.ChangedFiles, &r.StartedAt, &r.FinishedAt, &r.LogsPruned)
 	if err != nil {
 		return task.WorkerRun{}, classify(err)
 	}
@@ -488,7 +488,7 @@ func scanWorkerRun(row scanner) (task.WorkerRun, error) {
 }
 
 const verificationRunColumns = `id, attempt_id, step_index, phase, command, status, exit_code,
-	stdout, stdout_truncated, stderr, stderr_truncated, duration_ms, started_at, finished_at`
+	stdout, stdout_truncated, stderr, stderr_truncated, duration_ms, started_at, finished_at, logs_pruned`
 
 // CreateVerificationRun records the result of one verification step that aidev
 // ran itself.
@@ -545,7 +545,7 @@ func scanVerificationRun(row scanner) (task.VerificationRun, error) {
 	)
 	err := row.Scan(&r.ID, &r.AttemptID, &r.StepIndex, &phase, &r.Command, &status, &r.ExitCode,
 		&r.Stdout, &r.StdoutTruncated, &r.Stderr, &r.StderrTruncated, &durationMS,
-		&r.StartedAt, &r.FinishedAt)
+		&r.StartedAt, &r.FinishedAt, &r.LogsPruned)
 	if err != nil {
 		return task.VerificationRun{}, classify(err)
 	}

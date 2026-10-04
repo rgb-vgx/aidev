@@ -171,6 +171,11 @@ func writeResult(env *Env, outcome worker.Outcome, runs []task.VerificationRun) 
 		if r.SessionID != "" {
 			fmt.Fprintf(w, "  session  %s\n", r.SessionID)
 		}
+		if r.LogsPruned {
+			// Retention cleared the output: say so, or the empty logs read
+			// as an agent that printed nothing (research C6).
+			fmt.Fprintf(w, "  logs  pruned\n")
+		}
 	}
 
 	writeVerificationTable(w, runs)

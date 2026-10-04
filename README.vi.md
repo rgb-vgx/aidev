@@ -303,6 +303,8 @@ aidev task events <task> [--payload] [--after SEQ] [--json]
 aidev task cancel <task> [--reason R] [--json]
 aidev task approve <task> [--deny] [--by WHO] [--reason R] [--json]
 aidev task recover [--dry-run] [--json]   # cancel tasks whose lease expired
+aidev task delete <task>                  # delete a finished task and its history
+aidev prune --logs-older-than 30d [--dry-run]  # clear old captured output
 
 aidev project add   [path]                        # đăng ký một repository cho task qua MCP
 aidev project list  [--json]                      # các repository mà aidev biết
@@ -601,6 +603,20 @@ aidev worktree list                        # with tasks, statuses and sizes
 aidev worktree remove TASK-000001          # refused if work is uncommitted
 aidev worktree remove TASK-000001 --force  # discard it deliberately
 ```
+
+**Cơ sở dữ liệu phình to dần.** Mỗi attempt giữ tới 1 MiB output của agent, 1 MiB
+output lỗi và 4 MiB diff. Hãy xóa output của các task cũ đã kết thúc mà vẫn giữ bản
+ghi và lịch sử của chúng, hoặc xóa hẳn các task đã kết thúc:
+
+```bash
+aidev prune --logs-older-than 30d --dry-run
+aidev prune --logs-older-than 30d
+aidev task delete TASK-000001
+```
+
+Run đã bị prune hiện `logs_pruned`, nên output rỗng được hiểu là đã bị xóa chứ không
+phải im lặng. Event log không bao giờ bị prune. `task delete` từ chối task còn có
+thể thay đổi, và task có worktree vẫn còn trên đĩa.
 
 **Có các volume Docker mang tên task.** Một agent đã chạy `docker compose` bên trong worktree của nó, nơi có một bản sao của `docker-compose.yml`, và Compose đã đặt tên dự án theo thư mục. Chúng chỉ là rác rỗng chứ không phải dữ liệu: `docker volume prune` xóa chúng. Tên dự án cố ý để không ghim — xem [lý do](docs/architecture.md#postgresql-data-and-why-the-compose-project-name-is-not-pinned).
 

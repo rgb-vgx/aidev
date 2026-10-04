@@ -32,6 +32,7 @@ func runTask(ctx context.Context, env *Env, args []string) error {
 		"cancel":  {"cancel a task that has not finished", taskCancel},
 		"approve": {"approve or deny a task that requires approval", taskApprove},
 		"recover": {"cancel tasks whose lease expired", taskRecover},
+		"delete":  {"delete a finished task and its history", taskDelete},
 	}
 
 	writeTaskUsage := func(w *Env) {

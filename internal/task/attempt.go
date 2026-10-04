@@ -266,6 +266,11 @@ type WorkerRun struct {
 	DiffTruncated bool
 	ChangedFiles  int
 
+	// LogsPruned means Stdout, Stderr and Diff were cleared by `aidev prune`
+	// (research C6): empty because of retention, not because nothing was
+	// printed or changed.
+	LogsPruned bool
+
 	StartedAt  time.Time
 	FinishedAt *time.Time
 }
@@ -325,6 +330,9 @@ type VerificationRun struct {
 	StdoutTruncated bool
 	Stderr          string
 	StderrTruncated bool
+	// LogsPruned means Stdout and Stderr were cleared by `aidev prune`
+	// (research C6).
+	LogsPruned bool
 
 	StartedAt  time.Time
 	FinishedAt *time.Time

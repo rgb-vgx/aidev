@@ -329,6 +329,8 @@ aidev task events <task> [--payload] [--after SEQ] [--json]
 aidev task cancel <task> [--reason R] [--json]
 aidev task approve <task> [--deny] [--by WHO] [--reason R] [--json]
 aidev task recover [--dry-run] [--json]   # cancel tasks whose lease expired
+aidev task delete <task>                  # delete a finished task and its history
+aidev prune --logs-older-than 30d [--dry-run]  # clear old captured output
 
 aidev project add   [path]                        # register a repository for MCP tasks
 aidev project list  [--json]                      # repositories aidev knows
@@ -656,6 +658,20 @@ aidev worktree list                        # with tasks, statuses and sizes
 aidev worktree remove TASK-000001          # refused if work is uncommitted
 aidev worktree remove TASK-000001 --force  # discard it deliberately
 ```
+
+**The database is growing.** Each attempt keeps up to 1 MiB of agent output, 1 MiB
+of error output and 4 MiB of diff. Clear the output of old finished tasks and keep
+their records and history, or delete finished tasks outright:
+
+```bash
+aidev prune --logs-older-than 30d --dry-run
+aidev prune --logs-older-than 30d
+aidev task delete TASK-000001
+```
+
+A pruned run shows `logs_pruned`, so empty output reads as removed rather than
+silent. The event log is never pruned. `task delete` refuses a task that can still
+change, and one whose worktree is still on disk.
 
 **There are Docker volumes named after tasks.** An agent ran `docker compose` inside
 its worktree, where a copy of `docker-compose.yml` exists, and Compose named the
