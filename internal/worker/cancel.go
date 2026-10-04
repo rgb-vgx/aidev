@@ -67,7 +67,16 @@ func (o *Orchestrator) cancelPoll() time.Duration {
 func (r *run) startCancelWatch(ctx context.Context, stop context.CancelFunc) (wait func()) {
 	// The run goes on changing r.task and r.log while the watcher polls, so the
 	// watcher gets its own copies and never touches r.
-	st, attemptID := r.o.Store, r.attempt.ID
+	// The attempt is the exception: a retry starts a new one while the
+	// watcher keeps running, and RenewLease only renews a RUNNING attempt,
+	// so the watcher follows r.leaseAttempt rather than a copy — otherwise
+	// the new attempt's lease would lapse and recovery would cancel a live
+	// run.
+	st := r.o.Store
+	if r.leaseAttempt.Load() == nil {
+		id := r.attempt.ID
+		r.leaseAttempt.Store(&id)
+	}
 	every, log := r.o.cancelPoll(), r.log
 	owner, ttl := processLeaseOwner(), leaseTTL(every)
 	done := make(chan struct{})
@@ -78,7 +87,7 @@ func (r *run) startCancelWatch(ctx context.Context, stop context.CancelFunc) (wa
 		// cancel, so the two cannot drift apart (research C1). A dead process
 		// stops renewing, and recovery claims its task back.
 		watchForCancel(ctx, every, func(ctx context.Context) (task.Status, error) {
-			return st.RenewLease(ctx, attemptID, owner, ttl)
+			return st.RenewLease(ctx, *r.leaseAttempt.Load(), owner, ttl)
 		}, stop, log)
 	}()
 	return func() {

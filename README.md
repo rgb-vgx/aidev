@@ -370,6 +370,14 @@ git diff main..aidev/TASK-000001
 
 Nothing is merged, and nothing is ever committed to your working branch.
 
+A task created with `--max-retries N` (MCP: `max_retries`) gets up to N more
+attempts when its checks fail or its agent stops early. Each retry continues in
+the same worktree and agent session, with the failing output in the prompt; the
+failed attempt's work is committed, marked unverified, to its own branch, and
+the next attempt works on `aidev/<ref>-a2`, `-a3` and so on. A success then
+reports that branch. A refused tool call, an intercepted runner or a timeout is
+never retried.
+
 A failed task leaves its worktree exactly as the agent left it, under
 `workspace_root`, because partial work is often the most useful thing about a
 failure. `git worktree remove` refuses to discard uncommitted work and aidev never

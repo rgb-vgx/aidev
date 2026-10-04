@@ -34,6 +34,8 @@ type harness struct {
 	orchestrator *worker.Orchestrator
 	repoPath     string
 	workspace    string
+	// lastTaskID lets an agent script look its own task up while it runs.
+	lastTaskID uuid.UUID
 }
 
 func newHarness(t *testing.T, mutate func(*config.Config)) *harness {

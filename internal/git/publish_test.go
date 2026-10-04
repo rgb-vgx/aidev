@@ -189,3 +189,37 @@ func TestPublishingPrimitivesValidateInput(t *testing.T) {
 		t.Error("TreeChanges accepted an empty tree id")
 	}
 }
+
+// An automatic retry continues in the same directory on a new branch: the
+// files stay exactly where the failed attempt left them, uncommitted ones
+// included, and the old branch is not moved.
+func TestContinueOnNewBranchKeepsTheFiles(t *testing.T) {
+	ctx := context.Background()
+	_, wt := newPublishWorktree(t, "TASK-000014")
+	old := wt.Branch
+	before := gitIn(t, wt.Path, "rev-parse", "HEAD")
+	write(t, filepath.Join(wt.Path, "half-done.txt"), "work in progress\n")
+
+	if err := wt.ContinueOnNewBranch(ctx, "aidev/TASK-000014-a2"); err != nil {
+		t.Fatalf("ContinueOnNewBranch: %v", err)
+	}
+	if wt.Branch != "aidev/TASK-000014-a2" {
+		t.Errorf("Branch = %q, want the new branch", wt.Branch)
+	}
+	if got := gitIn(t, wt.Path, "symbolic-ref", "--short", "HEAD"); got != "aidev/TASK-000014-a2" {
+		t.Errorf("HEAD is on %q, want the new branch", got)
+	}
+	if got := gitIn(t, wt.Path, "rev-parse", "HEAD"); got != before {
+		t.Errorf("HEAD moved to %s, want it still at %s", got, before)
+	}
+	if got := gitIn(t, wt.Path, "rev-parse", "refs/heads/"+old); got != before {
+		t.Errorf("the old branch moved to %s", got)
+	}
+	if status := gitIn(t, wt.Path, "status", "--porcelain"); status != "?? half-done.txt" {
+		t.Errorf("status = %q, want the uncommitted file still there and nothing else changed", status)
+	}
+
+	if err := wt.ContinueOnNewBranch(ctx, old); err == nil {
+		t.Error("ContinueOnNewBranch reused a branch that already exists")
+	}
+}

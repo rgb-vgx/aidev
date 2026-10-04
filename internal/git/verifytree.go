@@ -172,6 +172,59 @@ func (w *Worktree) UpdateBranch(ctx context.Context, branch, commit, expected st
 	return nil
 }
 
+// ContinueOnNewBranch creates branch at HEAD and points HEAD at it, leaving
+// the index and the working directory exactly as they are. It is how an
+// automatic retry hands a worktree to the next attempt: the files the failed
+// attempt left stay in place, and from here on commits land on the new
+// attempt's own branch while the old branch keeps the old attempt's end
+// state. Plumbing only — `git branch` and `git symbolic-ref` run no hooks,
+// unlike a checkout. It refuses a branch that already exists.
+func (w *Worktree) ContinueOnNewBranch(ctx context.Context, branch string) error {
+	if strings.TrimSpace(branch) == "" {
+		return fmt.Errorf("continue on a new branch: branch is required")
+	}
+	res, err := w.m.run(ctx, w.Path, nil, "branch", "--no-track", "--", branch, "HEAD")
+	if err != nil {
+		return err
+	}
+	if !res.Succeeded() {
+		return fmt.Errorf("create branch %s in %s: %s", branch, w.Path, firstLine(res.Stderr))
+	}
+	res, err = w.m.run(ctx, w.Path, nil, "symbolic-ref", "HEAD", "refs/heads/"+branch)
+	if err != nil {
+		return err
+	}
+	if !res.Succeeded() {
+		return fmt.Errorf("switch %s to branch %s: %s", w.Path, branch, firstLine(res.Stderr))
+	}
+	w.Branch = branch
+	return nil
+}
+
+// RestoreToHead makes the working directory match HEAD again: tracked files
+// are reset and untracked ones removed, while files git ignores stay — build
+// caches and dependencies the agent installed are not what is being undone.
+// An automatic retry uses it after committing the failed attempt's snapshot,
+// so whatever that attempt's checks wrote afterwards does not ride into the
+// next attempt's commit. Neither command runs hooks.
+func (w *Worktree) RestoreToHead(ctx context.Context) error {
+	res, err := w.m.run(ctx, w.Path, nil, "reset", "--hard", "--quiet", "HEAD")
+	if err != nil {
+		return err
+	}
+	if !res.Succeeded() {
+		return fmt.Errorf("reset %s to HEAD: %s", w.Path, firstLine(res.Stderr))
+	}
+	res, err = w.m.run(ctx, w.Path, nil, "clean", "-f", "-d", "--quiet")
+	if err != nil {
+		return err
+	}
+	if !res.Succeeded() {
+		return fmt.Errorf("clean %s: %s", w.Path, firstLine(res.Stderr))
+	}
+	return nil
+}
+
 // SyncIndex rewrites the real index to match HEAD, leaving the files alone.
 // After a commit built from a snapshot tree the index still describes the
 // tree the worktree was created from, so status would report every committed

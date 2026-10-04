@@ -25,6 +25,10 @@ func TestRunTotalBudget(t *testing.T) {
 		{"the task's default plus verification plus margin", task.Task{}, 50 * time.Minute},
 		{"the task's own timeout replaces the default", task.Task{Timeout: 5 * time.Minute}, 25 * time.Minute},
 		{"expect_fail_on_base verifies the base too", task.Task{ExpectFailOnBase: true}, 60 * time.Minute},
+		// A retry runs inside the same process, so each attempt the task
+		// may take gets the whole agent and verification budget again.
+		{"every retry gets its own agent and verification budget", task.Task{MaxRetries: 2}, 130 * time.Minute},
+		{"the base check is counted once, retries or not", task.Task{MaxRetries: 1, ExpectFailOnBase: true}, 100 * time.Minute},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

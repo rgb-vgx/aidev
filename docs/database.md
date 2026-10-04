@@ -68,7 +68,7 @@ The unit of delegated work.
 | `protected_paths` | JSONB array of glob patterns (default `[]`); an attempt changing a matching path fails verification before any check runs (migration 0010) |
 | `setup_steps` | JSONB array of argv commands (default `[]`) that run before verification to prepare the checkout; a failing one fails the task before any check runs (migration 0011) |
 | `verification_mode` | where this task's verification runs: `in_place` or `clean`, frozen at creation from the caller's choice or the project's default (migration 0011) |
-| `max_retries` | recorded for a future retry feature; the MVP never retries |
+| `max_retries` | how many more attempts a run may make when one fails in a way another try can fix — the checks ran and failed, or the agent stopped early (0 to 10; migration 0017 added the retry itself) |
 | `requires_approval` | the task's own gate (the creator's ask); OR'd at run time with the project's policy, never overwritten by it |
 | `expect_fail_on_base` | when true the verification commands run on the base commit before the agent starts, and a pass there fails the attempt with kind VERIFICATION without ever calling the agent (migration 0012) |
 | `base_commit_at_create` | the commit the base ref (`base_ref`, else the project's default branch) pointed at when the task was created. The run resolves the ref again; when the worktree starts from a different commit it records `task.base_moved` and the result reports `base_moved`, but goes ahead on the current commit. `''` for tasks created before the column existed, never reported as moved (migration 0015) |
@@ -142,6 +142,12 @@ CONSTRAINT worktrees_removed_consistent CHECK (
     (status = 'REMOVED' AND removed_at IS NOT NULL) OR
     (status <> 'REMOVED' AND removed_at IS NULL))
 ```
+
+`REUSED` (migration 0017) marks the record of an attempt whose directory was handed
+to the next attempt by an automatic retry: the row keeps that attempt's branch and
+its unverified `head_commit`, while the later attempt's row owns the directory. A
+`REUSED` row is never something on disk to remove, so `task delete` and
+`worktree list` look only at `ACTIVE` and `RETAINED` rows.
 
 `RETAINED` is a deliberate state: it means the attempt failed or was cancelled and
 the worktree was kept on disk for inspection. A retained worktree therefore has no
@@ -281,9 +287,11 @@ asserted by tests rather than left to review:
 - **Every non-terminal state can reach `CANCELLED`,** so no task can become
   unstoppable.
 
-`FAILED → READY` (retry) is deliberately absent. Attempts are persisted so retry
-can be added later; the edge is missing rather than present-and-unused, so adding
-it is a deliberate change with a test to update.
+Automatic retry (migration `0017_retry`) adds `RUNNING → READY` and
+`VERIFYING → READY`: an attempt that failed in a way another try can fix, on a task
+with retries left, is finished as `FAILED` while the task goes back to `READY` and
+the same run starts the next attempt. `FAILED → READY` stays absent — a task that
+will retry never passes through `FAILED`, so `FAILED` is still final.
 
 The machine also exists in the database: migration 0007 installs a
 `BEFORE UPDATE OF status` trigger (`tasks_transition_guard`) that rejects any

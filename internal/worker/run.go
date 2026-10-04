@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -57,6 +58,23 @@ type run struct {
 	// failureKind records how the run failed for the trace. It stays
 	// FailureNone when the run succeeded or has not failed yet.
 	failureKind task.FailureKind
+
+	// retryable marks the failure about to be reported as one another
+	// attempt could fix: set right before fail by the two places that know —
+	// verify when the checks ran and failed, execute when the agent stopped
+	// early without a refusal (see willRetry).
+	retryable bool
+	// retryPending is set by scheduleRetry: the attempt failed, the task is
+	// READY again, and execute starts the next attempt.
+	retryPending bool
+	// retry carries what the next attempt needs from the failed one; nil on
+	// a first attempt.
+	retry *retryContext
+
+	// leaseAttempt is the attempt whose lease the cancel watch renews. It
+	// changes when a retry starts a new attempt, while the watcher keeps
+	// running, so it is the one field the watcher reads and is atomic.
+	leaseAttempt atomic.Pointer[uuid.UUID]
 }
 
 func (r *run) execute(ctx context.Context) (outcome Outcome, retErr error) {
@@ -109,30 +127,79 @@ func (r *run) execute(ctx context.Context) (outcome Outcome, retErr error) {
 	ctx = runCtx
 	root.SetAttributes(attribute.Int("aidev.attempt.number", r.attempt.AttemptNumber))
 
+	// Each attempt logs with its own id and number; a retry starts again
+	// from the run's logger rather than stacking a second set of fields.
+	baseLog := r.log
 	r.log = r.log.With(
 		logging.FieldAttemptID, r.attempt.ID.String(),
 		logging.FieldAttemptNum, r.attempt.AttemptNumber,
 	)
 	r.log.InfoContext(ctx, "task started", logging.FieldBackend, r.o.Backend.Name())
 
-	if err := r.prepareWorktree(ctx); err != nil {
-		outcome, retErr = r.fail(ctx, task.FailureWorktree, err)
-		return outcome, retErr
-	}
-	// The red-before-green gate (research B3): on a task that asked for it,
-	// the verification commands run on the base commit first, while the
-	// worktree still is the base commit. A pass there means the commands
-	// cannot distinguish before from after, so the run stops without ever
-	// calling the agent.
-	if r.task.ExpectFailOnBase {
-		if out, stopped, err := r.baseCheck(ctx); stopped || err != nil {
-			outcome, retErr = out, err
+	for {
+		outcome, retErr = r.attemptOnce(ctx)
+		if !r.retryPending || retErr != nil {
 			return outcome, retErr
+		}
+		// The attempt failed in a way another try can fix and the task is
+		// READY again (scheduleRetry). The next attempt starts now, in the
+		// same run: its own attempt row and lease, the same worktree
+		// directory, the same agent session.
+		r.resetForAttempt()
+		if err := r.startAttempt(ctx); err != nil {
+			// A Cancel between the attempts owns the ending.
+			if out, ok := r.cancelledElsewhere(ctx, err); ok {
+				return out, nil
+			}
+			retErr = err
+			return Outcome{}, retErr
+		}
+		root.SetAttributes(attribute.Int("aidev.attempt.number", r.attempt.AttemptNumber))
+		r.log = baseLog.With(
+			logging.FieldAttemptID, r.attempt.ID.String(),
+			logging.FieldAttemptNum, r.attempt.AttemptNumber,
+			logging.FieldWorktreePath, r.worktree.Path,
+		)
+		r.log.InfoContext(ctx, "retry started")
+	}
+}
+
+// attemptOnce takes one attempt from its worktree to its outcome: prepare
+// (or, on a retry, continue) the worktree, run the agent, check containment,
+// snapshot, verify. A failure another attempt could fix comes back with
+// retryPending set instead of an ending (see fail and scheduleRetry).
+func (r *run) attemptOnce(ctx context.Context) (Outcome, error) {
+	if r.retry != nil {
+		// A retry continues in the failed attempt's directory (see
+		// retry.go). Were that to break, the failure path should keep the
+		// directory under the record that still describes it.
+		if err := r.continueWorktree(ctx); err != nil {
+			if r.record == nil {
+				r.record = r.retry.prevRecord
+			}
+			return r.fail(ctx, task.FailureWorktree, err)
+		}
+	} else {
+		if err := r.prepareWorktree(ctx); err != nil {
+			return r.fail(ctx, task.FailureWorktree, err)
+		}
+		// The red-before-green gate (research B3): on a task that asked for it,
+		// the verification commands run on the base commit first, while the
+		// worktree still is the base commit. A pass there means the commands
+		// cannot distinguish before from after, so the run stops without ever
+		// calling the agent. A retry skips it: the base has not changed, and
+		// the gate already passed before the first attempt.
+		if r.task.ExpectFailOnBase {
+			if out, stopped, err := r.baseCheck(ctx); stopped || err != nil {
+				return out, err
+			}
 		}
 	}
 	if err := r.runAgent(ctx); err != nil {
-		outcome, retErr = r.fail(ctx, r.workerFailureKind(), err)
-		return outcome, retErr
+		// An agent that stopped early may finish on another try; one cut
+		// short by a refused tool call would only be refused again.
+		r.retryable = !errors.Is(err, agent.ErrToolRefused)
+		return r.fail(ctx, r.workerFailureKind(), err)
 	}
 	if err := r.checkContainment(ctx); err != nil {
 		kind := task.FailureContainment
@@ -142,8 +209,7 @@ func (r *run) execute(ctx context.Context) (outcome Outcome, retErr error) {
 			// with the other inspection failures.
 			kind = task.FailureWorktree
 		}
-		outcome, retErr = r.fail(ctx, kind, err)
-		return outcome, retErr
+		return r.fail(ctx, kind, err)
 	}
 	// The agent's delivery, as a tree object (research A6). Everything
 	// verification does happens after this point, so whatever the checks
@@ -151,11 +217,9 @@ func (r *run) execute(ctx context.Context) (outcome Outcome, retErr error) {
 	// reach the commit. Failing to snapshot is a plumbing failure, not a
 	// check that failed, so it is classified like the other worktree errors.
 	if err := r.snapshotAgentTree(ctx); err != nil {
-		outcome, retErr = r.fail(ctx, task.FailureWorktree, err)
-		return outcome, retErr
+		return r.fail(ctx, task.FailureWorktree, err)
 	}
-	outcome, retErr = r.verify(ctx)
-	return outcome, retErr
+	return r.verify(ctx)
 }
 
 // snapshotAgentTree records what the agent delivered as a tree object and
@@ -329,6 +393,8 @@ func (r *run) startAttempt(ctx context.Context) error {
 			return err
 		}
 		r.attempt = attempt
+		id := attempt.ID
+		r.leaseAttempt.Store(&id)
 		r.task.Status = task.StatusRunning
 
 		return appendEvent(writeCtx, tx, r.task.ID, &attempt.ID, event.TypeTaskStarted, map[string]any{
@@ -448,7 +514,7 @@ func (r *run) runAgent(ctx context.Context) error {
 		attribute.String("langfuse.observation.type", "generation"),
 	)
 
-	prompt, err := buildPrompt(r.task)
+	prompt, err := r.prompt()
 	if err != nil {
 		return err
 	}
@@ -461,6 +527,11 @@ func (r *run) runAgent(ctx context.Context) error {
 		Model:          resolveModel(r.task, r.o.Config.Routing),
 		Timeout:        r.task.EffectiveTimeout(r.o.Config.DefaultTaskTimeout),
 		MaxOutputBytes: r.o.Config.MaxOutputBytes,
+	}
+	// A retry continues the failed attempt's agent session, in the same
+	// directory it was created in, so the agent keeps what it learned.
+	if r.retry != nil {
+		req.SessionID = r.retry.sessionID
 	}
 
 	r.emit(ctx, event.TypeWorkerStarted, map[string]any{
@@ -822,6 +893,9 @@ func (r *run) verify(ctx context.Context) (Outcome, error) {
 		logging.FieldDurationMS, report.Duration.Milliseconds())
 
 	if !report.Passed {
+		// The checks ran and failed: the one verification outcome another
+		// attempt can change. A timed-out or cancelled step is not.
+		r.retryable = report.FailureKind == task.FailureVerification
 		return r.fail(ctx, report.FailureKind, fmt.Errorf("verification did not pass: %s", report.Summary()))
 	}
 	return r.succeed(ctx)
@@ -1015,12 +1089,18 @@ func (r *run) succeed(ctx context.Context) (Outcome, error) {
 	r.log.InfoContext(ctx, "task succeeded",
 		"branch", r.worktree.Branch, "head_commit", r.headCommit())
 
-	if committed {
-		return r.outcome(fmt.Sprintf("%s succeeded: %s, work committed on %s",
-			r.task.Identifier(), r.report.Summary(), r.worktree.Branch)), nil
+	// After a retry the branch is the last attempt's, and saying which
+	// attempt passed tells the reader why it is not aidev/<ref>.
+	on := ""
+	if r.attempt.AttemptNumber > 1 {
+		on = fmt.Sprintf(" on attempt %d", r.attempt.AttemptNumber)
 	}
-	return r.outcome(fmt.Sprintf("%s succeeded: %s; no changes to commit",
-		r.task.Identifier(), r.report.Summary())), nil
+	if committed {
+		return r.outcome(fmt.Sprintf("%s succeeded%s: %s, work committed on %s",
+			r.task.Identifier(), on, r.report.Summary(), r.worktree.Branch)), nil
+	}
+	return r.outcome(fmt.Sprintf("%s succeeded%s: %s; no changes to commit",
+		r.task.Identifier(), on, r.report.Summary())), nil
 }
 
 // commitWork records the agent's work on the task branch and returns whether a
@@ -1147,6 +1227,16 @@ func (r *run) fail(ctx context.Context, kind task.FailureKind, cause error) (Out
 		evType = event.TypeTaskCancelled
 		kind = task.FailureCancelled
 	}
+	// A failure another attempt could fix, with attempts left, is recorded
+	// as the attempt's failure and the task goes back to READY instead
+	// (automatic retry). If the retry cannot be recorded, the task fails
+	// below as it always did.
+	if !cancelled && r.willRetry(ctx, kind) {
+		if out, done, err := r.scheduleRetry(ctx, kind, cause); done {
+			return out, err
+		}
+	}
+
 	// Remembered for the root span, which is finalized when execute returns.
 	r.failureKind = kind
 

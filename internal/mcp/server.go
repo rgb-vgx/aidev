@@ -270,6 +270,8 @@ A run takes as long as the agent does, often minutes. aidev_run_task waits for a
 bounded time and then returns with status RUNNING; call aidev_get_task_result to
 find out how it ended, or aidev_get_task_events to see how far it has got.
 
-A successful task leaves a commit on its own branch (aidev/<ref>). Nothing is
-merged, and your working tree is never touched. A failed task leaves its worktree
-in place so the partial work can be inspected.`
+A successful task leaves a commit on its own branch, named in
+result.worktree.branch: aidev/<ref>, or aidev/<ref>-aN when a retry succeeded
+(set max_retries to let aidev retry an attempt whose checks failed or whose agent
+stopped early). Nothing is merged, and your working tree is never touched. A
+failed task leaves its worktree in place so the partial work can be inspected.`

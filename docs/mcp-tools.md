@@ -125,6 +125,7 @@ Creates a task. Does **not** run it.
 | `agent` | string | no | agent to use; defaults to `build` |
 | `priority` | integer | no | higher runs first; default 0 |
 | `requires_approval` | boolean | no | gate the task behind a human decision; the project's own policy can gate a task the same way without this |
+| `max_retries` | integer | no | 0 to 10, default 0: how many more attempts aidev may make when the checks ran and failed or the agent stopped early. Each retry continues in the same worktree and agent session with the failure in the prompt; see `aidev_run_task` |
 | `expect_fail_on_base` | boolean | no | run the verification commands on the base commit before the agent starts; if they already pass there they cannot distinguish before from after, so the attempt fails with kind VERIFICATION and the agent is never called (for bug-fix tasks) |
 | `base_ref` | string | no | git ref to branch from; defaults to the repository's current branch |
 | `timeout_seconds` | integer | no | bound this task's agent run |
@@ -223,6 +224,15 @@ agent, which writes files there; moves the task through `RUNNING`, `VERIFYING` a
 terminal state; appends events throughout. On success, commits the work to the task's
 branch and removes the worktree. On failure, keeps the worktree for inspection. The
 repository's own working tree is never touched.
+
+With `max_retries`, an attempt whose checks ran and failed, or whose agent stopped
+early (but not from a refused tool call), does not end the task: the attempt is
+recorded as failed, its work is committed — marked unverified — to its own branch,
+`task.retry_scheduled` is appended, the task goes back to `READY`, and the next
+attempt starts at once in the same directory on `aidev/<ref>-aN`, continuing the
+agent's session with the failing output in the prompt. The success branch is
+therefore the one in `result.worktree.branch`. Earlier attempts' worktree records
+read `REUSED`.
 
 Calling it again while a run is in flight joins that run rather than starting a
 second or failing.

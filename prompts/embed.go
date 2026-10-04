@@ -14,3 +14,8 @@ var FS embed.FS
 
 // ImplementTask is the template used for an implementation task.
 const ImplementTask = "implement_task.tmpl"
+
+// RetryTask is the template for an automatic retry: why the previous attempt
+// failed and what to do next, sent into the same agent session when it can be
+// continued, after the full task when it cannot.
+const RetryTask = "retry_task.tmpl"

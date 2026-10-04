@@ -168,11 +168,17 @@ const (
 	// failed or was cancelled and the work may still be useful. Retained
 	// worktrees are never deleted implicitly.
 	WorktreeRetained WorktreeStatus = "RETAINED"
+
+	// WorktreeReused means the attempt failed and the next attempt of the
+	// same task continued in this directory on its own branch (automatic
+	// retry). The record keeps this attempt's branch and head; the directory
+	// belongs to the later attempt's record.
+	WorktreeReused WorktreeStatus = "REUSED"
 )
 
 // AllWorktreeStatuses lists every valid worktree status.
 func AllWorktreeStatuses() []WorktreeStatus {
-	return []WorktreeStatus{WorktreeActive, WorktreeRemoved, WorktreeRetained}
+	return []WorktreeStatus{WorktreeActive, WorktreeRemoved, WorktreeRetained, WorktreeReused}
 }
 
 func (s WorktreeStatus) String() string { return string(s) }

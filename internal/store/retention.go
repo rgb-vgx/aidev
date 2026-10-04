@@ -131,11 +131,16 @@ func (s *Store) DeleteTask(ctx context.Context, id uuid.UUID) error {
 			return fmt.Errorf("delete task %s: it is %s: %w", id, status, ErrTaskNotFinished)
 		}
 
+		// Only ACTIVE and RETAINED records own a directory: a REMOVED one is
+		// gone, and a REUSED one handed its directory to a later attempt's
+		// record (automatic retry), which is the one that says whether it is
+		// still there.
 		var path string
 		err = tx.db.QueryRow(ctx, `
 			SELECT w.path FROM worktrees w JOIN task_attempts a ON a.id = w.attempt_id
-			WHERE a.task_id = $1 AND w.status <> $2
-			ORDER BY w.created_at DESC LIMIT 1`, id, string(task.WorktreeRemoved)).Scan(&path)
+			WHERE a.task_id = $1 AND w.status IN ($2, $3)
+			ORDER BY w.created_at DESC LIMIT 1`, id,
+			string(task.WorktreeActive), string(task.WorktreeRetained)).Scan(&path)
 		switch {
 		case err == nil:
 			return fmt.Errorf("delete task %s: %s: %w", id, path, ErrWorktreeOnDisk)

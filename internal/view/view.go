@@ -37,7 +37,7 @@ type Task struct {
 	VerificationMode   string   `json:"verification_mode" jsonschema:"where verification runs: in_place (in the agent's worktree) or clean (a fresh checkout of the result), frozen at creation"`
 	RequiresApproval   bool     `json:"requires_approval" jsonschema:"whether a human decision is required before the task may run"`
 	ExpectFailOnBase   bool     `json:"expect_fail_on_base" jsonschema:"whether the verification commands must already fail on the base commit: they run there before the agent starts, and a pass means they cannot distinguish before from after, so the attempt fails without calling the agent"`
-	MaxRetries         int      `json:"max_retries" jsonschema:"recorded for a future retry feature; aidev does not retry"`
+	MaxRetries         int      `json:"max_retries" jsonschema:"how many more attempts aidev may make when one fails in a way another try can fix; 0 means no retry"`
 	BaseRef            string   `json:"base_ref,omitempty" jsonschema:"git ref the task's branch starts from"`
 	BaseCommitAtCreate string   `json:"base_commit_at_create,omitempty" jsonschema:"the commit the base ref pointed at when the task was created"`
 	TimeoutSeconds     int      `json:"timeout_seconds,omitempty" jsonschema:"per-task agent timeout; 0 means the configured default"`

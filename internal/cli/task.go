@@ -117,7 +117,7 @@ func taskCreate(ctx context.Context, env *Env, args []string) error {
 	model := fs.String("model", "", "model to use (default: agent.opencode.model in conf.json)")
 	hardness := fs.String("hardness", "", "how hard the task is: TRIVIAL, STANDARD or HARD (picks a model from agent.routing in conf.json)")
 	priority := fs.Int("priority", 0, "higher runs first")
-	maxRetries := fs.Int("max-retries", 0, "recorded for a future retry feature; the MVP never retries")
+	maxRetries := fs.Int("max-retries", 0, "retry up to N more times when the checks fail or the agent stops early (0-10)")
 	requiresApproval := fs.Bool("requires-approval", false, "do not run until a human approves")
 	expectFailOnBase := fs.Bool("expect-fail-on-base", false, "run the verification commands on the base commit before the agent starts; fail immediately if they already pass, because commands that pass on the base cannot distinguish before from after (for bug-fix tasks)")
 	baseRef := fs.String("base-ref", "", "git ref to branch from (default: the project's default branch)")
@@ -320,11 +320,14 @@ func taskGet(ctx context.Context, env *Env, args []string) error {
 // between phases must still not outlive invariant 6.
 const runBudgetMargin = 10 * time.Minute
 
-// runTotalBudget is the deadline a run imposes on itself. A task that expects
-// its verification to fail on the base spends a whole second pass there, so it
-// gets the verification budget twice.
+// runTotalBudget is the deadline a run imposes on itself. Every attempt the
+// task may take — the first and up to max_retries more, all in this one run —
+// gets the agent's timeout and the verification budget. A task that expects
+// its verification to fail on the base spends one more verification pass
+// there, before the first attempt only.
 func runTotalBudget(cfg config.Config, t task.Task) time.Duration {
-	budget := t.EffectiveTimeout(cfg.DefaultTaskTimeout) + cfg.VerificationTotalTimeout + runBudgetMargin
+	attempts := time.Duration(1 + max(t.MaxRetries, 0))
+	budget := attempts*(t.EffectiveTimeout(cfg.DefaultTaskTimeout)+cfg.VerificationTotalTimeout) + runBudgetMargin
 	if t.ExpectFailOnBase {
 		budget += cfg.VerificationTotalTimeout
 	}
@@ -343,9 +346,11 @@ it, then runs the task's own verification commands and records the outcome.
 
 This can take several minutes. The first run against a repository OpenCode has
 not seen before can take longer still. Ctrl-C cancels it and records the
-cancellation; the worktree is kept. A total deadline also applies — the task's
-timeout plus the verification budget plus a margin — so a run that hangs cannot
-last forever.
+cancellation; the worktree is kept. A task with --max-retries that fails in a
+way another try can fix (the checks failed, or the agent stopped early) starts
+its next attempt within the same run, in the same worktree. A total deadline
+also applies — the task's timeout plus the verification budget for every
+attempt it may take, plus a margin — so a run that hangs cannot last forever.
 `)
 		fs.PrintDefaults()
 	}

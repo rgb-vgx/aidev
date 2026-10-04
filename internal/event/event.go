@@ -26,6 +26,10 @@ const (
 	TypeTaskSucceeded Type = "task.succeeded"
 	TypeTaskFailed    Type = "task.failed"
 	TypeTaskCancelled Type = "task.cancelled"
+	// TypeRetryScheduled records that an attempt failed in a way another try
+	// can fix and the task went back to READY for its next attempt, in the
+	// same worktree directory, instead of failing (automatic retry).
+	TypeRetryScheduled Type = "task.retry_scheduled"
 
 	// Worktree isolation.
 	TypeWorktreeCreated  Type = "task.worktree_created"
@@ -83,7 +87,7 @@ const (
 func AllTypes() []Type {
 	return []Type{
 		TypeTaskCreated, TypeTaskReady, TypeTaskStarted, TypeTaskSucceeded,
-		TypeTaskFailed, TypeTaskCancelled,
+		TypeTaskFailed, TypeTaskCancelled, TypeRetryScheduled,
 		TypeWorktreeCreated, TypeWorktreeRemoved, TypeWorktreeRetained,
 		TypeBaseMoved,
 		TypeWorkerStarted, TypeWorkerCompleted,

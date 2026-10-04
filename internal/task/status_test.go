@@ -66,11 +66,18 @@ func TestTerminalStatesAreDeadEnds(t *testing.T) {
 	}
 }
 
-// The MVP does not retry. The edge is absent rather than present-and-unused, so
-// that adding retry later is a deliberate change with a test to update.
-func TestFailedDoesNotRetryYet(t *testing.T) {
+// Automatic retry sends a task whose attempt failed back to READY from where
+// the failure was found — RUNNING when the agent stopped early, VERIFYING when
+// the checks failed — so FAILED stays terminal: a task that will retry never
+// passes through it, and a FAILED task is finished.
+func TestRetryGoesBackToReadyWithoutPassingThroughFailed(t *testing.T) {
+	for _, from := range []Status{StatusRunning, StatusVerifying} {
+		if !from.CanTransitionTo(StatusReady) {
+			t.Errorf("%s -> READY is missing; automatic retry needs it", from)
+		}
+	}
 	if StatusFailed.CanTransitionTo(StatusReady) {
-		t.Error("FAILED -> READY exists, but automatic retry is out of scope for the MVP")
+		t.Error("FAILED -> READY exists; FAILED must stay terminal")
 	}
 }
 

@@ -105,8 +105,10 @@ type Task struct {
 	// change while a task is in flight.
 	VerificationMode VerificationMode
 
-	// MaxRetries is recorded for the future retry feature. The MVP never
-	// retries automatically.
+	// MaxRetries is how many more attempts the run may make when one fails
+	// in a way another try can fix — the checks ran and failed, or the agent
+	// stopped early. Each retry continues in the same worktree directory and
+	// agent session (internal/worker/retry.go). Zero means no retry.
 	MaxRetries int
 
 	RequiresApproval bool

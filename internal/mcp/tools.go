@@ -119,6 +119,7 @@ type CreateTaskInput struct {
 	Agent              string `json:"agent,omitempty" jsonschema:"agent to use; defaults to the configured one (build)"`
 	Priority           int    `json:"priority,omitempty" jsonschema:"higher runs first; defaults to 0"`
 	RequiresApproval   bool   `json:"requires_approval,omitempty" jsonschema:"when true the task will not run until a human approves it"`
+	MaxRetries         int    `json:"max_retries,omitempty" jsonschema:"how many more attempts aidev may make, 0 to 10, when an attempt fails in a way another try can fix (the checks ran and failed, or the agent stopped early). Each retry continues in the same worktree and agent session with the failure output in the prompt; defaults to 0, no retry"`
 	ExpectFailOnBase   bool   `json:"expect_fail_on_base,omitempty" jsonschema:"when true the verification commands run on the base commit before the agent starts; if they already pass there they cannot distinguish before from after, so the attempt fails with kind VERIFICATION and the agent is never called (for bug-fix tasks)"`
 	BaseRef            string `json:"base_ref,omitempty" jsonschema:"git ref the task's branch starts from; defaults to the repository's current branch"`
 	TimeoutSeconds     int    `json:"timeout_seconds,omitempty" jsonschema:"bound this task's agent run; defaults to the configured timeout"`
@@ -170,6 +171,7 @@ func (s *Server) createTask(ctx context.Context, _ *sdk.CallToolRequest, in Crea
 		VerificationMode:         in.VerificationMode,
 		RequiresApproval:         in.RequiresApproval,
 		ExpectFailOnBase:         in.ExpectFailOnBase,
+		MaxRetries:               in.MaxRetries,
 		BaseRef:                  in.BaseRef,
 		Hardness:                 in.Hardness,
 		Model:                    in.Model,

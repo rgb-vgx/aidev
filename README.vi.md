@@ -344,6 +344,14 @@ git diff main..aidev/TASK-000001
 
 Không có gì được hợp nhất, và không có gì bao giờ được commit lên nhánh làm việc của bạn.
 
+Một task được tạo với `--max-retries N` (MCP: `max_retries`) có thêm tối đa N lần
+thử khi các lệnh kiểm tra thất bại hoặc agent dừng sớm. Mỗi lần thử lại tiếp tục
+trong cùng worktree và cùng phiên agent, kèm output lỗi trong prompt; công việc
+của lần thử hỏng được commit, đánh dấu là chưa kiểm chứng, lên nhánh riêng của nó,
+và lần thử kế tiếp làm trên `aidev/<ref>-a2`, `-a3`, v.v. Khi thành công, kết quả
+báo nhánh đó. Một lệnh gọi tool bị từ chối, một runner bị chặn hay một lần hết
+thời gian thì không bao giờ được thử lại.
+
 Một task thất bại để lại worktree của nó nguyên vẹn đúng như agent đã bỏ lại, nằm dưới
 `workspace_root`, vì công việc dở dang thường là thứ hữu ích nhất của một thất bại.
 `git worktree remove` từ chối xóa công việc chưa commit và aidev không bao giờ

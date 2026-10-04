@@ -1,0 +1,41 @@
+{{- if not .Resumed -}}
+{{ .Task }}
+
+---
+
+{{ end -}}
+# Attempt {{ .Attempt }} of task {{ .Ref }}
+
+Your previous attempt did not succeed. {{ .Reason }}
+
+{{ if .Error -}}
+What aidev recorded:
+
+    {{ .Error }}
+
+{{ end -}}
+{{ if .FailedSteps -}}
+These verification commands failed. Their output is cut to the end, which is
+where the reason usually is:
+{{ range .FailedSteps }}
+## `{{ .Command }}` — {{ .Outcome }}
+{{ if .Output }}
+```
+{{ .Output }}
+```
+{{ end -}}
+{{ end }}
+{{ end -}}
+You are in the same worktree as before. Every file your previous attempt wrote is
+still here, committed to that attempt's branch; continue from it rather than
+starting over, and fix what made it fail.
+
+When you stop, these commands will be run again, in this worktree, and only their
+exit codes decide the outcome:
+
+{{ range .Verification }}  - {{ . }}
+{{ end }}
+Run them yourself and keep working until they pass. Do not end your turn with a
+statement of what you will do next: do it. The rules of the task still apply —
+in particular, do not commit, change the branch, or touch anything outside this
+worktree.

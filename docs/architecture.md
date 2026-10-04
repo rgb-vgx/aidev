@@ -164,6 +164,12 @@ something failed* without the domain knowing anything about OpenCode.
    (WORKTREE), RETAINED)
   VERIFYING ──▶ SUCCEEDED
   remove worktree
+
+  With max_retries left, a failed check or an agent that stopped early (not a
+  refused tool call) does not end the task: the attempt is FAILED, its work is
+  committed (unverified) to its branch, the task goes back to READY, and the run
+  opens the next attempt in the same directory on aidev/<ref>-aN
+  ── see "Automatic retry" below.
 ```
 
 Three properties of this flow are worth stating separately, because they are what
@@ -182,6 +188,51 @@ the database.
 does not succeed is the expected case, and the caller needs the record rather than
 an exception. `RunTask` returns an error only when it could not conduct the run at
 all.
+
+## Automatic retry
+
+Designed with the user on 2026-09-17, after a task whose agent stopped early had
+to be retried by hand. A task's `max_retries` (0 to 10, default 0) is how many
+more attempts one run may make when an attempt fails in a way another try can fix:
+
+- the verification commands ran and at least one failed (`VERIFICATION`) — but not
+  a refusal to run them (interception, protected paths), which another try would
+  not change;
+- the agent stopped early (`AGENT_EXIT`, `AGENT_ERROR`) — unless a tool call was
+  refused, because a refusal ends the session and the same session would be
+  refused again (`agent.ErrToolRefused`).
+
+Cancellation, timeouts (an attempt that ran out of time would most likely do so
+again, at the same cost), containment breaches, worktree and internal errors and a
+passing base check are never retried.
+
+The next attempt continues in **the same worktree directory**, because an OpenCode
+session can only be continued in the directory it was created in
+(docs/research.md §2.12):
+
+1. The failed attempt's work — the snapshot taken when its agent finished, when
+   there is one — is committed to that attempt's branch with a message marking it
+   unverified, and the directory is reset to that commit, so whatever the failed
+   checks wrote does not ride into the next commit (research A6).
+2. In one transaction: the attempt is finished `FAILED` with its kind, its worktree
+   record becomes `REUSED` with the partial commit as head, `task.retry_scheduled`
+   is appended, and the task moves `RUNNING`/`VERIFYING → READY`. A Cancel that
+   landed first wins, as everywhere.
+3. The run opens the next attempt (`READY → RUNNING`, a new attempt row and
+   lease — the cancel watch follows it), creates `aidev/<ref>-aN` at the partial
+   commit with plumbing (`git branch`, `git symbolic-ref`; no hooks, no checkout),
+   records a new worktree row for the same path, and takes a fresh containment
+   baseline. The base check is not repeated; changed paths are still measured from
+   the task's original base, so interception sees a runner any attempt rewrote.
+4. The agent's session is continued (`-s`) with `prompts/retry_task.tmpl`: which
+   attempt this is, why the last one failed, the tail of each failing check's
+   output, and the commands that will judge it. With no session to continue, the
+   whole task prompt comes first.
+
+`FAILED` stays terminal: a task that retries never passes through it. The success
+branch is the last attempt's, which the result names; its history holds the earlier
+attempts' unverified commits. The CLI's total deadline grows with `max_retries`,
+since every attempt runs inside the one `aidev task run` process.
 
 ## Cleanup policy
 
@@ -428,14 +479,13 @@ place a listed future feature plugs in without a rewrite.
 
 | Future feature | Seam that already exists |
 |---|---|
-| Retry | `task_attempts` is append-only with numbered attempts; `max_retries` is stored; `worker_runs.session_id` records the resumable agent session; worktree and branch names already include the attempt number so a second attempt cannot collide with the first. Only the `FAILED → READY` edge and a policy are missing. |
 | Concurrent workers | `tasks_ready_claim_idx` matches a `FOR UPDATE SKIP LOCKED` claim; status changes are already compare-and-set. |
 | Another agent backend | `agent.Backend`; orchestration never names a backend. Codex was added exactly this way (`internal/agent/codex.go`, selected with `agent.backend` set to `"codex"`) and is **paused since 2026-09-15**: OpenCode is the backend in use. The code and its tests stay, so resuming is a configuration change. Codex took 6–8 minutes on trivial tasks and, in TASK-000029, read another project's virtualenv outside its worktree. A server-mode OpenCode backend would be another new file in `internal/agent`. |
 | Sandboxed agent execution | `internal/procexec` is the one place processes start, and `agent.Request.WorkingDir` is the only path an agent is given, so containing the agent is a change to how a backend launches. Verification stays local whatever happens: a remote exit code is not aidev's own measurement (docs/opensandbox.md). **Parked as a future feature on 2026-09-15** — tasks are not yet complex enough to need it. Unmeasured: a worktree's `.git` file points into the main repository, so a container would need both mounted. |
 | Dependency DAG | `PENDING` exists as "not yet eligible"; the eligibility check is the hook. |
 | Observability / event-driven features | `events.seq` gives every event a position, and `AppendEvent` takes a per-task advisory lock so that within a task the sequence order is also the commit order: a consumer can resume from a cursor without missing an event. Across tasks the order is allocation order, not commit order. |
 | Approval workflows | `approvals` with one-pending-per-task, plus `WAITING_APPROVAL` in the state machine. |
-| Merge | every successful task leaves a reviewable commit on `aidev/<ref>`, and `worktrees` records branch, base commit and head commit; nothing merges yet, by design. |
+| Merge | every successful task leaves a reviewable commit on its branch (`aidev/<ref>`, or `aidev/<ref>-aN` after a retry), and `worktrees` records branch, base commit and head commit; nothing merges yet, by design. |
 
 Deliberately **not** present: a scheduler, a DAG executor, automatic merge, a web
 dashboard, authentication, Redis, Kafka, Kubernetes, or an LLM inside aidev.
@@ -697,7 +747,6 @@ Stated plainly so that nobody has to infer it from absence.
 
 | Not implemented | Where the seam is |
 |---|---|
-| Automatic retry | attempts are numbered and appended, `max_retries` is stored, the agent session id is recorded, and branch and worktree names already carry the attempt number. Only the `FAILED → READY` edge and a policy are missing. |
 | Concurrent workers | status changes are compare-and-set and `tasks_ready_claim_idx` matches a `FOR UPDATE SKIP LOCKED` claim, and the lease columns exist so a crashed worker's task can be recognised. What is missing is the claim itself becoming a lease: taking a task must write an owner the way `startAttempt` does, not only a status. |
 | Dependency graphs | `PENDING` exists as "not yet eligible"; the eligibility check in `becomeReady` is the hook. |
 | Merging | a successful task leaves a reviewable commit on its own branch. Nothing merges it, by design. |

@@ -57,7 +57,7 @@ aidev migrate --json</code></pre>
 <tr><td><code>--acceptance A</code></td><td>What done looks like, in prose.</td></tr>
 <tr><td><code>--agent NAME</code></td><td>Agent to use. Default: the <code>agent.opencode.agent</code> setting, which is <code>build</code>. aidev validates the name itself because OpenCode silently falls back to its default on an unknown name and still exits zero.</td></tr>
 <tr><td><code>--priority N</code></td><td>Higher runs first. Default 0. Range -1000 to 1000.</td></tr>
-<tr><td><code>--max-retries N</code></td><td>Recorded for a future retry feature. The current version never retries.</td></tr>
+<tr><td><code>--max-retries N</code></td><td>0 to 10, default 0. When the checks ran and failed, or the agent stopped early, aidev tries up to N more times within the same run: the failed attempt's work is committed (marked unverified) to its own branch, and the next attempt continues in the same worktree and agent session on <code>aidev/&lt;ref&gt;-aN</code> with the failing output in its prompt. A refused tool call, an intercepted runner or a timeout is never retried.</td></tr>
 <tr><td><code>--requires-approval</code></td><td>Gate the task behind a human decision. It will wait in WAITING_APPROVAL until approved.</td></tr>
 <tr><td><code>--base-ref REF</code></td><td>Git ref to branch from. Default: the project's default branch. Checked now rather than at worktree creation.</td></tr>
 <tr><td><code>--timeout DURATION</code></td><td>Bound this task's agent run, for example <code>60m</code>. Default: <code>tasks.timeout</code>.</td></tr>
@@ -162,6 +162,7 @@ aidev worktree remove TASK-000001 --force</code></pre>
 <tr><td><code>task.succeeded</code></td><td>Verification passed and the task reached SUCCEEDED.</td></tr>
 <tr><td><code>task.failed</code></td><td>The attempt failed, with the failure kind in the payload.</td></tr>
 <tr><td><code>task.cancelled</code></td><td>A human or a shutdown cancelled the task, with the reason in the payload.</td></tr>
+<tr><td><code>task.retry_scheduled</code></td><td>An attempt failed in a way another try can fix (its checks ran and failed, or the agent stopped early) and the task has retries left: the attempt is recorded as failed, the task returns to READY, and the next attempt starts in the same worktree. The payload records <code>attempt</code>, <code>next_attempt</code>, <code>failure_kind</code>, <code>error</code>, the attempt's <code>branch</code> and its unverified <code>partial_commit</code>.</td></tr>
 <tr><td><code>task.worktree_created</code></td><td>The isolated worktree was created for the attempt.</td></tr>
 <tr><td><code>task.worktree_removed</code></td><td>The worktree was removed, on success or by an operator with <code>aidev worktree remove</code>.</td></tr>
 <tr><td><code>task.worktree_retained</code></td><td>The worktree was kept for inspection after failure or cancellation.</td></tr>

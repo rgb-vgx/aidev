@@ -57,7 +57,7 @@ aidev migrate --json</code></pre>
 <tr><td><code>--acceptance A</code></td><td>Xong trông ra sao, viết bằng văn xuôi.</td></tr>
 <tr><td><code>--agent NAME</code></td><td>Agent dùng. Mặc định: thiết lập <code>agent.opencode.agent</code>, tức là <code>build</code>. aidev tự kiểm tra tên vì OpenCode lặng lẽ dùng mặc định khi gặp tên lạ mà vẫn thoát 0.</td></tr>
 <tr><td><code>--priority N</code></td><td>Số lớn chạy trước. Mặc định 0. Từ -1000 tới 1000.</td></tr>
-<tr><td><code>--max-retries N</code></td><td>Ghi nhận cho tính năng chạy lại sau này. Bản hiện tại không bao giờ chạy lại.</td></tr>
+<tr><td><code>--max-retries N</code></td><td>Từ 0 đến 10, mặc định 0. Khi các lệnh kiểm tra đã chạy và thất bại, hoặc agent dừng sớm, aidev thử thêm tối đa N lần ngay trong cùng lần chạy: công việc của lần hỏng được commit (đánh dấu chưa kiểm chứng) lên nhánh riêng của nó, và lần kế tiếp tiếp tục trong cùng worktree và cùng phiên agent trên <code>aidev/&lt;ref&gt;-aN</code>, kèm output lỗi trong prompt. Lệnh gọi tool bị từ chối, runner bị chặn hay hết thời gian thì không bao giờ được thử lại.</td></tr>
 <tr><td><code>--requires-approval</code></td><td>Giữ task sau cửa quyết định của con người. Nó sẽ chờ ở WAITING_APPROVAL cho tới khi được duyệt.</td></tr>
 <tr><td><code>--base-ref REF</code></td><td>Git ref để tách nhánh. Mặc định: nhánh mặc định của project. Kiểm tra ngay lúc này chứ không đợi tới khi tạo worktree.</td></tr>
 <tr><td><code>--timeout DURATION</code></td><td>Giới hạn lần chạy agent của task này, ví dụ <code>60m</code>. Mặc định: <code>tasks.timeout</code>.</td></tr>
@@ -162,6 +162,7 @@ aidev worktree remove TASK-000001 --force</code></pre>
 <tr><td><code>task.succeeded</code></td><td>Verification qua và task tới SUCCEEDED.</td></tr>
 <tr><td><code>task.failed</code></td><td>Lần chạy thất bại, với loại thất bại trong payload.</td></tr>
 <tr><td><code>task.cancelled</code></td><td>Con người hoặc hệ thống tắt ngang hủy task, với lý do trong payload.</td></tr>
+<tr><td><code>task.retry_scheduled</code></td><td>Một attempt thất bại theo cách mà lần thử khác có thể sửa (các lệnh kiểm tra đã chạy và thất bại, hoặc agent dừng sớm) và task còn lượt thử lại: attempt được ghi là thất bại, task quay về READY, và attempt kế tiếp bắt đầu trong cùng worktree. Payload ghi <code>attempt</code>, <code>next_attempt</code>, <code>failure_kind</code>, <code>error</code>, <code>branch</code> của attempt và <code>partial_commit</code> chưa kiểm chứng của nó.</td></tr>
 <tr><td><code>task.worktree_created</code></td><td>Worktree tách biệt được tạo cho attempt.</td></tr>
 <tr><td><code>task.worktree_removed</code></td><td>Worktree bị xóa, khi thành công hoặc khi người vận hành chạy <code>aidev worktree remove</code>.</td></tr>
 <tr><td><code>task.worktree_retained</code></td><td>Worktree được giữ lại để xem xét sau thất bại hoặc hủy.</td></tr>
