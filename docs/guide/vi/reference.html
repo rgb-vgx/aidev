@@ -156,9 +156,13 @@ aidev worktree remove TASK-000001 --force</code></pre>
 <tr><td><code>task.verification_started</code></td><td>aidev bắt đầu chạy các lệnh verification của task.</td></tr>
 <tr><td><code>task.verification_step_completed</code></td><td>Một bước verification xong, với lệnh và mã thoát của nó.</td></tr>
 <tr><td><code>task.verification_completed</code></td><td>Lượt verification xong, với số bước qua.</td></tr>
+<tr><td><code>task.verification_intercepted</code></td><td>Agent đã sửa runner verification, nên verification không chạy lần nào; lần chạy FAILED với loại VERIFICATION.</td></tr>
+<tr><td><code>task.verification_tests_modified</code></td><td>Lần chạy đã sửa các file giống test đang chấm nó. Đây là báo cáo cho người review, không phải kết luận: sửa test không làm run thất bại.</td></tr>
 <tr><td><code>task.approval_required</code></td><td>Task bị giữ sau quyết định của con người.</td></tr>
 <tr><td><code>task.approval_granted</code></td><td>Con người duyệt task; nó sang READY.</td></tr>
 <tr><td><code>task.approval_denied</code></td><td>Con người từ chối task; nó sang FAILED với loại APPROVAL_DENIED.</td></tr>
+<tr><td><code>task.containment_breach</code></td><td>Agent sửa trạng thái chia sẻ với repo chính; lần chạy FAILED với loại CONTAINMENT.</td></tr>
+<tr><td><code>task.shared_refs_changed</code></td><td>Một git ref ngoài nhánh của task đã di chuyển khi chạy — một cảnh báo tự nó, vì đó có thể là task khác chứ không phải agent.</td></tr>
 </table>
 
 <pre><code>aidev task events TASK-000001 --payload

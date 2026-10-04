@@ -547,11 +547,12 @@ func (s *Server) buildResult(ctx context.Context, st *store.Store, taskID uuid.U
 	}
 
 	var (
-		attempt   *task.TaskAttempt
-		workerRun *task.WorkerRun
-		worktree  *task.Worktree
-		approval  *task.Approval
-		runs      []task.VerificationRun
+		attempt       *task.TaskAttempt
+		workerRun     *task.WorkerRun
+		worktree      *task.Worktree
+		approval      *task.Approval
+		runs          []task.VerificationRun
+		testsModified []string
 	)
 
 	latest, err := st.LatestAttempt(ctx, taskID)
@@ -564,6 +565,11 @@ func (s *Server) buildResult(ctx context.Context, st *store.Store, taskID uuid.U
 		}
 		if wt, err := st.GetWorktreeByAttempt(ctx, latest.ID); err == nil {
 			worktree = &wt
+		}
+		// Best-effort, like the approval read below: the report is a courtesy
+		// to the reader and must not decide whether the result can be shown.
+		if tests, err := st.TestsModifiedPaths(ctx, taskID, latest.ID); err == nil {
+			testsModified = tests
 		}
 	case errors.Is(err, store.ErrNotFound):
 		// Never run: the absent sections say so.
@@ -579,7 +585,7 @@ func (s *Server) buildResult(ctx context.Context, st *store.Store, taskID uuid.U
 	if attempt != nil && attempt.Error != "" {
 		message = attempt.Error
 	}
-	return view.NewResult(t, attempt, workerRun, runs, worktree, approval, message, includeOutput), nil
+	return view.NewResult(t, attempt, workerRun, runs, worktree, approval, testsModified, message, includeOutput), nil
 }
 
 // startRun begins a background execution, or joins one already in flight.

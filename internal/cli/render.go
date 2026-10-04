@@ -90,6 +90,11 @@ func writeRunOutcome(env *Env, outcome worker.Outcome, runs []task.VerificationR
 		}
 		fmt.Fprintln(w)
 		fmt.Fprintf(w, "  changed files %d\n", r.ChangedFiles)
+		if len(outcome.TestsModified) > 0 {
+			// A report for the reviewer: what passed may have been written in
+			// the same attempt (research §7b tier 1).
+			fmt.Fprintf(w, "  tests changed %s\n", strings.Join(outcome.TestsModified, ", "))
+		}
 		fmt.Fprintf(w, "  took          %s\n", r.Duration().Round(time.Second))
 		if r.Summary != "" {
 			// The agent's own account, shown because it helps diagnosis and
@@ -137,6 +142,9 @@ func writeResult(env *Env, outcome worker.Outcome, runs []task.VerificationRun) 
 	if outcome.WorkerRun != nil {
 		r := outcome.WorkerRun
 		fmt.Fprintf(w, "\nagent (%s)  %s  %d file(s) changed\n", r.Backend, r.Status, r.ChangedFiles)
+		if len(outcome.TestsModified) > 0 {
+			fmt.Fprintf(w, "  tests  %s\n", strings.Join(outcome.TestsModified, ", "))
+		}
 		if r.Summary != "" {
 			fmt.Fprintf(w, "  says  %s\n", truncate(oneLine(r.Summary), 140))
 		}

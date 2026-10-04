@@ -163,6 +163,12 @@ type Outcome struct {
 	// Approval is set when the run stopped at the approval gate.
 	Approval *task.Approval
 
+	// TestsModified lists the changed paths that look like the tests judging
+	// the attempt (research §7b tier 1). It is a report, not a verdict: the
+	// run is judged as usual. Empty when the attempt left the tests alone or
+	// never reached verification.
+	TestsModified []string
+
 	// Message is a one-line human summary of the outcome.
 	Message string
 }
@@ -350,6 +356,10 @@ type run struct {
 
 	workerRun *task.WorkerRun
 	report    *verification.Report
+
+	// testsModified is set in verify when the changed paths include the tests
+	// judging the attempt, and rides along in the outcome (research §7b tier 1).
+	testsModified []string
 
 	// failureKind records how the run failed for the trace. It stays
 	// FailureNone when the run succeeded or has not failed yet.
@@ -1047,6 +1057,17 @@ func (r *run) verify(ctx context.Context) (Outcome, error) {
 		return r.fail(ctx, task.FailureInternal,
 			fmt.Errorf("verification not run: cannot establish independence: %w", err))
 	}
+
+	// Report the edited tests before the interception check: an attempt that
+	// edited tests and was then caught still edited them, and a reviewer needs
+	// that. The classifier only reports — it never decides the outcome
+	// (research §7b tier 1); refusing a run for touching a test path is the
+	// separate protected_paths decision (tier 2).
+	if paths := verification.TestPaths(changed); len(paths) > 0 {
+		r.testsModified = paths
+		r.emit(ctx, event.TypeVerificationTestsModified, map[string]any{"paths": paths})
+	}
+
 	if intercepted := verification.Interceptions(r.task.Verification, changed); len(intercepted) > 0 {
 		span.SetAttributes(attribute.Bool("aidev.verification.passed", false))
 		r.emit(ctx, event.TypeVerificationIntercepted, map[string]any{
@@ -1449,12 +1470,13 @@ func (r *run) emit(ctx context.Context, evType event.Type, payload any) {
 func (r *run) outcome(message string) Outcome {
 	attempt := r.attempt
 	out := Outcome{
-		Task:         r.task,
-		Attempt:      &attempt,
-		WorkerRun:    r.workerRun,
-		Verification: r.report,
-		Worktree:     r.record,
-		Message:      message,
+		Task:          r.task,
+		Attempt:       &attempt,
+		WorkerRun:     r.workerRun,
+		Verification:  r.report,
+		Worktree:      r.record,
+		TestsModified: r.testsModified,
+		Message:       message,
 	}
 	return out
 }

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"aidev/internal/config"
+	"aidev/internal/event"
 )
 
 // Configuration moved into one conf.json named by AIDEV_CONFIG (TASK-000033). The
@@ -142,6 +143,25 @@ func TestReadmeOpensWithAQuickStart(t *testing.T) {
 		"AIDEV_CONFIG", "aidev doctor", "claude plugin marketplace add rgb-vgx/aidev", "claude plugin install aidev@aidev"} {
 		if !strings.Contains(section, want) {
 			t.Errorf("the quick start does not mention %s", want)
+		}
+	}
+}
+
+// debugging.html sends readers to the reference page for "the full vocabulary
+// of event types", so the table has to actually be the vocabulary: every type
+// the program can emit, in both languages (event type names are not translated).
+// The table had already lost three types before this check existed; the check
+// is what stops it losing more.
+func TestEventsReferenceListsEveryEventType(t *testing.T) {
+	for _, path := range []string{
+		"../../docs/guide/reference.html",
+		"../../docs/guide/vi/reference.html",
+	} {
+		text := readDoc(t, path)
+		for _, typ := range event.AllTypes() {
+			if !strings.Contains(text, string(typ)) {
+				t.Errorf("%s does not document the event type %s", filepath.Base(path), typ)
+			}
 		}
 	}
 }

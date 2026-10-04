@@ -8,6 +8,7 @@ package event
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -40,6 +41,11 @@ const (
 	TypeVerificationStepRan     Type = "task.verification_step_completed"
 	TypeVerificationCompleted   Type = "task.verification_completed"
 	TypeVerificationIntercepted Type = "task.verification_intercepted"
+	// TypeVerificationTestsModified reports that the attempt changed files that
+	// look like the tests judging it (research §7b tier 1). It is a report, not
+	// a verdict: the run is judged as usual, and a reviewer can see that what
+	// passed was also written in the same attempt.
+	TypeVerificationTestsModified Type = "task.verification_tests_modified"
 
 	// Approval policy.
 	TypeApprovalRequired Type = "task.approval_required"
@@ -64,7 +70,7 @@ func AllTypes() []Type {
 		TypeWorktreeCreated, TypeWorktreeRemoved, TypeWorktreeRetained,
 		TypeWorkerStarted, TypeWorkerCompleted,
 		TypeVerificationStarted, TypeVerificationStepRan, TypeVerificationCompleted,
-		TypeVerificationIntercepted,
+		TypeVerificationIntercepted, TypeVerificationTestsModified,
 		TypeApprovalRequired, TypeApprovalGranted, TypeApprovalDenied,
 		TypeContainmentBreach, TypeSharedRefsChanged,
 	}
@@ -72,12 +78,7 @@ func AllTypes() []Type {
 
 // Valid reports whether t is a known event type.
 func (t Type) Valid() bool {
-	for _, v := range AllTypes() {
-		if t == v {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(AllTypes(), t)
 }
 
 func (t Type) String() string { return string(t) }

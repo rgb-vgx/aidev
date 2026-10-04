@@ -156,9 +156,13 @@ aidev worktree remove TASK-000001 --force</code></pre>
 <tr><td><code>task.verification_started</code></td><td>aidev began running the task's verification commands.</td></tr>
 <tr><td><code>task.verification_step_completed</code></td><td>One verification step finished, with its command and exit code.</td></tr>
 <tr><td><code>task.verification_completed</code></td><td>The verification pass finished, with the count of passed steps.</td></tr>
+<tr><td><code>task.verification_intercepted</code></td><td>The agent had changed a verification runner, so verification did not run at all; the attempt fails with kind VERIFICATION.</td></tr>
+<tr><td><code>task.verification_tests_modified</code></td><td>The attempt changed files that look like the tests judging it. A report for the reviewer, not a verdict: editing a test does not fail the run.</td></tr>
 <tr><td><code>task.approval_required</code></td><td>The task was gated behind a human decision.</td></tr>
 <tr><td><code>task.approval_granted</code></td><td>A human approved the task; it becomes READY.</td></tr>
 <tr><td><code>task.approval_denied</code></td><td>A human denied the task; it becomes FAILED with kind APPROVAL_DENIED.</td></tr>
+<tr><td><code>task.containment_breach</code></td><td>The agent modified state shared with the main repository; the attempt fails with kind CONTAINMENT.</td></tr>
+<tr><td><code>task.shared_refs_changed</code></td><td>A git ref outside the task's own branch moved during the run — a warning on its own, because it can be another task rather than the agent.</td></tr>
 </table>
 
 <pre><code>aidev task events TASK-000001 --payload

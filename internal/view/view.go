@@ -219,7 +219,11 @@ type Result struct {
 	Verification []Verification `json:"verification,omitempty" jsonschema:"the verification aidev ran; this alone decides success"`
 	Worktree     *Worktree      `json:"worktree,omitempty" jsonschema:"the isolated checkout used"`
 	Approval     *Approval      `json:"approval,omitempty" jsonschema:"the most recent approval record"`
-	Message      string         `json:"message,omitempty" jsonschema:"one-line human summary of the outcome"`
+	// TestsModified is a report, not a verdict: editing a test does not fail
+	// the run, but a reviewer must be able to see that what passed was also
+	// written in the same attempt (research §7b tier 1).
+	TestsModified []string `json:"tests_modified,omitempty" jsonschema:"changed paths that look like the tests judging this attempt; a report so a reviewer can see that what passed was also written in the same attempt"`
+	Message       string   `json:"message,omitempty" jsonschema:"one-line human summary of the outcome"`
 }
 
 // Event is one entry of a task's history.
@@ -295,6 +299,7 @@ func NewResult(
 	runs []task.VerificationRun,
 	worktree *task.Worktree,
 	approval *task.Approval,
+	testsModified []string,
 	message string,
 	includeOutput bool,
 ) Result {
@@ -313,6 +318,9 @@ func NewResult(
 	}
 	if approval != nil {
 		result.Approval = NewApproval(*approval)
+	}
+	if len(testsModified) > 0 {
+		result.TestsModified = testsModified
 	}
 	return result
 }

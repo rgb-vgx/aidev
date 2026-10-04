@@ -398,6 +398,11 @@ func taskResult(ctx context.Context, env *Env, args []string) error {
 	case err == nil:
 		outcome.Attempt = &attempt
 		runs, _ = app.store.ListVerificationRuns(ctx, attempt.ID)
+		// Best-effort, like the approval read below: the report is a courtesy
+		// to the reader and must not decide whether the result can be shown.
+		if tests, err := app.store.TestsModifiedPaths(ctx, t.ID, attempt.ID); err == nil {
+			outcome.TestsModified = tests
+		}
 
 		if workerRuns, err := app.store.ListWorkerRuns(ctx, attempt.ID); err == nil && len(workerRuns) > 0 {
 			latest := workerRuns[len(workerRuns)-1]
@@ -590,7 +595,7 @@ func statusNames() []string {
 }
 
 func buildResultView(outcome worker.Outcome, runs []task.VerificationRun, includeOutput bool) view.Result {
-	return view.NewResult(outcome.Task, outcome.Attempt, outcome.WorkerRun, runs, outcome.Worktree, outcome.Approval, outcome.Message, includeOutput)
+	return view.NewResult(outcome.Task, outcome.Attempt, outcome.WorkerRun, runs, outcome.Worktree, outcome.Approval, outcome.TestsModified, outcome.Message, includeOutput)
 }
 
 // exitError carries a specific exit status without being an error message.

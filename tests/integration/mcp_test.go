@@ -265,6 +265,11 @@ func TestMCPHappyPath(t *testing.T) {
 	if !strings.Contains(run.NextStep, "branch") {
 		t.Errorf("next_step = %q, want it to point at the branch", run.NextStep)
 	}
+	// The agent touched only marker.txt: no test path changed, so the report
+	// must be absent rather than present and empty (research §7b tier 1).
+	if _, present := run.Result["tests_modified"]; present {
+		t.Errorf("tests_modified = %v, want the key absent when no test path changed", run.Result["tests_modified"])
+	}
 
 	// The result is readable back through a separate tool, which is what a
 	// planner does after a long run.

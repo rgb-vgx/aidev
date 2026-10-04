@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -120,6 +121,43 @@ func (s *Store) ListEvents(ctx context.Context, filter EventFilter) ([]event.Eve
 		return nil, fmt.Errorf("list events for task %s: %w", filter.TaskID, classify(err))
 	}
 	return events, nil
+}
+
+// TestsModifiedPaths returns the changed paths that looked like the tests
+// judging an attempt, as recorded by task.verification_tests_modified during
+// verification. It reads that attempt's newest such event, so a future retry
+// replaces the earlier report rather than appending to it. ErrNotFound when
+// the attempt never recorded one — an attempt that left the tests alone.
+//
+// This is how a process that did not run the task answers the same question
+// the in-process Outcome carries, so every surface reports the same thing.
+func (s *Store) TestsModifiedPaths(ctx context.Context, taskID, attemptID uuid.UUID) ([]string, error) {
+	if taskID == uuid.Nil {
+		return nil, fmt.Errorf("tests modified: a task id is required")
+	}
+	if attemptID == uuid.Nil {
+		return nil, fmt.Errorf("tests modified: an attempt id is required")
+	}
+
+	var payload []byte
+	err := s.db.QueryRow(ctx, `
+		SELECT payload
+		FROM events
+		WHERE task_id = $1 AND attempt_id = $2 AND type = $3
+		ORDER BY seq DESC
+		LIMIT 1`,
+		taskID, attemptID, event.TypeVerificationTestsModified).Scan(&payload)
+	if err != nil {
+		return nil, fmt.Errorf("tests modified for attempt %s: %w", attemptID, classify(err))
+	}
+
+	var decoded struct {
+		Paths []string `json:"paths"`
+	}
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		return nil, fmt.Errorf("tests modified for attempt %s: payload is not decodable: %w", attemptID, err)
+	}
+	return decoded.Paths, nil
 }
 
 func scanEvent(row scanner) (event.Event, error) {
