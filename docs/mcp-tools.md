@@ -68,6 +68,14 @@ reads or writes PostgreSQL), `workspace_root` (where a run isolates its worktree
 log line goes to stderr. A test asserts the logger cannot break that rule, because
 one stray byte on stdout corrupts the JSON-RPC stream.
 
+**The first tool call also recovers dead runs.** The database connects lazily, and
+once it does, the server cancels tasks whose lease has expired — the ones a killed
+`aidev task run` left `RUNNING` (see [the architecture notes](architecture.md#when-a-run-is-interrupted)).
+A planner reconnecting after a restart therefore never inherits them. The pass is
+bounded and best-effort: its outcome goes to stderr, and a failure never stops the
+server from answering tools. `aidev task recover --dry-run` shows the same list
+from the terminal.
+
 ## How the tools fit together
 
 ```text

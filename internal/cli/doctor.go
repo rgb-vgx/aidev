@@ -53,6 +53,24 @@ func runDoctor(ctx context.Context, env *Env, args []string) error {
 			}
 			return db.PendingMigrations(pendingCtx, loaded)
 		},
+		StuckTasks: func(stuckCtx context.Context, databaseURL string) ([]string, error) {
+			connectCtx, cancel := context.WithTimeout(stuckCtx, 10*time.Second)
+			defer cancel()
+			db, err := store.Open(connectCtx, databaseURL)
+			if err != nil {
+				return nil, err
+			}
+			defer db.Close()
+			stuck, err := db.StuckLeases(stuckCtx)
+			if err != nil {
+				return nil, err
+			}
+			descriptions := make([]string, 0, len(stuck))
+			for _, s := range stuck {
+				descriptions = append(descriptions, fmt.Sprintf("%s (%s)", s.TaskRef, s.Status))
+			}
+			return descriptions, nil
+		},
 		CheckWorkspace: func(dir string) error {
 			if err := os.MkdirAll(dir, 0o755); err != nil {
 				return err

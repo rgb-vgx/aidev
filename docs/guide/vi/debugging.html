@@ -27,7 +27,7 @@
 <tr><td>Task có vẻ kẹt hoặc chậm</td><td>Lịch sử event</td><td><code>aidev task events TASK-000001</code></td></tr>
 <tr><td>Chính aidev in lỗi</td><td>Log trên stderr</td><td>Chạy lại và đọc stderr; đặt <code>log_level</code> thành <code>debug</code> trong <code>conf.json</code></td></tr>
 <tr><td>Bạn muốn lấy các tập tin agent làm dở</td><td>Worktree được giữ lại</td><td><code>aidev worktree list</code></td></tr>
-<tr><td>Task kẹt ở RUNNING sau sự cố</td><td>Khôi phục bằng cách hủy</td><td><code>aidev task cancel TASK-000001 --reason "..."</code></td></tr>
+<tr><td>Task kẹt ở RUNNING sau sự cố</td><td>Khôi phục theo lease</td><td><code>aidev task recover --dry-run</code> rồi <code>aidev task recover</code></td></tr>
 <tr><td>Bạn cần thời gian từng chặng của cả lần chạy</td><td>Tracing</td><td>Đặt <code>tracing.endpoint</code> trong <code>conf.json</code> rồi xem trace</td></tr>
 </table>
 
@@ -225,9 +225,20 @@ aidev task run TASK-000001</code></pre>
 <section id="recovery">
 <h2>Khôi phục: task kẹt ở RUNNING sau sự cố</h2>
 
-<p>Nếu aidev bị diệt giữa lần chạy, bằng <code>kill -9</code>, gập laptop hay dừng container, task nằm lại ở RUNNING với attempt mở dở và worktree trên đĩa. Sẽ không có gì nhận lại nó. Task đang chạy thì không chạy được nữa, và aidev không biết liệu còn tiến trình nào khác đang làm nó không. aidev cố tình không tự cho task RUNNING quá hạn là chết: tuyên bố task đã chết trong khi tiến trình khác còn đang chạy nó thì tệ hơn nhiều so với việc để bạn tự hủy một cách có ý thức.</p>
+<p>Nếu aidev bị diệt giữa lần chạy, bằng <code>kill -9</code>, gập laptop hay dừng container, task nằm lại ở RUNNING với attempt mở dở và worktree trên đĩa. Sẽ không có gì nhận lại nó. Task đang chạy thì không chạy được nữa. Trong lúc chạy, attempt giữ một lease: chủ sở hữu dạng <code>hostname:pid:uuid</code> và hạn được đẩy ra phía trước mỗi vài giây bởi chính lần chạy. Tiến trình chết nên không đẩy nữa, và lease hết hạn — đó chính là bằng chứng phân biệt một lần chạy đã chết với lần mà tiến trình khác còn đang làm. Aidv không tự hủy theo giờ; lease được đọc khi bạn hỏi, qua <code>aidev task recover</code>, qua cảnh báo của <code>aidev doctor</code>, và qua máy chủ MCP khi nó vừa nối vào cơ sở dữ liệu.</p>
 
-<p>Đường về là hủy nó. Trước hết tìm task kẹt, rồi hủy kèm lý do:</p>
+<p>Đường về là khôi phục: lệnh đó hủy mọi task lease đã hết hạn, và chỉ những task đó:</p>
+
+<pre><code>aidev task recover --dry-run
+# liệt kê những task sẽ bị hủy, chưa hủy gì cả
+
+aidev task recover
+# hủy từng task lease hết hạn, đóng attempt mở dở,
+# giữ worktree lại, và ghi lease làm lý do</code></pre>
+
+<p>Dấu hiệu đúng: recover liệt kê từng task nó đã hủy kèm lý do <code>lease expired: owner …</code>, và <code>aidev worktree list</code> cho worktree ở RETAINED. Công việc dở dang còn nguyên và lịch sử task vẫn mạch lạc, với lần hủy ghi nối tiếp thành event mới. Task mà tiến trình còn sống thì lease còn ở tương lai và được bỏ qua, nên chạy recover khi một lần chạy đang diễn ra vẫn an toàn.</p>
+
+<p>Nếu task kẹt vì lý do khác — lease mà bạn biết là sai, hoặc lần chạy bạn muốn biến mất trước khi hết hạn — hãy tự hủy nó kèm lý do:</p>
 
 <pre><code>aidev task list --status RUNNING,VERIFYING
 # find every task that was executing when aidev died
@@ -235,7 +246,7 @@ aidev task run TASK-000001</code></pre>
 aidev task cancel TASK-000001 --reason "aidev was killed mid-run"
 # moves it to CANCELLED, closes the open attempt, retains the worktree</code></pre>
 
-<p>Dấu hiệu đúng: lệnh hủy báo task đã CANCELLED, và <code>aidev worktree list</code> cho worktree ở RETAINED. Công việc dở dang còn nguyên và lịch sử task vẫn mạch lạc, với lần hủy ghi nối tiếp thành event mới. Hủy task đã xong là lỗi, thông báo sẽ nói rõ vậy. Lý do hủy ghi vào lịch sử task nên hãy viết sao cho chính bạn sau này đọc vẫn hiểu.</p>
+<p>Cả hai đường đều kết thúc như nhau. Hủy task đã xong là lỗi, thông báo sẽ nói rõ vậy. Lý do hủy ghi vào lịch sử task nên hãy viết sao cho chính bạn sau này đọc vẫn hiểu.</p>
 
 <p>Hủy xong thì xem worktree được giữ lại như <a href="debugging.html#worktrees">phần worktrees</a> mô tả, rồi xóa bằng <code>aidev worktree remove</code> khi đã xong. Hãy tạo task mới, hoặc chạy lại từ trạng thái đã sửa, thay vì cố tiếp tục attempt đã hủy. Bản hiện tại không có tiếp tục: attempt chỉ ghi thêm và attempt đã hủy thì mãi mãi là đã hủy.</p>
 </section>
@@ -251,7 +262,7 @@ aidev task cancel TASK-000001 --reason "aidev was killed mid-run"
 <tr><td>Task chậm: mười phút chưa có kết quả</td><td>Gần như chắc chắn do model chứ không phải aidev. Phần của aidev được đo chỉ 0,2 giây trong khi agent tốn 9 tới 656 giây.</td><td>Xem <code>aidev task events TASK-000001</code> để biết đang ở chặng nào. Cân nhắc model nhanh hơn qua <code>agent.opencode.model</code> trong <code>conf.json</code>. Đừng rút ngắn timeout để chữa chậm.</td></tr>
 <tr><td><code>aidev task run</code> diệt agent vì quá giờ</td><td><code>tasks.timeout</code> hết trước khi agent xong.</td><td>Nâng timeout cho task bằng <code>--timeout 60m</code>, hoặc nâng <code>tasks.timeout</code> trong <code>conf.json</code>. Lần đầu chạy trên kho mã mới thường chậm.</td></tr>
 <tr><td><code>aidev worktree remove</code> bị từ chối</td><td>Worktree còn việc chưa commit, và git không cho vứt nếu thiếu <code>--force</code>.</td><td>Xem lại công việc trước. Rồi <code>aidev worktree remove TASK-000001 --force</code> để vứt một cách có chủ ý. Nhánh không ảnh hưởng gì cả hai cách.</td></tr>
-<tr><td>Task kẹt ở RUNNING sau khi aidev bị diệt</td><td>Tiến trình chết giữa lần chạy. Không có gì tự dọn, đó là chủ ý.</td><td><code>aidev task cancel TASK-000001 --reason "aidev was killed mid-run"</code>, rồi xem worktree được giữ lại.</td></tr>
+<tr><td>Task kẹt ở RUNNING sau khi aidev bị diệt</td><td>Tiến trình chết giữa lần chạy nên lease không được đẩy tiếp và đã hết hạn. Không có gì tự hủy theo giờ, đó là chủ ý.</td><td><code>aidev task recover --dry-run</code> để xem, rồi <code>aidev task recover</code>. Hoặc hủy từng task: <code>aidev task cancel TASK-000001 --reason "aidev was killed mid-run"</code>. Dù cách nào, hãy xem worktree được giữ lại.</td></tr>
 <tr><td>Verification hỏng kiểu "command not found"</td><td>Chương trình kiểm tra chưa cài trong môi trường aidev chạy lệnh.</td><td>Cài công cụ, hoặc sửa chính tả lệnh. Nhớ lệnh chạy không qua shell: pipe và chuyển hướng bị từ chối ngay khi phân tích.</td></tr>
 <tr><td>Thiếu log hoặc phiên MCP gãy</td><td>Có thứ gì đó ghi ra stdout ở chế độ MCP, hoặc bạn tìm log ở stdout.</td><td>Log luôn đi ra stderr. Ở chế độ MCP, stdout thuộc về giao thức. Đặt <code>log_level</code> thành <code>debug</code> trong <code>conf.json</code> rồi đọc stderr.</td></tr>
 <tr><td>Trace không hiện trong backend</td><td><code>tracing.endpoint</code> chưa đặt hoặc không tới được, hoặc bạn truy vấn endpoint đã bỏ.</td><td>Xác nhận khóa đã đặt trong <code>conf.json</code> mà <code>AIDEV_CONFIG</code> chỉ tới: <code>aidev config</code> cho biết aidev đã nhận gì. Với Jaeger thì xem cổng 16686. Với Langfuse v4 thì truy vấn endpoint observations bản v2 và kiểm tra mã trạng thái HTTP.</td></tr>

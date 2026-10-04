@@ -301,6 +301,7 @@ aidev task result <task> [--logs] [--json]
 aidev task events <task> [--payload] [--after SEQ] [--json]
 aidev task cancel <task> [--reason R] [--json]
 aidev task approve <task> [--deny] [--by WHO] [--reason R] [--json]
+aidev task recover [--dry-run] [--json]   # cancel tasks whose lease expired
 
 aidev project list  [--json]                      # các repository mà aidev đã chạy task
 aidev project approval [on|off] [--repo .]        # chặn mọi task của repo chờ người duyệt (chỉ ở CLI)
@@ -563,7 +564,7 @@ Hai ghi chú rút ra khi làm cho việc này chạy. Langfuse v4 đã bỏ `GET
 
 ## Khi có sự cố
 
-**Hãy bắt đầu với `aidev doctor`.** Lệnh này kiểm tra, theo thứ tự, rằng cấu hình đọc được, rằng git và agent đã cấu hình đã được cài, rằng cơ sở dữ liệu trả lời và đã được migration, và rằng `workspace_root` ghi được. Mỗi vấn đề đi kèm cách xử lý, mật khẩu cơ sở dữ liệu không bao giờ hiện ra, và lệnh thoát với mã 1 khi có gì đó hỏng. `aidev doctor --json` in cùng kết quả dưới dạng danh sách JSON; skill `aidev:doctor` của plugin đọc kết quả đó và sửa những gì nó sửa an toàn được.
+**Hãy bắt đầu với `aidev doctor`.** Lệnh này kiểm tra, theo thứ tự, rằng cấu hình đọc được, rằng git và agent đã cấu hình đã được cài, rằng cơ sở dữ liệu trả lời và đã được migration, rằng không có task nào kẹt với lease hết hạn, và rằng `workspace_root` ghi được. Mỗi vấn đề đi kèm cách xử lý, mật khẩu cơ sở dữ liệu không bao giờ hiện ra, và lệnh thoát với mã 1 khi có gì đó hỏng. `aidev doctor --json` in cùng kết quả dưới dạng danh sách JSON; skill `aidev:doctor` của plugin đọc kết quả đó và sửa những gì nó sửa an toàn được.
 
 ```bash
 aidev doctor
@@ -573,14 +574,14 @@ aidev doctor
 #       fix: Start PostgreSQL with `make db-up` in the aidev repository and ...
 ```
 
-**aidev bị tắt giữa lúc một task đang chạy.** Task kẹt ở `RUNNING`, và không có gì nhận lại nó nữa. Hãy hủy nó:
+**aidev bị tắt giữa lúc một task đang chạy.** Task kẹt ở `RUNNING`, và không có gì nhận lại nó nữa. Trong lúc chạy, attempt giữ một lease mà tiến trình đã chết không còn đẩy tiếp được nữa, nên hãy khôi phục các task lease đã hết:
 
 ```bash
-aidev task list --status RUNNING,VERIFYING
-aidev task cancel TASK-000001 --reason "aidev was killed mid-run"
+aidev task recover --dry-run
+aidev task recover
 ```
 
-Công việc dở dang được giữ lại. aidev cố ý không tự hết hạn một task `RUNNING` cũ — xem [lý do](docs/architecture.md#when-a-run-is-interrupted).
+Task mà tiến trình còn sống thì lease còn hiệu lực và được bỏ qua. Lệnh khôi phục ghi lease hết hạn làm lý do, đóng attempt đang mở, và giữ công việc dở dang lại. Bạn vẫn có thể tự hủy — `aidev task cancel TASK-000001 --reason "aidev was killed mid-run"` — và lý do không lệnh nào tự làm việc này theo giờ nằm trong [ghi chú kiến trúc](docs/architecture.md#when-a-run-is-interrupted).
 
 **Không gian làm việc đầy dần.** Các task thất bại cố ý giữ lại worktree của chúng:
 

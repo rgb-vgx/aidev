@@ -10,7 +10,8 @@ import (
 	"aidev/internal/task"
 )
 
-const attemptColumns = `id, task_id, attempt_number, status, failure_kind, error, started_at, finished_at`
+const attemptColumns = `id, task_id, attempt_number, status, failure_kind, error, started_at, finished_at,
+	lease_owner, lease_expires_at`
 
 // NextAttemptNumber returns the number the next attempt for a task should use.
 //
@@ -31,10 +32,12 @@ func (s *Store) NextAttemptNumber(ctx context.Context, taskID uuid.UUID) (int, e
 // CreateAttempt persists a new, running attempt.
 func (s *Store) CreateAttempt(ctx context.Context, a task.TaskAttempt) (task.TaskAttempt, error) {
 	row := s.db.QueryRow(ctx, `
-		INSERT INTO task_attempts (id, task_id, attempt_number, status, failure_kind, error, started_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7)
+		INSERT INTO task_attempts (id, task_id, attempt_number, status, failure_kind, error, started_at,
+			lease_owner, lease_expires_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
 		RETURNING `+attemptColumns,
-		a.ID, a.TaskID, a.AttemptNumber, string(a.Status), string(a.FailureKind), a.Error, a.StartedAt)
+		a.ID, a.TaskID, a.AttemptNumber, string(a.Status), string(a.FailureKind), a.Error, a.StartedAt,
+		a.LeaseOwner, a.LeaseExpiresAt)
 
 	created, err := scanAttempt(row)
 	if err != nil {
@@ -123,7 +126,8 @@ func scanAttempt(row scanner) (task.TaskAttempt, error) {
 		status string
 		kind   string
 	)
-	err := row.Scan(&a.ID, &a.TaskID, &a.AttemptNumber, &status, &kind, &a.Error, &a.StartedAt, &a.FinishedAt)
+	err := row.Scan(&a.ID, &a.TaskID, &a.AttemptNumber, &status, &kind, &a.Error, &a.StartedAt, &a.FinishedAt,
+		&a.LeaseOwner, &a.LeaseExpiresAt)
 	if err != nil {
 		return task.TaskAttempt{}, classify(err)
 	}
@@ -133,6 +137,102 @@ func scanAttempt(row scanner) (task.TaskAttempt, error) {
 		return task.TaskAttempt{}, fmt.Errorf("attempt %s has unrecognised status %q", a.ID, status)
 	}
 	return a, nil
+}
+
+// RenewLease extends an attempt's lease and returns the task's current status.
+//
+// One round trip does both, and that pairing is the point: the run's claim
+// stays alive only while the run also checks for a cancel, so a watcher that
+// renews is a watcher that polls and neither half can be dropped while the
+// other is observed. The data-modifying CTE runs exactly once even though the
+// main query does not read it, and the status comes from the task row whether
+// or not anything was renewed — a finished or foreign attempt reports its
+// task's status all the same, which is how the watcher learns the run ended
+// even after it stopped holding the lease itself.
+func (s *Store) RenewLease(ctx context.Context, attemptID uuid.UUID, owner string, ttl time.Duration) (task.Status, error) {
+	var status string
+	err := s.db.QueryRow(ctx, `
+		WITH renewed AS (
+			UPDATE task_attempts
+			SET lease_expires_at = now() + make_interval(secs => $3::double precision)
+			WHERE id = $1 AND lease_owner = $2 AND status = 'RUNNING'
+			RETURNING id
+		)
+		SELECT t.status
+		FROM tasks t
+		JOIN task_attempts a ON a.task_id = t.id
+		WHERE a.id = $1`,
+		attemptID, owner, ttl.Seconds()).Scan(&status)
+	if err != nil {
+		return "", fmt.Errorf("renew lease on attempt %s: %w", attemptID, classify(err))
+	}
+	parsed, err := task.ParseStatus(status)
+	if err != nil {
+		return "", fmt.Errorf("renew lease on attempt %s: task has unrecognised status: %w", attemptID, err)
+	}
+	return parsed, nil
+}
+
+// StuckAttempt is a task still RUNNING or VERIFYING whose latest attempt has
+// no live lease: the process that owned it is gone, or never claimed it.
+// LeaseExpiresAt is nil when the lease was never set and LeaseOwner empty when
+// nobody ever reported in.
+type StuckAttempt struct {
+	TaskID         uuid.UUID
+	TaskRef        string
+	Status         task.Status
+	LeaseOwner     string
+	LeaseExpiresAt *time.Time
+	StartedAt      time.Time
+}
+
+// StuckLeases lists tasks whose latest attempt is no longer being heartbeated.
+//
+// An attempt whose lease is still in the future belongs to a process checking
+// in right now and is not reported. A NULL lease counts as expired: nobody is
+// renewing it, so nobody is vouching for it either. A task with no attempts at
+// all — which a crash between the status change and the attempt insert could
+// leave — has nothing to heartbeat and is reported for the same reason.
+func (s *Store) StuckLeases(ctx context.Context) ([]StuckAttempt, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT t.id, t.ref, t.status, a.lease_owner, a.lease_expires_at, a.started_at
+		FROM tasks t
+		LEFT JOIN LATERAL (
+			SELECT lease_owner, lease_expires_at, started_at
+			FROM task_attempts
+			WHERE task_id = t.id
+			ORDER BY attempt_number DESC
+			LIMIT 1
+		) a ON true
+		WHERE t.status IN ('RUNNING', 'VERIFYING')
+		  AND (a.lease_expires_at IS NULL OR a.lease_expires_at < now())
+		ORDER BY t.ref`)
+	if err != nil {
+		return nil, fmt.Errorf("list tasks with an expired lease: %w", classify(err))
+	}
+	defer rows.Close()
+
+	var out []StuckAttempt
+	for rows.Next() {
+		var (
+			item   StuckAttempt
+			status string
+		)
+		if err := rows.Scan(&item.TaskID, &item.TaskRef, &status,
+			&item.LeaseOwner, &item.LeaseExpiresAt, &item.StartedAt); err != nil {
+			return nil, fmt.Errorf("list tasks with an expired lease: %w", classify(err))
+		}
+		parsed, err := task.ParseStatus(status)
+		if err != nil {
+			return nil, fmt.Errorf("task %s has unrecognised status: %w", item.TaskRef, err)
+		}
+		item.Status = parsed
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list tasks with an expired lease: %w", classify(err))
+	}
+	return out, nil
 }
 
 const worktreeColumns = `id, attempt_id, path, branch, base_commit, head_commit, status, created_at, removed_at`

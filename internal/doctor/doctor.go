@@ -27,6 +27,7 @@ const (
 	CheckAgent      = "agent"
 	CheckDatabase   = "database"
 	CheckMigrations = "migrations"
+	CheckStuckTasks = "stuck tasks"
 	CheckWorkspace  = "workspace"
 )
 
@@ -50,6 +51,9 @@ type Deps struct {
 	PingDatabase func(ctx context.Context, databaseURL string) error
 	// PendingMigrations returns the versions of migrations not yet applied.
 	PendingMigrations func(ctx context.Context, databaseURL string) ([]string, error)
+	// StuckTasks returns a short description of each task stuck in RUNNING or
+	// VERIFYING with an expired lease (store.StuckLeases in production).
+	StuckTasks func(ctx context.Context, databaseURL string) ([]string, error)
 	// CheckWorkspace returns nil if dir exists or can be created, and is writable.
 	CheckWorkspace func(dir string) error
 }
@@ -57,11 +61,13 @@ type Deps struct {
 // Run performs every check in order and returns one Result per check.
 //
 // It starts with the configuration, then git, the configured agent command,
-// the database, pending migrations and the workspace directory. When the
-// configuration cannot be read, the checks that need it are skipped. When the
-// database does not answer, the migrations check is skipped.
+// the database, pending migrations, tasks stuck with an expired lease and the
+// workspace directory. When the configuration cannot be read, the checks that
+// need it are skipped. When the database does not answer, the migrations check
+// is skipped; when migrations are pending or unreadable, the stuck-task check
+// is skipped, because the lease columns it queries may not exist yet.
 func Run(ctx context.Context, deps Deps) []Result {
-	results := make([]Result, 0, 6)
+	results := make([]Result, 0, 7)
 
 	cfg, err := deps.LoadConfig()
 	if err != nil {
@@ -77,6 +83,7 @@ func Run(ctx context.Context, deps Deps) []Result {
 			Result{Name: CheckAgent, Status: StatusSkipped, Summary: skipped},
 			Result{Name: CheckDatabase, Status: StatusSkipped, Summary: skipped},
 			Result{Name: CheckMigrations, Status: StatusSkipped, Summary: skipped},
+			Result{Name: CheckStuckTasks, Status: StatusSkipped, Summary: skipped},
 			Result{Name: CheckWorkspace, Status: StatusSkipped, Summary: skipped},
 		)
 		return results
@@ -93,13 +100,30 @@ func Run(ctx context.Context, deps Deps) []Result {
 
 	dbErr := databaseResult(ctx, deps, cfg, &results)
 	if dbErr != nil {
-		results = append(results, Result{
-			Name:    CheckMigrations,
-			Status:  StatusSkipped,
-			Summary: "Skipped: the database did not answer, so migrations were not checked.",
-		})
+		results = append(results,
+			Result{
+				Name:    CheckMigrations,
+				Status:  StatusSkipped,
+				Summary: "Skipped: the database did not answer, so migrations were not checked.",
+			},
+			Result{
+				Name:    CheckStuckTasks,
+				Status:  StatusSkipped,
+				Summary: "Skipped: the database did not answer, so stuck tasks were not checked.",
+			},
+		)
 	} else {
-		results = append(results, migrationsResult(ctx, deps, cfg))
+		migrations := migrationsResult(ctx, deps, cfg)
+		results = append(results, migrations)
+		if migrations.Status != StatusOK {
+			results = append(results, Result{
+				Name:    CheckStuckTasks,
+				Status:  StatusSkipped,
+				Summary: "Skipped: migrations are pending or unreadable, so the lease columns may not exist.",
+			})
+		} else {
+			results = append(results, stuckTasksResult(ctx, deps, cfg))
+		}
 	}
 
 	results = append(results, workspaceResult(deps, cfg))
@@ -219,6 +243,42 @@ func migrationsResult(ctx context.Context, deps Deps, cfg config.Config) Result 
 		Status:  StatusOK,
 		Summary: "Migrations are up to date.",
 	}
+}
+
+// stuckTasksResult reports tasks whose process stopped heartbeating. Listing
+// them is the finding; failing to list them is a failure of the check, not a
+// verdict on the tasks.
+func stuckTasksResult(ctx context.Context, deps Deps, cfg config.Config) Result {
+	stuck, err := deps.StuckTasks(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return Result{
+			Name:    CheckStuckTasks,
+			Status:  StatusFail,
+			Summary: fmt.Sprintf("Cannot list tasks with an expired lease: %s.", redactDatabaseURL(err.Error(), cfg.DatabaseURL)),
+			Fix:     "Check the database, then run `aidev task recover` to clear whatever is stuck.",
+		}
+	}
+	if len(stuck) == 0 {
+		return Result{
+			Name:    CheckStuckTasks,
+			Status:  StatusOK,
+			Summary: "No task is stuck with an expired lease.",
+		}
+	}
+	return Result{
+		Name:    CheckStuckTasks,
+		Status:  StatusWarn,
+		Summary: fmt.Sprintf("%s stuck with an expired lease: %s.", countStuck(len(stuck)), strings.Join(stuck, ", ")),
+		Fix:     "Run `aidev task recover` to cancel them (`--dry-run` first to see what would be cancelled). Worktrees are kept.",
+	}
+}
+
+// countStuck says "1 task is" or "N tasks are".
+func countStuck(n int) string {
+	if n == 1 {
+		return "1 task is"
+	}
+	return fmt.Sprintf("%d tasks are", n)
 }
 
 // workspaceResult checks that the workspace directory exists or can be created and is writable.

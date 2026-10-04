@@ -155,6 +155,7 @@ func englishPages() []page {
 				"ACTIVE",
 				"REMOVED",
 				"aidev task cancel",
+				"aidev task recover",
 				"log_level",
 				"tracing.endpoint",
 			},

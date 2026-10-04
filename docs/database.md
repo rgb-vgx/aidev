@@ -124,6 +124,13 @@ A finished attempt always has a finish time and a running one never does, so
 `FinishAttempt` additionally matches `WHERE status = 'RUNNING'`, so finishing an
 attempt twice returns a conflict instead of quietly replacing the first outcome.
 
+`lease_owner` and `lease_expires_at` (migration `0013_attempt_lease`) say which
+process is alive on the attempt. The owner is `hostname:pid:uuid`, written when
+the attempt starts; the run's own cancel poll pushes the expiry 30 seconds
+forward every time it ticks. A NULL expiry means nobody ever reported in — a run
+killed before its first tick — and is treated as expired, because there is no
+holder to wait for. `aidev task recover` cancels tasks whose lease has run out.
+
 ### `worktrees`
 The isolated workspace an attempt ran in. `attempt_id` is **unique**: the
 isolation boundary is per attempt, so a second worktree for one attempt would be a

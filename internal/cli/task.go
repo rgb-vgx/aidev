@@ -30,6 +30,7 @@ func runTask(ctx context.Context, env *Env, args []string) error {
 		"events":  {"show a task's event history", taskEvents},
 		"cancel":  {"cancel a task that has not finished", taskCancel},
 		"approve": {"approve or deny a task that requires approval", taskApprove},
+		"recover": {"cancel tasks whose lease expired", taskRecover},
 	}
 
 	writeTaskUsage := func(w *Env) {
@@ -540,6 +541,48 @@ func taskCancel(ctx context.Context, env *Env, args []string) error {
 		return writeJSON(env.Stdout, buildResultView(outcome, nil, false))
 	}
 	fmt.Fprintln(env.Stdout, outcome.Message)
+	return nil
+}
+
+func taskRecover(ctx context.Context, env *Env, args []string) error {
+	fs := flag.NewFlagSet("task recover", flag.ContinueOnError)
+	fs.SetOutput(env.Stderr)
+	dryRun := fs.Bool("dry-run", false, "list the tasks that would be cancelled, without cancelling anything")
+	asJSON := fs.Bool("json", false, "print as JSON")
+	if err := fs.Parse(args); err != nil {
+		return usagef("aidev task recover: %v", err)
+	}
+	if fs.NArg() > 0 {
+		return usagef("aidev task recover takes no arguments")
+	}
+
+	app, err := openApp(ctx)
+	if err != nil {
+		return err
+	}
+	defer app.close()
+
+	recovered, err := app.orchestrator.Recover(ctx, *dryRun)
+	if err != nil {
+		return err
+	}
+	if *asJSON {
+		return writeJSON(env.Stdout, map[string]any{
+			"dry_run": *dryRun,
+			"tasks":   recovered,
+		})
+	}
+	if len(recovered) == 0 {
+		fmt.Fprintln(env.Stdout, "no tasks with an expired lease")
+		return nil
+	}
+	for _, r := range recovered {
+		action := "cancelled"
+		if r.Action == "would_cancel" {
+			action = "would cancel"
+		}
+		fmt.Fprintf(env.Stdout, "%s  %-14s  %s\n", r.Ref, action, r.Reason)
+	}
 	return nil
 }
 

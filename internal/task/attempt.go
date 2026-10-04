@@ -125,6 +125,14 @@ type TaskAttempt struct {
 	Error         string
 	StartedAt     time.Time
 	FinishedAt    *time.Time
+
+	// LeaseOwner names the process keeping this attempt alive
+	// (hostname:pid:uuid), and LeaseExpiresAt is when its claim runs out
+	// unless renewed. An empty owner or nil expiry means nobody ever
+	// reported in, which recovery treats as expired: there is no evidence
+	// any process is still working on it.
+	LeaseOwner     string
+	LeaseExpiresAt *time.Time
 }
 
 // NewAttempt builds a running attempt.

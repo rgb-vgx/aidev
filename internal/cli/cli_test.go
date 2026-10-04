@@ -75,7 +75,7 @@ func TestTaskSubcommandUsage(t *testing.T) {
 	if err == nil {
 		t.Fatal("`aidev task` with no subcommand was accepted")
 	}
-	for _, want := range []string{"create", "run", "list", "get", "result", "cancel", "approve", "events"} {
+	for _, want := range []string{"create", "run", "list", "get", "result", "cancel", "approve", "events", "recover"} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("subcommand list is missing %q:\n%s", want, stderr)
 		}

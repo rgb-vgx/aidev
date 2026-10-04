@@ -327,6 +327,7 @@ aidev task result <task> [--logs] [--json]
 aidev task events <task> [--payload] [--after SEQ] [--json]
 aidev task cancel <task> [--reason R] [--json]
 aidev task approve <task> [--deny] [--by WHO] [--reason R] [--json]
+aidev task recover [--dry-run] [--json]   # cancel tasks whose lease expired
 
 aidev project list  [--json]                      # repositories aidev has run against
 aidev project approval [on|off] [--repo .]        # gate every task of the repo (operator only)
@@ -608,10 +609,11 @@ your backend under aidev's name.
 
 **Start with `aidev doctor`.** It checks, in order, that the configuration can be
 read, that git and the configured agent are installed, that the database answers
-and is migrated, and that `workspace_root` is writable. Each problem comes with
-what to do about it, the database password is never shown, and it exits 1 when
-something is broken. `aidev doctor --json` prints the same results as a JSON list;
-the plugin's `aidev:doctor` skill reads that and repairs what it safely can.
+and is migrated, that no task is stuck with an expired lease, and that
+`workspace_root` is writable. Each problem comes with what to do about it, the
+database password is never shown, and it exits 1 when something is broken.
+`aidev doctor --json` prints the same results as a JSON list; the plugin's
+`aidev:doctor` skill reads that and repairs what it safely can.
 
 ```bash
 aidev doctor
@@ -622,15 +624,19 @@ aidev doctor
 ```
 
 **aidev was killed while a task was running.** The task is stuck in `RUNNING`, and
-nothing will pick it up again. Cancel it:
+nothing will pick it up again. While it ran, the attempt held a lease that the
+dead process can no longer renew, so recover the tasks whose lease has run out:
 
 ```bash
-aidev task list --status RUNNING,VERIFYING
-aidev task cancel TASK-000001 --reason "aidev was killed mid-run"
+aidev task recover --dry-run
+aidev task recover
 ```
 
-The partial work is kept. aidev deliberately does not expire a stale `RUNNING` task
-by itself — see [the reasoning](docs/architecture.md#when-a-run-is-interrupted).
+A task whose process is still alive keeps a live lease and is left alone. The
+recovery records the expired lease as the reason, closes the open attempt, and
+keeps the partial work. You can still cancel by hand — `aidev task cancel
+TASK-000001 --reason "aidev was killed mid-run"` — and the reasoning for why
+nothing does this on a timer is in [the architecture notes](docs/architecture.md#when-a-run-is-interrupted).
 
 **The workspace is filling up.** Failed tasks keep their worktrees on purpose:
 

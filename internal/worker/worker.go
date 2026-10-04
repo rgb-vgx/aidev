@@ -133,16 +133,18 @@ func (o *Orchestrator) cancelPoll() time.Duration {
 func (r *run) startCancelWatch(ctx context.Context, stop context.CancelFunc) (wait func()) {
 	// The run goes on changing r.task and r.log while the watcher polls, so the
 	// watcher gets its own copies and never touches r.
-	st, id, every, log := r.o.Store, r.task.ID, r.o.cancelPoll(), r.log
+	st, attemptID := r.o.Store, r.attempt.ID
+	every, log := r.o.cancelPoll(), r.log
+	owner, ttl := processLeaseOwner(), leaseTTL(every)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
+		// Each poll renews the lease and reads the status in one statement:
+		// a run that keeps its claim alive is a run that would notice a
+		// cancel, so the two cannot drift apart (research C1). A dead process
+		// stops renewing, and recovery claims its task back.
 		watchForCancel(ctx, every, func(ctx context.Context) (task.Status, error) {
-			t, err := st.GetTask(ctx, id)
-			if err != nil {
-				return "", err
-			}
-			return t.Status, nil
+			return st.RenewLease(ctx, attemptID, owner, ttl)
 		}, stop, log)
 	}()
 	return func() {
@@ -338,6 +340,68 @@ func (o *Orchestrator) Cancel(ctx context.Context, idOrRef, reason string) (Outc
 		Task:    t,
 		Message: fmt.Sprintf("%s cancelled (was %s); any worktree was kept for inspection", t.Identifier(), previous),
 	}, nil
+}
+
+// RecoveredTask is one task a recover pass found and what it did about it.
+type RecoveredTask struct {
+	Ref            string     `json:"ref"`
+	Status         string     `json:"status"`
+	Action         string     `json:"action"` // "cancelled" or "would_cancel"
+	LeaseOwner     string     `json:"lease_owner,omitempty"`
+	LeaseExpiresAt *time.Time `json:"lease_expires_at,omitempty"`
+	Reason         string     `json:"reason"`
+}
+
+// Recover cancels tasks whose lease has expired: RUNNING or VERIFYING with no
+// process checking in any more (research C1). Each one goes through Cancel, so
+// the worktree is retained, the open attempt is closed, and the history
+// records a task.cancelled naming the lease — exactly what an operator's
+// manual cancel would do, with the evidence as the reason. A task whose lease
+// is still alive belongs to a process running right now and is left alone.
+//
+// With dryRun nothing is cancelled: the tasks that would be are listed, which
+// is the question to ask before letting an unattended command act.
+func (o *Orchestrator) Recover(ctx context.Context, dryRun bool) ([]RecoveredTask, error) {
+	stuck, err := o.Store.StuckLeases(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("find tasks with an expired lease: %w", err)
+	}
+	recovered := make([]RecoveredTask, 0, len(stuck))
+	for _, s := range stuck {
+		owner := s.LeaseOwner
+		if owner == "" {
+			owner = "unknown"
+		}
+		lastSeen := "never"
+		if s.LeaseExpiresAt != nil {
+			lastSeen = s.LeaseExpiresAt.UTC().Format(time.RFC3339)
+		}
+		reason := fmt.Sprintf("lease expired: owner %s, last seen %s", owner, lastSeen)
+		item := RecoveredTask{
+			Ref:            s.TaskRef,
+			Status:         s.Status.String(),
+			LeaseOwner:     owner,
+			LeaseExpiresAt: s.LeaseExpiresAt,
+			Reason:         reason,
+		}
+		if dryRun {
+			item.Action = "would_cancel"
+			recovered = append(recovered, item)
+			continue
+		}
+		if _, err := o.Cancel(ctx, s.TaskRef, reason); err != nil {
+			// The task finished or vanished between the listing and the
+			// cancel. There is nothing left to recover, and that is not a
+			// failure of this pass.
+			if errors.Is(err, ErrNotRunnable) || errors.Is(err, store.ErrNotFound) {
+				continue
+			}
+			return recovered, fmt.Errorf("recover %s: %w", s.TaskRef, err)
+		}
+		item.Action = "cancelled"
+		recovered = append(recovered, item)
+	}
+	return recovered, nil
 }
 
 // run carries the state of one execution through the lifecycle.
@@ -658,7 +722,14 @@ func (r *run) startAttempt(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		attempt, err := tx.CreateAttempt(writeCtx, task.NewAttempt(r.task.ID, number))
+		attempt := task.NewAttempt(r.task.ID, number)
+		// The lease proves a live process holds this attempt: the cancel
+		// watch renews it every poll, and recovery claims the task back once
+		// the renewals stop (research C1).
+		attempt.LeaseOwner = processLeaseOwner()
+		expires := time.Now().UTC().Add(leaseTTL(r.o.cancelPoll()))
+		attempt.LeaseExpiresAt = &expires
+		attempt, err = tx.CreateAttempt(writeCtx, attempt)
 		if err != nil {
 			return err
 		}

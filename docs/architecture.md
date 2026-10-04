@@ -564,21 +564,29 @@ obvious fix for it is a hazard.
 
 If aidev is killed mid-run — `kill -9`, a closed laptop, a container stopped — the
 task is left `RUNNING` with an open attempt and a worktree on disk. Nothing will
-pick it up again: a running task is not runnable, and aidev cannot know whether
-another process is still working on it.
+pick it up again: a running task is not runnable.
 
-The way back is to cancel it:
+Every attempt therefore carries a lease: an owner (`hostname:pid:uuid`) and an
+expiry, written when the attempt starts and pushed forward by the run's own
+cancel poll (every 2 seconds by default, expiry 30 seconds ahead). A process that
+is still working on the task keeps its lease alive; one that died stops renewing,
+and the lease runs out.
+
+The way back is to cancel the tasks whose lease has expired:
 
 ```bash
-aidev task list --status RUNNING,VERIFYING   # find them
-aidev task cancel TASK-000001 --reason "aidev was killed mid-run"
+aidev task recover --dry-run                 # what would be cancelled
+aidev task recover                           # cancel them
+aidev task list --status RUNNING,VERIFYING   # the rest, if any
 aidev worktree list                          # the work is retained
 aidev worktree remove TASK-000001 --force    # once you are done with it
 ```
 
-Cancelling closes every open attempt and retains every active worktree, so the
-partial work survives and the task's history stays coherent.
-`TestRecoveryFromAnInterruptedRun` executes exactly this sequence.
+Recovery goes through the same path as a manual cancel, with the expired lease as
+the recorded reason — it closes every open attempt and retains every active
+worktree, so the partial work survives and the task's history stays coherent.
+`TestRecoveryFromAnInterruptedRun` executes the manual sequence;
+`TestRecoverCancelsTasksWithAnExpiredLease` the recovery one.
 
 A cancel also stops the running agent and verification rather than only
 changing the database: a run on the same process is stopped immediately, and a
@@ -586,11 +594,13 @@ run in another process notices the `CANCELLED` status on its next poll (every 2
 seconds by default) and stops then. The stopped run adopts the ending the
 cancel already recorded instead of writing a second one.
 
-aidev does **not** time out a stale `RUNNING` task on its own. A timeout that
-declared a task dead while another process was still driving it would be worse than
-a task an operator has to cancel deliberately, and there is no reliable way to tell
-those apart without a lease mechanism — which the MVP does not have and which
-concurrent workers will need.
+Recovery is never fully automatic in the worker: a lease is evidence, and aidev
+does not read it as an instruction. A human runs `aidev task recover` (doctor
+warns when there is something for it to do), and the MCP server runs it once when
+it first connects to the database, so a planner reconnecting after a restart does
+not inherit a dead run. The alternative — declaring a task dead on a timer while
+another process might still be driving it — would be worse than a task someone
+must decide to cancel.
 
 ### Reclaiming disk
 
@@ -660,10 +670,10 @@ Stated plainly so that nobody has to infer it from absence.
 | Not implemented | Where the seam is |
 |---|---|
 | Automatic retry | attempts are numbered and appended, `max_retries` is stored, the agent session id is recorded, and branch and worktree names already carry the attempt number. Only the `FAILED → READY` edge and a policy are missing. |
-| Concurrent workers | status changes are compare-and-set and `tasks_ready_claim_idx` matches a `FOR UPDATE SKIP LOCKED` claim. A lease would also be needed, so that a crashed worker's task could be reclaimed without a human cancelling it. |
+| Concurrent workers | status changes are compare-and-set and `tasks_ready_claim_idx` matches a `FOR UPDATE SKIP LOCKED` claim, and the lease columns exist so a crashed worker's task can be recognised. What is missing is the claim itself becoming a lease: taking a task must write an owner the way `startAttempt` does, not only a status. |
 | Dependency graphs | `PENDING` exists as "not yet eligible"; the eligibility check in `becomeReady` is the hook. |
 | Merging | a successful task leaves a reviewable commit on its own branch. Nothing merges it, by design. |
-| Expiring a stale `RUNNING` task | deliberate, see [Operating it](#when-a-run-is-interrupted). |
+| Automatic expiry of a stale `RUNNING` task | the lease makes staleness detectable and `aidev task recover` acts on it, but nothing cancels on a timer by itself — deliberate, see [Operating it](#when-a-run-is-interrupted). |
 | A second agent backend | `agent.Backend`, plus a server-mode OpenCode option evaluated and documented in docs/research.md §2.8. |
 | A web surface, auth, multi-tenancy | explicit non-goals. aidev is a local-first tool for one operator. |
 
