@@ -189,6 +189,7 @@ func TestEverySettingIsRead(t *testing.T) {
     "codex": {"command": "/opt/codex", "profile": "web9router", "model": "gpt-5", "sandbox": "read-only"}
   },
   "log_level": "debug",
+  "mcp": {"allow_approval": true},
   "tracing": {
     "endpoint": "http://127.0.0.1:4318",
     "traces_endpoint": "http://127.0.0.1:4318/v1/traces",
@@ -217,6 +218,7 @@ func TestEverySettingIsRead(t *testing.T) {
 		{"codex model", cfg.CodexModel, "gpt-5"},
 		{"codex sandbox", cfg.CodexSandbox, "read-only"},
 		{"log level", cfg.LogLevel, slog.LevelDebug},
+		{"mcp allow approval", cfg.MCPAllowApproval, true},
 		{"tracing endpoint", cfg.Tracing.Endpoint, "http://127.0.0.1:4318"},
 		{"tracing traces endpoint", cfg.Tracing.TracesEndpoint, "http://127.0.0.1:4318/v1/traces"},
 		{"tracing service name", cfg.Tracing.ServiceName, "aidev-test"},
@@ -302,6 +304,7 @@ func TestInvalidValuesAreRejected(t *testing.T) {
 		{"tiny output bytes", `"tasks": {"max_output_bytes": 10}`, []string{"tasks.max_output_bytes", "at least 1024"}},
 		{"unknown cleanup policy", `"tasks": {"worktree_cleanup": "delete"}`, []string{"tasks.worktree_cleanup", "on-success"}},
 		{"bad log level", `"log_level": "verbose"`, []string{"log_level", "not one of debug"}},
+		{"approval flag is not a boolean", `"mcp": {"allow_approval": "yes"}`, []string{"mcp.allow_approval", "a boolean"}},
 		{"unknown backend", `"agent": {"backend": "gemini"}`, []string{"agent.backend", "opencode", "codex"}},
 		{"sample ratio above 1", `"tracing": {"sample_ratio": 2}`, []string{"tracing.sample_ratio"}},
 		{"empty header name", `"tracing": {"headers": {"": "x"}}`, []string{"tracing.headers"}},
@@ -460,6 +463,7 @@ var wantKeys = []string{
 	"agent.routing",
 	"database.url",
 	"log_level",
+	"mcp.allow_approval",
 	"tasks.max_output_bytes", "tasks.timeout", "tasks.verification_timeout", "tasks.verification_total_timeout", "tasks.worktree_cleanup",
 	"tracing.endpoint", "tracing.headers", "tracing.sample_ratio", "tracing.service_name", "tracing.traces_endpoint",
 	"workspace_root",

@@ -141,6 +141,12 @@ something failed* without the domain knowing anything about OpenCode.
               (+ submodules, if the
                project asks for them)
                      │
+        base check, when the task asks for it:
+        commands already pass on the base
+        commit ─────────────────────── FAILED (VERIFICATION)
+        (agent never called; emits
+         task.base_check_completed)
+                     │
               run agent in it ──────── failure ──▶ FAILED (agent's own kind)
                      │                             worktree RETAINED
               collect diff from git
@@ -224,7 +230,13 @@ share refs, config and the stash stack with the main repository: measured, an
 agent inside its worktree can `update-ref` a branch the operator's checkout is on,
 and a `core.fsmonitor` set from there runs on the operator's next `git status`
 (docs/research.md §7i). Ref and config writes are outside what a worktree can
-contain; the security model states the trust that follows from that.
+contain, so aidev adds two layers on top of the tree boundary: every git command
+it runs itself is neutralised (no fsmonitor, no hooks path, no ext-diff), and
+shared state is snapshotted around the agent's run — a write to config, hooks,
+attributes or HEAD fails the attempt as `CONTAINMENT` before verification even
+starts, while a foreign ref moving only warns (docs/research.md §7i.2). This is
+detection after the fact, not a sandbox: the security model states the trust that
+follows from that.
 
 ### Submodules are a worktree each, read-only, and off by default
 
@@ -401,7 +413,7 @@ place a listed future feature plugs in without a rewrite.
 | Another agent backend | `agent.Backend`; orchestration never names a backend. Codex was added exactly this way (`internal/agent/codex.go`, selected with `agent.backend` set to `"codex"`) and is **paused since 2026-09-15**: OpenCode is the backend in use. The code and its tests stay, so resuming is a configuration change. Codex took 6–8 minutes on trivial tasks and, in TASK-000029, read another project's virtualenv outside its worktree. A server-mode OpenCode backend would be another new file in `internal/agent`. |
 | Sandboxed agent execution | `internal/procexec` is the one place processes start, and `agent.Request.WorkingDir` is the only path an agent is given, so containing the agent is a change to how a backend launches. Verification stays local whatever happens: a remote exit code is not aidev's own measurement (docs/opensandbox.md). **Parked as a future feature on 2026-09-15** — tasks are not yet complex enough to need it. Unmeasured: a worktree's `.git` file points into the main repository, so a container would need both mounted. |
 | Dependency DAG | `PENDING` exists as "not yet eligible"; the eligibility check is the hook. |
-| Observability / event-driven features | `events.seq` gives a total order, so a consumer can resume from a cursor. |
+| Observability / event-driven features | `events.seq` gives every event a position, and `AppendEvent` takes a per-task advisory lock so that within a task the sequence order is also the commit order: a consumer can resume from a cursor without missing an event. Across tasks the order is allocation order, not commit order. |
 | Approval workflows | `approvals` with one-pending-per-task, plus `WAITING_APPROVAL` in the state machine. |
 | Merge | every successful task leaves a reviewable commit on `aidev/<ref>`, and `worktrees` records branch, base commit and head commit; nothing merges yet, by design. |
 
@@ -430,10 +442,14 @@ The boundary is over *files*. It does not extend to git state, which every linke
 worktree shares with the main repository (docs/research.md §7i): from inside its
 worktree an agent can move a branch the operator's checkout is on, push into the
 shared stash, or set `core.fsmonitor`/`core.sshCommand` so the operator's next plain
-git command runs something the task chose. aidev does not sandbox ref or config
-writes. That widens the trust rather than changing it — anyone who can create a
-task can have a verification command run anything anyway, which is the next
-section.
+git command runs something the task chose. aidev does not sandbox those writes —
+it *neutralises* them for its own commands (no fsmonitor, no hooks path, no
+ext-diff on any git command aidev runs) and *detects* them after the agent: shared
+config, hooks, attributes or HEAD changed means the attempt fails as
+`CONTAINMENT` before verification runs; a foreign ref moving only emits a warning
+(docs/research.md §7i.2). Detection is after the fact, so it widens the trust
+rather than changing it — anyone who can create a task can have a verification
+command run anything anyway, which is the next section.
 
 ### Verification commands are arbitrary code, deliberately
 
@@ -474,16 +490,49 @@ should set per-step `timeout_seconds`.
 ### Secrets
 
 The connection string is redacted wherever configuration is printed or logged
-(`config.RedactURL`), and a test asserts a password does not survive it. The
-environment handed to a subprocess is inherited — OpenCode needs `HOME` for its
-credentials — and is never recorded: `worker_runs` stores the argv, which is
-task-defined, and not the environment.
+(`config.RedactURL`), and a test asserts a password does not survive it. Agent
+and verification subprocesses drop `AIDEV_*` from the inherited environment —
+`AIDEV_CONFIG` names the file holding the database URL, and the agent executes
+instructions we do not control — while `PG*` and whatever database variables
+the project exports for its own tests deliberately stay. The rest of the
+environment is inherited (OpenCode needs `HOME` for its credentials) and is
+never recorded: `worker_runs` stores the argv, which is task-defined, and not
+the environment.
+
+Dropping the variable is not the whole story: the agent runs with the
+operator's privileges, so it can read the config file itself. That path is
+closed only by the sandbox work (report item F). Until then, two things hold
+the line: the environment drop above, and a guard in the database —
+`tasks_transition_guard` (migration 0007) rejects any status transition the Go
+state machine forbids — because the agent's inherited environment still
+contains `PG*` credentials and could reach psql directly. The trigger is
+load-bearing for exactly that reason, not a decorative backstop.
 
 ### MCP transport
 
 stdio means stdout is the JSON-RPC channel. The logger has no stdout option at all,
 and a test redirects `os.Stdout` to assert nothing reaches it, because this is the
 rule a future change is most likely to break by accident.
+
+### Who may decide that a task may run
+
+Two gates, OR'd at run time in `run.enforceApproval` and deliberately never
+merged into one stored flag: `tasks.requires_approval` is the *creator's*
+explicit ask, `projects.requires_approval` (migration 0008) is the *operator's*
+policy. Copying the project flag into tasks at creation would make the two
+indistinguishable and would survive the policy being switched off again;
+`task.approval_required` records `required_by` (`task`, `project`,
+`task+project`) so the audit keeps them apart, and every decision event
+records `via` (`cli` or `mcp`).
+
+The surfaces are deliberately not equal. The project flag is writable only
+from `aidev project approval` — there is no MCP tool that touches it — because
+the party creating tasks must not decide whether its own work is gated. And
+`mcp.allow_approval` is off by default: the MCP client may be the planner that
+created the task, so `aidev_approve_task` refuses both granting and denying
+until the operator turns it on, sending the reader to `aidev task approve`.
+A gate that cannot read its own policy (the project lookup fails) blocks
+rather than proceeds.
 
 ## Operating it
 
@@ -656,6 +705,7 @@ from imagination:
 | `VERIFICATION` | the agent finished but verification did not pass |
 | `WORKTREE` | the isolated workspace could not be prepared or inspected |
 | `APPROVAL_DENIED` | policy refused |
+| `CONTAINMENT` | the agent modified state shared with the main repository (config, hooks, attributes, HEAD, or broke base-commit ancestry) — checked after the agent, before verification |
 | `INTERNAL` | aidev itself failed |
 | `UNKNOWN` | unclassifiable — kept as an honest bucket rather than a plausible guess |
 

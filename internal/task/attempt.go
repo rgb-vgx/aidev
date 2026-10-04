@@ -73,6 +73,14 @@ const (
 	// FailureApprovalDenied means policy refused the task.
 	FailureApprovalDenied FailureKind = "APPROVAL_DENIED"
 
+	// FailureContainment means the agent modified state the worktree shares
+	// with the main repository — config, hooks, attributes, or HEAD — which
+	// would let it influence git commands outside its own worktree
+	// (docs/research.md §7i). The check runs after the agent and before
+	// verification: a workspace that tampered with shared state cannot be
+	// trusted to be verified.
+	FailureContainment FailureKind = "CONTAINMENT"
+
 	// FailureInternal means aidev itself failed, for example a database error.
 	FailureInternal FailureKind = "INTERNAL"
 
@@ -86,7 +94,7 @@ func AllFailureKinds() []FailureKind {
 	return []FailureKind{
 		FailureStartup, FailureAgentError, FailureAgentExit, FailureTimeout,
 		FailureCancelled, FailureVerification, FailureWorktree,
-		FailureApprovalDenied, FailureInternal, FailureUnknown,
+		FailureApprovalDenied, FailureContainment, FailureInternal, FailureUnknown,
 	}
 }
 
@@ -287,9 +295,15 @@ type VerificationRun struct {
 	ID        uuid.UUID
 	AttemptID uuid.UUID
 
-	// StepIndex is the position in the task's verification list, so results can
-	// be matched back to the step that produced them.
+	// StepIndex is the position in the combined pass — setup commands first,
+	// then verification commands — so results can be matched back to the
+	// step that produced them.
 	StepIndex int
+
+	// Phase says which half of the pass this run belongs to. Setup and
+	// verify share the step_index numbering, so the phase is a separate
+	// field rather than a range convention.
+	Phase VerificationPhase
 
 	Command string
 	Status  VerificationStatus

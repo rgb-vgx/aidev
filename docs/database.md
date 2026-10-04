@@ -46,6 +46,8 @@ A git repository aidev may run tasks against.
 | `name` | non-blank |
 | `repo_path` | **unique**, must be absolute (`CHECK repo_path LIKE '/%'`) |
 | `default_branch` | base for task branches when a task does not name one |
+| `requires_approval` | project approval policy: every task stops for a human first; set only via `aidev project approval` (migration 0008) |
+| `verification_mode` | default where new tasks verify: `in_place` or `clean` (migration 0011); a template only — each task freezes its own copy at creation, set only via `aidev project verify-mode` |
 
 `repo_path` is unique so that registering the same repository twice is idempotent.
 `EnsureProject` does insert-or-select in a single statement, so two callers racing
@@ -63,8 +65,12 @@ The unit of delegated work.
 | `priority` | higher runs first, −1000..1000 |
 | `status` | the lifecycle state, see below |
 | `verification` | JSONB array of argv objects, **at least one required** |
+| `protected_paths` | JSONB array of glob patterns (default `[]`); an attempt changing a matching path fails verification before any check runs (migration 0010) |
+| `setup_steps` | JSONB array of argv commands (default `[]`) that run before verification to prepare the checkout; a failing one fails the task before any check runs (migration 0011) |
+| `verification_mode` | where this task's verification runs: `in_place` or `clean`, frozen at creation from the caller's choice or the project's default (migration 0011) |
 | `max_retries` | recorded for a future retry feature; the MVP never retries |
-| `requires_approval` | policy gate |
+| `requires_approval` | the task's own gate (the creator's ask); OR'd at run time with the project's policy, never overwritten by it |
+| `expect_fail_on_base` | when true the verification commands run on the base commit before the agent starts, and a pass there fails the attempt with kind VERIFICATION without ever calling the agent (migration 0012) |
 | `base_ref` | git ref to branch from; empty means the project default |
 | `timeout_seconds` | 0 means "use the configured default" |
 
@@ -155,9 +161,19 @@ One row per verification step that aidev ran itself, with
 `UNIQUE (attempt_id, step_index)` so results always map back to the step that
 produced them.
 
+`step_index` numbers one sequence across both phases of a pass — setup steps
+first, then the task's own checks — and `phase` (`setup` or `verify`) says
+which half a row belongs to, so paging on the index needs no special case
+(migration 0011).
+
 `SKIPPED` is an explicit status for a step that never ran because an earlier one
 failed. Without it, a missing row would be ambiguous between "skipped" and
 "passed but not recorded".
+
+The pre-agent base check of an `expect_fail_on_base` task writes **no** rows
+here: `step_index` is unique per attempt and belongs to the post-agent verdict,
+so that earlier pass is recorded as the `task.base_check_completed` event
+instead (migration 0012).
 
 ### `approvals`
 Human decisions gating a task.
@@ -171,12 +187,18 @@ At most one open request per task, enforced by the database rather than by a
 read-then-write in application code. After a decision a new request may be opened,
 so re-review is possible.
 
+The request's `reason` says which gate produced it ("task is marked as
+requiring approval", "project policy requires approval", or both), and the
+`task.approval_required` / `task.approval_granted` / `task.approval_denied`
+events carry `required_by` and `via` (`cli` or `mcp`) — the history has to keep
+the creator's ask, the operator's policy and the surface that decided apart.
+
 ### `events`
 The append-only history.
 
 | Column | Notes |
 |---|---|
-| `seq` | `BIGSERIAL UNIQUE`, a total order independent of clock resolution |
+| `seq` | `BIGSERIAL UNIQUE`, independent of clock resolution; per task it is also commit order (see below) |
 | `task_id` | required; `ON DELETE CASCADE` |
 | `attempt_id` | set for events belonging to a specific attempt |
 | `type` | constrained to the known vocabulary |
@@ -185,6 +207,14 @@ The append-only history.
 `seq` exists because timestamps are not a total order: two events written in the
 same millisecond would be unorderable, and history that cannot be ordered cannot
 be replayed. Readers page with `seq > last_seen`.
+
+A sequence is handed out at INSERT time, not at COMMIT time: two transactions
+appending for the same task could otherwise commit in the opposite order of
+their sequence numbers, and a reader paging with `seq > last_seen` would never
+come back for the one that sorted first but committed last. `AppendEvent` takes
+`pg_advisory_xact_lock(hashtext(task_id))` in the same statement as the INSERT,
+so within one task the sequence order is also the commit order. The lock is
+per task — unrelated tasks never contend for it.
 
 `payload` must be a JSON object (`jsonb_typeof(payload) = 'object'`) so consumers
 can always index by field name and new fields can be added without changing the
@@ -230,6 +260,17 @@ asserted by tests rather than left to review:
 can be added later; the edge is missing rather than present-and-unused, so adding
 it is a deliberate change with a test to update.
 
+The machine also exists in the database: migration 0007 installs a
+`BEFORE UPDATE OF status` trigger (`tasks_transition_guard`) that rejects any
+pair the Go map forbids, so a write that bypasses `TransitionTask` — raw SQL, a
+future buggy path — cannot store an illegal status either. The trigger is
+load-bearing rather than decorative: agent subprocesses still inherit `PG*`
+credentials and can read the config file, so this is the layer that holds until
+the sandbox work (report item F) closes that path.
+`TestTransitionGuardMatchesGoStateMachine` parses the trigger's clauses and
+compares them against `transitions`, the same way the CHECK constraints are
+compared against the Go enums.
+
 ### Concurrency
 
 Status changes are compare-and-set:
@@ -242,7 +283,8 @@ Zero rows affected means someone else moved the task first. `TransitionTask` the
 re-reads to distinguish "no such task" (`ErrNotFound`) from "status moved"
 (`ErrConflict`) and names the status it actually found. The domain state machine is
 checked before the statement runs, so an illegal transition never reaches the
-database.
+database — and if one ever does, the `tasks_transition_guard` trigger (see Task
+lifecycle above) rejects it there as well.
 
 ## Migrations
 

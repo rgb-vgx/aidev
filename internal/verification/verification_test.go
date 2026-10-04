@@ -68,6 +68,25 @@ func TestAllStepsPass(t *testing.T) {
 	}
 }
 
+// Verification commands come from the task, which in the delegation flow is
+// agent-authored — so they run without aidev's own configuration (AIDEV_*
+// names the file holding the database URL). The project's own environment,
+// PG* among it, deliberately stays: its tests may need the database.
+func TestStepsDoNotInheritAidevEnv(t *testing.T) {
+	t.Setenv("AIDEV_CONFIG", "/etc/aidev/conf.json")
+	t.Setenv("PGPASSWORD", "project-password")
+
+	req := request(t, step("sh", "-c", `printf '%s|%s' "${AIDEV_CONFIG-unset}" "${PGPASSWORD-unset}"`))
+
+	report, err := runner().Run(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got, want := report.Runs[0].Stdout, "unset|project-password"; got != want {
+		t.Errorf("step environment = %q, want %q: AIDEV_* dropped, PG* kept", got, want)
+	}
+}
+
 // Exit codes and output are what aidev records; the agent's opinion is not
 // consulted anywhere in this package.
 func TestOutputAndExitCodeAreCaptured(t *testing.T) {

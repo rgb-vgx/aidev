@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -112,6 +113,42 @@ func TestProjectSubmoduleModeIsStickyAcrossEnsureProject(t *testing.T) {
 	}
 }
 
+// The approval policy is the operator's (CLI only, migration 0008). It must
+// default off, survive the EnsureProject every task creation runs, and report
+// an unknown project rather than silently doing nothing.
+func TestProjectApprovalPolicyIsStickyAcrossEnsureProject(t *testing.T) {
+	db, ctx := openStore(t)
+
+	path := "/tmp/aidev-approval-" + uuid.NewString()
+	created, err := db.EnsureProject(ctx, "aidev", path, "main")
+	if err != nil {
+		t.Fatalf("EnsureProject: %v", err)
+	}
+	if created.RequiresApproval {
+		t.Error("a new project requires approval, want the policy off by default")
+	}
+
+	updated, err := db.SetProjectRequiresApproval(ctx, created.ID, true)
+	if err != nil {
+		t.Fatalf("SetProjectRequiresApproval: %v", err)
+	}
+	if !updated.RequiresApproval {
+		t.Error("after setting, requires_approval = false, want true")
+	}
+
+	again, err := db.EnsureProject(ctx, "aidev", path, "main")
+	if err != nil {
+		t.Fatalf("second EnsureProject: %v", err)
+	}
+	if !again.RequiresApproval {
+		t.Error("EnsureProject reset the approval policy; an operator's choice must survive it")
+	}
+
+	if _, err := db.SetProjectRequiresApproval(ctx, uuid.Must(uuid.NewV7()), true); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("SetProjectRequiresApproval for an unknown project = %v, want ErrNotFound", err)
+	}
+}
+
 func TestTaskRoundTrip(t *testing.T) {
 	db, ctx := openStore(t)
 	p := seedProject(t, ctx, db)
@@ -121,6 +158,7 @@ func TestTaskRoundTrip(t *testing.T) {
 		in.Priority = 50
 		in.MaxRetries = 2
 		in.RequiresApproval = true
+		in.ExpectFailOnBase = true
 		in.BaseRef = "main"
 		in.Timeout = 15 * time.Minute
 		in.Verification = []task.VerificationStep{
@@ -146,7 +184,7 @@ func TestTaskRoundTrip(t *testing.T) {
 	if got.Title != created.Title || got.AcceptanceCriteria != created.AcceptanceCriteria {
 		t.Errorf("text fields did not survive the round trip: %+v", got)
 	}
-	if got.Priority != 50 || got.MaxRetries != 2 || !got.RequiresApproval || got.BaseRef != "main" {
+	if got.Priority != 50 || got.MaxRetries != 2 || !got.RequiresApproval || !got.ExpectFailOnBase || got.BaseRef != "main" {
 		t.Errorf("scalar fields did not survive: %+v", got)
 	}
 	if got.Timeout != 15*time.Minute {
@@ -293,6 +331,41 @@ func TestTransitionTaskIsCompareAndSet(t *testing.T) {
 
 	if err := db.TransitionTask(ctx, uuid.Must(uuid.NewV7()), task.StatusPending, task.StatusReady); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("transition of an unknown task = %v, want ErrNotFound", err)
+	}
+}
+
+// TransitionTask checks the state machine in Go, but the agent inherits
+// database credentials until the sandbox work closes that path, so the
+// database must refuse an illegal transition on its own: a raw UPDATE that
+// bypasses the Go check has to fail too, or the guard is advisory.
+func TestDatabaseRejectsIllegalStatusTransitions(t *testing.T) {
+	db, ctx := openStore(t)
+	p := seedProject(t, ctx, db)
+	tk := seedTask(t, ctx, db, p, nil)
+	if tk.Status != task.StatusPending {
+		t.Fatalf("seeded task status = %s, want PENDING", tk.Status)
+	}
+
+	// An illegal jump straight to success.
+	_, err := db.Pool().Exec(ctx, `UPDATE tasks SET status = 'SUCCEEDED' WHERE id = $1`, tk.ID)
+	if err == nil {
+		t.Fatal("PENDING -> SUCCEEDED was stored; the transition guard is not enforced")
+	}
+	if !strings.Contains(err.Error(), "illegal task transition") {
+		t.Errorf("rejection = %v, want the transition-guard message", err)
+	}
+
+	// The worker's own first step, and a legal way to stop, still go through.
+	if _, err := db.Pool().Exec(ctx, `UPDATE tasks SET status = 'READY' WHERE id = $1`, tk.ID); err != nil {
+		t.Fatalf("PENDING -> READY rejected: %v", err)
+	}
+	if _, err := db.Pool().Exec(ctx, `UPDATE tasks SET status = 'CANCELLED' WHERE id = $1`, tk.ID); err != nil {
+		t.Fatalf("READY -> CANCELLED rejected: %v", err)
+	}
+
+	// Terminal is terminal, even via raw SQL.
+	if _, err := db.Pool().Exec(ctx, `UPDATE tasks SET status = 'READY' WHERE id = $1`, tk.ID); err == nil {
+		t.Fatal("CANCELLED -> READY was stored; a terminal state can be left")
 	}
 }
 
@@ -530,6 +603,7 @@ func TestWorktreeWorkerAndVerificationPersistence(t *testing.T) {
 			ID:         uuid.Must(uuid.NewV7()),
 			AttemptID:  attempt.ID,
 			StepIndex:  i,
+			Phase:      task.PhaseVerify,
 			Command:    fmt.Sprintf("go test ./step%d", i),
 			Status:     step.status,
 			ExitCode:   step.exit,
@@ -556,6 +630,11 @@ func TestWorktreeWorkerAndVerificationPersistence(t *testing.T) {
 	}
 	if results[0].Duration != 1500*time.Millisecond {
 		t.Errorf("duration = %s, want 1.5s", results[0].Duration)
+	}
+	// The phase column is new with setup_steps; a row that cannot name which
+	// half of the sequence it belongs to would be unpageable.
+	if results[0].Phase != task.PhaseVerify {
+		t.Errorf("phase = %q, want %q", results[0].Phase, task.PhaseVerify)
 	}
 	if !results[0].Passed() || results[1].Passed() {
 		t.Error("Passed() does not reflect the recorded statuses")
@@ -862,5 +941,90 @@ func TestDatabaseRejectsTaskWithoutVerification(t *testing.T) {
 		t.Fatal("the database accepted a task with no verification steps")
 	} else if !strings.Contains(err.Error(), "tasks_verification_is_nonempty_array") {
 		t.Errorf("error = %v, want the verification constraint to be named", err)
+	}
+}
+
+// BIGSERIAL assigns seq at INSERT time, not at COMMIT time. Without a lock, a
+// transaction that appends an event for a task can commit after another
+// transaction already appended a higher seq for the same task, and a reader
+// paging with seq > last_seen would never come back for the lower one.
+// AppendEvent must therefore hold a per-task lock from the insert until the
+// appending transaction commits: same task blocks, different task does not.
+func TestAppendEventHoldsPerTaskLockUntilCommit(t *testing.T) {
+	db, ctx := openStore(t)
+	p := seedProject(t, ctx, db)
+	tkA := seedTask(t, ctx, db, p, nil)
+	tkB := seedTask(t, ctx, db, p, nil)
+
+	newReady := func(id uuid.UUID) event.Event {
+		e, err := event.New(id, nil, event.TypeTaskReady, map[string]any{"probe": "lock"})
+		if err != nil {
+			t.Fatalf("event.New: %v", err)
+		}
+		return e
+	}
+
+	txStarted := make(chan struct{})
+	release := make(chan struct{})
+	txDone := make(chan error, 1)
+	// Releasing is idempotent so a Fatalf on any assertion still lets the
+	// transaction finish instead of holding the lock until the test binary
+	// times out.
+	var releaseOnce sync.Once
+	giveUp := func() { releaseOnce.Do(func() { close(release) }) }
+	defer giveUp()
+
+	go func() {
+		txDone <- db.InTx(ctx, func(tx *store.Store) error {
+			if _, err := tx.AppendEvent(ctx, newReady(tkA.ID)); err != nil {
+				return err
+			}
+			close(txStarted)
+			<-release
+			return nil
+		})
+	}()
+	select {
+	case <-txStarted:
+	case err := <-txDone:
+		t.Fatalf("InTx failed before it could hold the lock: %v", err)
+	}
+
+	// Same task, transaction still open: the insert must wait for the commit.
+	blockCtx, cancelBlock := context.WithTimeout(ctx, 300*time.Millisecond)
+	defer cancelBlock()
+	_, err := db.AppendEvent(blockCtx, newReady(tkA.ID))
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("same-task append err = %v, want context.DeadlineExceeded (blocked on the advisory lock)", err)
+	}
+
+	// A different task must not wait: the lock is keyed per task, so
+	// concurrent tasks never serialise each other's history writes.
+	waitCtx, cancelWait := context.WithTimeout(ctx, 5*time.Second)
+	defer cancelWait()
+	if _, err := db.AppendEvent(waitCtx, newReady(tkB.ID)); err != nil {
+		t.Fatalf("cross-task append while the lock is held: %v", err)
+	}
+
+	giveUp()
+	if err := <-txDone; err != nil {
+		t.Fatalf("InTx: %v", err)
+	}
+
+	if _, err := db.AppendEvent(ctx, newReady(tkA.ID)); err != nil {
+		t.Fatalf("append after the commit: %v", err)
+	}
+
+	// The committed event sorts before anything appended after the commit, so
+	// a reader resuming from its seq sees exactly the later one.
+	history, err := db.ListEvents(ctx, store.EventFilter{TaskID: tkA.ID})
+	if err != nil {
+		t.Fatalf("ListEvents: %v", err)
+	}
+	if len(history) != 2 {
+		t.Fatalf("got %d events for task A, want 2 (one from the transaction, one after)", len(history))
+	}
+	if history[0].Seq >= history[1].Seq {
+		t.Errorf("seq order = %d then %d, want the committed event first", history[0].Seq, history[1].Seq)
 	}
 }

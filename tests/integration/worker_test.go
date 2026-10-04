@@ -429,7 +429,7 @@ func TestApprovalGateBlocksExecution(t *testing.T) {
 	}
 
 	// Approving releases the task, and it then runs normally.
-	if _, err := h.orchestrator.Approve(h.ctx, created.Ref, true, "thuyetmt", "looks safe"); err != nil {
+	if _, err := h.orchestrator.Approve(h.ctx, created.Ref, true, "thuyetmt", "looks safe", "cli"); err != nil {
 		t.Fatalf("Approve: %v", err)
 	}
 	afterApproval, err := h.store.GetTask(h.ctx, created.ID)
@@ -459,7 +459,7 @@ func TestApprovalDeniedFailsTheTask(t *testing.T) {
 	if _, err := h.orchestrator.RunTask(h.ctx, created.Ref); !errors.Is(err, worker.ErrApprovalRequired) {
 		t.Fatalf("RunTask = %v, want ErrApprovalRequired", err)
 	}
-	outcome, err := h.orchestrator.Approve(h.ctx, created.Ref, false, "thuyetmt", "touches production config")
+	outcome, err := h.orchestrator.Approve(h.ctx, created.Ref, false, "thuyetmt", "touches production config", "cli")
 	if err != nil {
 		t.Fatalf("Approve(false): %v", err)
 	}
@@ -476,6 +476,94 @@ func TestApprovalDeniedFailsTheTask(t *testing.T) {
 	}
 	if !contains(h.eventTypes(created.ID), "task.approval_denied") {
 		t.Error("the denial was not recorded")
+	}
+}
+
+// The project's approval policy is the operator's switch (CLI only, migration
+// 0008): a task that does not ask for approval itself must still stop when the
+// project says so, and the record must say which gate fired — the flags are
+// OR'd at run time, never merged into one stored flag.
+func TestProjectApprovalPolicyGatesATaskThatDoesNotAskForIt(t *testing.T) {
+	h := newHarness(t, nil)
+	h.backend.Work = doTheWork
+	created := h.createTask(func(in *worker.CreateTaskInput) { in.RequiresApproval = false })
+
+	project, err := h.store.GetProject(h.ctx, created.ProjectID)
+	if err != nil {
+		t.Fatalf("GetProject: %v", err)
+	}
+	if project.RequiresApproval {
+		t.Fatal("a new project already requires approval, want the policy off by default")
+	}
+	if _, err := h.store.SetProjectRequiresApproval(h.ctx, project.ID, true); err != nil {
+		t.Fatalf("SetProjectRequiresApproval: %v", err)
+	}
+
+	if _, err := h.orchestrator.RunTask(h.ctx, created.Ref); !errors.Is(err, worker.ErrApprovalRequired) {
+		t.Fatalf("RunTask = %v, want ErrApprovalRequired", err)
+	}
+	gated, err := h.store.GetTask(h.ctx, created.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if gated.Status != task.StatusWaitingApproval {
+		t.Errorf("status = %s, want WAITING_APPROVAL", gated.Status)
+	}
+	if len(h.backend.Calls()) != 0 {
+		t.Error("the agent ran despite the project policy")
+	}
+	attempts, err := h.store.ListAttempts(h.ctx, created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(attempts) != 0 {
+		t.Errorf("got %d attempts, want none: the gate runs before anything is claimed", len(attempts))
+	}
+
+	// The request and the event both name the gate that fired.
+	latest, err := h.store.LatestApproval(h.ctx, created.ID)
+	if err != nil {
+		t.Fatalf("LatestApproval: %v", err)
+	}
+	if latest.Reason != "project policy requires approval" {
+		t.Errorf("request reason = %q, want the project policy named", latest.Reason)
+	}
+	if got := h.eventPayload(created.ID, "task.approval_required")["required_by"]; got != "project" {
+		t.Errorf("required_by = %v, want project", got)
+	}
+
+	// Releasing it is a human decision, recorded with the surface it came
+	// through — the CLI is the operator's path.
+	if _, err := h.orchestrator.Approve(h.ctx, created.Ref, true, "thuyetmt", "policy allows this one", "cli"); err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+	if got := h.eventPayload(created.ID, "task.approval_granted")["via"]; got != "cli" {
+		t.Errorf("via = %v, want cli", got)
+	}
+
+	outcome, err := h.orchestrator.RunTask(h.ctx, created.Ref)
+	if err != nil {
+		t.Fatalf("RunTask after approval: %v", err)
+	}
+	if outcome.Task.Status != task.StatusSucceeded {
+		t.Errorf("status = %s, want SUCCEEDED: %s", outcome.Task.Status, outcome.Message)
+	}
+}
+
+// Approve records who decided and how; without a surface the history would not
+// say whether a human at the CLI or an MCP client waved the task through.
+func TestApproveRequiresTheSurfaceThatDecided(t *testing.T) {
+	h := newHarness(t, nil)
+	created := h.createTask(func(in *worker.CreateTaskInput) { in.RequiresApproval = true })
+	if _, err := h.orchestrator.RunTask(h.ctx, created.Ref); !errors.Is(err, worker.ErrApprovalRequired) {
+		t.Fatalf("RunTask = %v, want ErrApprovalRequired", err)
+	}
+
+	if _, err := h.orchestrator.Approve(h.ctx, created.Ref, true, "thuyetmt", "fine", ""); err == nil {
+		t.Error("Approve without a via was accepted; the history would not say which surface decided")
+	}
+	if _, err := h.orchestrator.Approve(h.ctx, created.Ref, true, "thuyetmt", "fine", "cli"); err != nil {
+		t.Fatalf("Approve with via=cli: %v", err)
 	}
 }
 

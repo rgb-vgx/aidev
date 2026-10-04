@@ -23,6 +23,7 @@ const (
 	MaxPriority                 = 1000
 	MinPriority                 = -1000
 	MaxRetriesLimit             = 10
+	MaxProtectedPaths           = 50
 )
 
 // Project is a git repository aidev can run tasks against.
@@ -35,6 +36,22 @@ type Project struct {
 	// Submodules says whether a task worktree of this project is given the
 	// content of the repository's git submodules. Default SubmodulesNone.
 	Submodules SubmoduleMode
+
+	// RequiresApproval is the project's approval policy: every task of this
+	// project needs a human decision before it runs, whether or not the task
+	// itself asks for one. It is set only from the CLI (aidev project
+	// approval), never from MCP, because the party creating tasks must not
+	// decide whether its own work is gated. Checked at run time against the
+	// task's own flag; deliberately not copied into tasks at creation.
+	RequiresApproval bool
+
+	// VerificationMode is the default where this project's tasks verify:
+	// in_place in the agent's worktree, or clean in a fresh checkout of the
+	// result. It is a template, not policy: each task freezes its own mode
+	// at creation, so changing this later does not move the goalposts under
+	// tasks that already exist. Set only from the CLI
+	// (aidev project verify-mode), like RequiresApproval.
+	VerificationMode VerificationMode
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -64,11 +81,42 @@ type Task struct {
 	// independently establish.
 	Verification []VerificationStep
 
+	// ProtectedPaths are glob patterns the task's creator ring-fenced: an
+	// attempt that changes a path matching any of them fails verification
+	// without a single check running (research §7b tier 2). Unlike the
+	// heuristic TestPaths report, these are declared up front, so acting on
+	// them cannot punish work nobody singled out. Empty means nothing is
+	// protected and the check is skipped. Pattern syntax is validated by the
+	// caller that normalizes them (worker.CreateTask, via
+	// verification.NormalizeProtected), keeping this package free of a glob
+	// dependency.
+	ProtectedPaths []string
+
+	// SetupSteps run before Verification, in the same place, to prepare the
+	// checkout (npm ci and friends). They are part of the verification
+	// pass — a setup command that fails fails the task — and they share the
+	// step_index numbering so results map back to the step that produced
+	// them. Empty means the checkout is used as the agent left it.
+	SetupSteps []VerificationStep
+
+	// VerificationMode decides where the pass runs, frozen at creation from
+	// the explicit choice or the project's default (see the Project field
+	// of the same name). Verification must not depend on settings that can
+	// change while a task is in flight.
+	VerificationMode VerificationMode
+
 	// MaxRetries is recorded for the future retry feature. The MVP never
 	// retries automatically.
 	MaxRetries int
 
 	RequiresApproval bool
+
+	// ExpectFailOnBase makes the run execute Verification on the base commit
+	// before the agent starts (research B3). Commands that already pass there
+	// cannot tell the before state from the after state — the task would
+	// report success while nothing changed — so the attempt fails immediately
+	// and the agent is never called. For tasks whose point is to fix a bug.
+	ExpectFailOnBase bool
 
 	// BaseRef is the git ref the task's worktree branches from. Empty means the
 	// project's default branch.
@@ -94,10 +142,16 @@ type NewTaskInput struct {
 	Priority           int
 	AcceptanceCriteria string
 	Verification       []VerificationStep
-	MaxRetries         int
-	RequiresApproval   bool
-	BaseRef            string
-	Timeout            time.Duration
+	ProtectedPaths     []string
+	SetupSteps         []VerificationStep
+	// VerificationMode is the mode resolved by the caller (explicit choice
+	// or project default). Empty means VerificationInPlace.
+	VerificationMode VerificationMode
+	MaxRetries       int
+	RequiresApproval bool
+	ExpectFailOnBase bool
+	BaseRef          string
+	Timeout          time.Duration
 }
 
 // ValidationError reports one or more rejected fields.
@@ -182,6 +236,42 @@ func New(input NewTaskInput, defaultAgent string) (Task, error) {
 		}
 	}
 
+	if len(input.ProtectedPaths) > MaxProtectedPaths {
+		add("%d protected paths exceed the limit of %d", len(input.ProtectedPaths), MaxProtectedPaths)
+	}
+	for i, p := range input.ProtectedPaths {
+		// Syntax is the caller's to check (it owns the glob library); an empty
+		// pattern here would guard nothing while claiming to, so it is refused
+		// at the domain boundary as well.
+		if strings.TrimSpace(p) == "" || strings.TrimSpace(p) == "/" {
+			add("protected path %d must not be empty", i+1)
+		}
+	}
+
+	// Setup steps follow the verification rules: argv, no shell, bounded in
+	// count. Unlike verification they may be empty — most checkouts need no
+	// preparing — but one that is present runs with the same guarantees.
+	if len(input.SetupSteps) > MaxVerificationSteps {
+		add("%d setup commands exceed the limit of %d", len(input.SetupSteps), MaxVerificationSteps)
+	}
+	for i, step := range input.SetupSteps {
+		if err := step.Validate(); err != nil {
+			add("setup command %d: %v", i+1, err)
+		}
+	}
+
+	// The mode the caller resolved is stored as-is; an empty value means
+	// "the caller did not decide", which is in_place. Anything else must be
+	// a mode aidev knows — a typo here would silently change where
+	// verification runs.
+	verificationMode := input.VerificationMode
+	if strings.TrimSpace(string(verificationMode)) == "" {
+		verificationMode = VerificationInPlace
+	} else if !verificationMode.Valid() {
+		add("verification mode %q is not valid (want one of in_place, clean)", verificationMode)
+		verificationMode = VerificationInPlace
+	}
+
 	if input.Priority < MinPriority || input.Priority > MaxPriority {
 		add("priority %d is outside %d..%d", input.Priority, MinPriority, MaxPriority)
 	}
@@ -212,8 +302,12 @@ func New(input NewTaskInput, defaultAgent string) (Task, error) {
 		Status:             StatusPending,
 		AcceptanceCriteria: input.AcceptanceCriteria,
 		Verification:       input.Verification,
+		ProtectedPaths:     input.ProtectedPaths,
+		SetupSteps:         input.SetupSteps,
+		VerificationMode:   verificationMode,
 		MaxRetries:         input.MaxRetries,
 		RequiresApproval:   input.RequiresApproval,
+		ExpectFailOnBase:   input.ExpectFailOnBase,
 		BaseRef:            strings.TrimSpace(input.BaseRef),
 		Timeout:            input.Timeout,
 		CreatedAt:          now,

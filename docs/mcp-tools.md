@@ -106,11 +106,15 @@ Creates a task. Does **not** run it.
 | `repo_path` | string | **yes** | absolute path to the git repository |
 | `title` | string | **yes** | one short line stating what to do |
 | `verification` | string[] | **yes** | commands aidev runs itself to decide the outcome |
+| `protected_paths` | string[] | no | glob paths the agent must not change (`.env*`, `migrations/*`, `ci`); an attempt that changes a matching path fails verification before any check runs |
+| `setup_steps` | string[] | no | commands that run before verification to prepare the checkout (`npm ci`); same argv rules as `verification`; a setup command that fails fails the task before any check runs |
+| `verification_mode` | string | no | where verification runs: `in_place` (in the agent's worktree) or `clean` (a fresh checkout of the result, so ignored or uncommitted files cannot make the checks pass); empty takes the project's default; frozen into the task at creation |
 | `description` | string | no | the full instruction for the agent |
 | `acceptance_criteria` | string | no | what done looks like, in prose |
 | `agent` | string | no | agent to use; defaults to `build` |
 | `priority` | integer | no | higher runs first; default 0 |
-| `requires_approval` | boolean | no | gate the task behind a human decision |
+| `requires_approval` | boolean | no | gate the task behind a human decision; the project's own policy can gate a task the same way without this |
+| `expect_fail_on_base` | boolean | no | run the verification commands on the base commit before the agent starts; if they already pass there they cannot distinguish before from after, so the attempt fails with kind VERIFICATION and the agent is never called (for bug-fix tasks) |
 | `base_ref` | string | no | git ref to branch from; defaults to the repository's current branch |
 | `timeout_seconds` | integer | no | bound this task's agent run |
 | `hardness` | string | no | how hard the task is: TRIVIAL, STANDARD or HARD; picks the model from `agent.routing` unless `model` is given |
@@ -132,6 +136,15 @@ through as literal arguments.
 
 - the path is not a git repository
 - `verification` is empty, or a command contains a shell operator
+- a `protected_paths` entry is empty or not a valid glob — rejected now so the
+  task cannot be created with a protection that would silently match nothing
+- a `verification_mode` other than `in_place` or `clean`, or a `setup_steps`
+  entry that is empty or not argv — the mode decides where the checks run, so
+  a typo must not pick a place nobody chose
+- the repository pins a submodule (a gitlink) while `verification_mode` is
+  `clean` or `expect_fail_on_base` is set — both run in detached checkouts,
+  which cannot hold submodule content, so the checks would go red for the
+  wrong reason
 - `base_ref` does not resolve — caught now rather than at worktree creation
 - the agent name is unknown to the backend. This check exists because OpenCode
   accepts an unknown name, warns, silently uses its default and exits 0
@@ -174,8 +187,10 @@ from git, then runs the verification commands and records the outcome.
 - `wait_seconds` negative
 
 An approval gate is **not** an error: the result comes back with status
-`WAITING_APPROVAL` and a `next_step` saying a human must decide. Nor is a run that
-has not finished.
+`WAITING_APPROVAL` and a `next_step` saying a human must decide. When
+`mcp.allow_approval` is off — the default — that `next_step` names the CLI
+(`aidev task approve … --by <name>`) instead of this server's own tool, which
+would only refuse. Nor is a run that has not finished.
 
 ### Side effects
 
@@ -211,6 +226,7 @@ Reads the outcome of a task's most recent attempt.
 | `result.verification` | one entry per step: command, status, exit code. **This is the evidence** |
 | `result.worktree` | path, branch, and whether it was `REMOVED` or `RETAINED` |
 | `result.approval` | the most recent approval record |
+| `result.tests_modified` | changed paths that look like the tests judging this attempt — a report so a reviewer can see that what passed was also written in the same attempt; absent when the attempt left the tests alone |
 | `still_running` | the task is currently executing |
 | `agent_stdout`, `agent_stderr`, `diff` | only with `include_logs` |
 
@@ -335,18 +351,26 @@ Moves the task to `CANCELLED`, closes any open attempt, marks any active worktre
 happen because a field was omitted. **This is a human decision.** A planner should
 not call it on its own initiative; the tool description says so.
 
+The tool is **off unless `mcp.allow_approval` is set** (default `false`). The MCP
+client may be the planner that created the task, and a party must not wave through
+— or fail — its own work, so both directions are refused until the operator turns
+the setting on. The refusal names the setting and points to the CLI:
+`aidev task approve <task> --by <name>`.
+
 ### Output
 
 `task`, the recorded `approval`, and a `message`.
 
 ### Errors
 
-No such task; the task is not in `WAITING_APPROVAL`; there is no pending request.
+- no such task; the task is not in `WAITING_APPROVAL`; there is no pending request
+- `mcp.allow_approval` is off (the default): the error gives the CLI command instead
 
 ### Side effects
 
 Records the decision and moves the task to `READY` (granted) or `FAILED` (denied),
-appending `task.approval_granted` or `task.approval_denied`.
+appending `task.approval_granted` or `task.approval_denied` with `decided_by`,
+`reason` and `via` (`cli` or `mcp`) in the payload.
 
 ---
 

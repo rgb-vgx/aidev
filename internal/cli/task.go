@@ -104,6 +104,8 @@ func taskCreate(ctx context.Context, env *Env, args []string) error {
 	fs.SetOutput(env.Stderr)
 
 	var verify repeatable
+	var protect repeatable
+	var setup repeatable
 	repo := fs.String("repo", "", "path to the git repository (default: the current directory)")
 	title := fs.String("title", "", "short statement of what to do (required)")
 	description := fs.String("description", "", "the full instruction for the agent")
@@ -114,10 +116,14 @@ func taskCreate(ctx context.Context, env *Env, args []string) error {
 	priority := fs.Int("priority", 0, "higher runs first")
 	maxRetries := fs.Int("max-retries", 0, "recorded for a future retry feature; the MVP never retries")
 	requiresApproval := fs.Bool("requires-approval", false, "do not run until a human approves")
+	expectFailOnBase := fs.Bool("expect-fail-on-base", false, "run the verification commands on the base commit before the agent starts; fail immediately if they already pass, because commands that pass on the base cannot distinguish before from after (for bug-fix tasks)")
 	baseRef := fs.String("base-ref", "", "git ref to branch from (default: the project's default branch)")
 	timeout := fs.Duration("timeout", 0, "bound this task's agent run (default: tasks.timeout in conf.json)")
 	asJSON := fs.Bool("json", false, "print the created task as JSON")
 	fs.Var(&verify, "verify", "command aidev will run to verify the task; repeat for more than one (required)")
+	fs.Var(&protect, "protect", "glob path or directory the agent must not change (.env*, migrations/*, docs); an attempt that touches a match fails verification before any check runs; repeat for more than one")
+	fs.Var(&setup, "setup", "command run before verification to prepare the checkout (npm ci); repeat for more than one")
+	verifyMode := fs.String("verify-mode", "", "where verification runs: in_place (default, in the agent's worktree) or clean (a fresh checkout of the result, so ignored or uncommitted files cannot make the checks pass); empty takes the project default")
 
 	fs.Usage = func() {
 		fmt.Fprintf(env.Stderr, `usage: aidev task create --title <title> --verify <command> [flags]
@@ -145,6 +151,10 @@ flags:
 	if err != nil {
 		return err
 	}
+	setupSteps, err := task.ParseVerificationSteps(setup)
+	if err != nil {
+		return fmt.Errorf("--setup: %w", err)
+	}
 
 	repoPath := *repo
 	if strings.TrimSpace(repoPath) == "" {
@@ -171,8 +181,12 @@ flags:
 		Hardness:           *hardness,
 		Priority:           *priority,
 		Verification:       steps,
+		ProtectedPaths:     protect,
+		SetupSteps:         setupSteps,
+		VerificationMode:   *verifyMode,
 		MaxRetries:         *maxRetries,
 		RequiresApproval:   *requiresApproval,
+		ExpectFailOnBase:   *expectFailOnBase,
 		BaseRef:            *baseRef,
 		Timeout:            *timeout,
 	})
@@ -398,6 +412,11 @@ func taskResult(ctx context.Context, env *Env, args []string) error {
 	case err == nil:
 		outcome.Attempt = &attempt
 		runs, _ = app.store.ListVerificationRuns(ctx, attempt.ID)
+		// Best-effort, like the approval read below: the report is a courtesy
+		// to the reader and must not decide whether the result can be shown.
+		if tests, err := app.store.TestsModifiedPaths(ctx, t.ID, attempt.ID); err == nil {
+			outcome.TestsModified = tests
+		}
 
 		if workerRuns, err := app.store.ListWorkerRuns(ctx, attempt.ID); err == nil && len(workerRuns) > 0 {
 			latest := workerRuns[len(workerRuns)-1]
@@ -554,7 +573,7 @@ func taskApprove(ctx context.Context, env *Env, args []string) error {
 	}
 	defer app.close()
 
-	outcome, err := app.orchestrator.Approve(ctx, identifier, !*deny, decidedBy, *reason)
+	outcome, err := app.orchestrator.Approve(ctx, identifier, !*deny, decidedBy, *reason, "cli")
 	if err != nil {
 		return err
 	}
@@ -590,7 +609,7 @@ func statusNames() []string {
 }
 
 func buildResultView(outcome worker.Outcome, runs []task.VerificationRun, includeOutput bool) view.Result {
-	return view.NewResult(outcome.Task, outcome.Attempt, outcome.WorkerRun, runs, outcome.Worktree, outcome.Approval, outcome.Message, includeOutput)
+	return view.NewResult(outcome.Task, outcome.Attempt, outcome.WorkerRun, runs, outcome.Worktree, outcome.Approval, outcome.TestsModified, outcome.Message, includeOutput)
 }
 
 // exitError carries a specific exit status without being an error message.

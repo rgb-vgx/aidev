@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -21,6 +22,16 @@ const MaxEventLimit = 1000
 // number. There is deliberately no update or delete counterpart: the database
 // rejects an UPDATE on this table, and the way to correct the record is to
 // append.
+//
+// BIGSERIAL assigns seq at INSERT time, not at COMMIT time, so without a lock
+// two transactions appending for the same task can commit in the opposite
+// order of their sequence numbers — a reader paging with seq > last_seen would
+// then never see the event that committed last but sorted first. The advisory
+// lock (keyed per task, so unrelated tasks never contend) is taken in the same
+// statement as the INSERT so it also holds when this method runs in
+// autocommit; when the caller already opened a transaction via InTx, it is
+// held until that transaction ends, which is exactly the window in which a
+// cursor reader could otherwise skip an event.
 func (s *Store) AppendEvent(ctx context.Context, e event.Event) (event.Event, error) {
 	if !e.Type.Valid() {
 		return event.Event{}, fmt.Errorf("append event: %q is not a known event type", e.Type)
@@ -30,11 +41,17 @@ func (s *Store) AppendEvent(ctx context.Context, e event.Event) (event.Event, er
 		payload = []byte("{}")
 	}
 
+	// $2 is typed text by hashtext, so the insert side casts it back to uuid:
+	// PostgreSQL resolves a parameter to one type for the whole statement.
 	row := s.db.QueryRow(ctx, `
+		WITH lock AS (
+			SELECT pg_advisory_xact_lock(hashtext($2::text)::bigint)
+		)
 		INSERT INTO events (id, task_id, attempt_id, type, payload, created_at)
-		VALUES ($1,$2,$3,$4,$5,$6)
+		SELECT $1, $2::uuid, $3, $4, $5, $6
+		FROM lock
 		RETURNING `+eventColumns,
-		e.ID, e.TaskID, e.AttemptID, string(e.Type), []byte(payload), e.CreatedAt)
+		e.ID, e.TaskID.String(), e.AttemptID, string(e.Type), []byte(payload), e.CreatedAt)
 
 	written, err := scanEvent(row)
 	if err != nil {
@@ -104,6 +121,43 @@ func (s *Store) ListEvents(ctx context.Context, filter EventFilter) ([]event.Eve
 		return nil, fmt.Errorf("list events for task %s: %w", filter.TaskID, classify(err))
 	}
 	return events, nil
+}
+
+// TestsModifiedPaths returns the changed paths that looked like the tests
+// judging an attempt, as recorded by task.verification_tests_modified during
+// verification. It reads that attempt's newest such event, so a future retry
+// replaces the earlier report rather than appending to it. ErrNotFound when
+// the attempt never recorded one — an attempt that left the tests alone.
+//
+// This is how a process that did not run the task answers the same question
+// the in-process Outcome carries, so every surface reports the same thing.
+func (s *Store) TestsModifiedPaths(ctx context.Context, taskID, attemptID uuid.UUID) ([]string, error) {
+	if taskID == uuid.Nil {
+		return nil, fmt.Errorf("tests modified: a task id is required")
+	}
+	if attemptID == uuid.Nil {
+		return nil, fmt.Errorf("tests modified: an attempt id is required")
+	}
+
+	var payload []byte
+	err := s.db.QueryRow(ctx, `
+		SELECT payload
+		FROM events
+		WHERE task_id = $1 AND attempt_id = $2 AND type = $3
+		ORDER BY seq DESC
+		LIMIT 1`,
+		taskID, attemptID, event.TypeVerificationTestsModified).Scan(&payload)
+	if err != nil {
+		return nil, fmt.Errorf("tests modified for attempt %s: %w", attemptID, classify(err))
+	}
+
+	var decoded struct {
+		Paths []string `json:"paths"`
+	}
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		return nil, fmt.Errorf("tests modified for attempt %s: payload is not decodable: %w", attemptID, err)
+	}
+	return decoded.Paths, nil
 }
 
 func scanEvent(row scanner) (event.Event, error) {

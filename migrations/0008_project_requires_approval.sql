@@ -1,0 +1,13 @@
+-- Project-level approval policy. A task of this project must be approved
+-- before it runs when EITHER the task asks for it OR this flag is set —
+-- evaluate at run time (run.enforceApproval), never by copying this flag
+-- into tasks.requires_approval at creation: a copy would survive the policy
+-- being switched off again, and would make "explicitly requested by the
+-- creator" indistinguishable from "inherited from project policy".
+--
+-- The column exists because who sets it must not be the party being
+-- controlled: tasks.requires_approval is chosen by whoever creates the task,
+-- and a planner creating tasks through MCP would otherwise decide whether its
+-- own work is gated. This flag is settable only from the CLI
+-- (`aidev project approval on`); there is no MCP tool that writes it.
+ALTER TABLE projects ADD COLUMN requires_approval BOOLEAN NOT NULL DEFAULT false;

@@ -25,12 +25,14 @@ func TestTaskJSONShape(t *testing.T) {
 		Agent:            "build",
 		Priority:         10,
 		RequiresApproval: true,
+		ExpectFailOnBase: true,
 		Timeout:          90 * time.Second,
 		Verification: []task.VerificationStep{
 			{Command: "go", Args: []string{"test", "./..."}},
 		},
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		ProtectedPaths: []string{".env*", "migrations/*"},
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
 	}
 
 	encoded, err := json.Marshal(NewTask(tk))
@@ -44,7 +46,8 @@ func TestTaskJSONShape(t *testing.T) {
 
 	for _, key := range []string{
 		"ref", "id", "status", "title", "agent", "priority",
-		"verification", "requires_approval", "project_id", "created_at", "updated_at",
+		"verification", "protected_paths", "requires_approval", "expect_fail_on_base",
+		"project_id", "created_at", "updated_at",
 	} {
 		if _, ok := decoded[key]; !ok {
 			t.Errorf("JSON is missing %q: %s", key, encoded)
@@ -56,8 +59,14 @@ func TestTaskJSONShape(t *testing.T) {
 	if got := decoded["verification"].([]any); len(got) != 1 || got[0] != "go test ./..." {
 		t.Errorf("verification = %v, want the rendered command", got)
 	}
+	if got := decoded["protected_paths"].([]any); len(got) != 2 || got[0] != ".env*" || got[1] != "migrations/*" {
+		t.Errorf("protected_paths = %v, want the ring-fence visible to a reviewer", decoded["protected_paths"])
+	}
 	if decoded["timeout_seconds"].(float64) != 90 {
 		t.Errorf("timeout_seconds = %v, want 90", decoded["timeout_seconds"])
+	}
+	if decoded["expect_fail_on_base"] != true {
+		t.Errorf("expect_fail_on_base = %v, want true visible to a reviewer", decoded["expect_fail_on_base"])
 	}
 }
 
@@ -94,7 +103,7 @@ func TestVerificationIncludesFailureOutputOnly(t *testing.T) {
 func TestResultOmitsAbsentSections(t *testing.T) {
 	result := NewResult(
 		task.Task{Ref: "TASK-000001", Status: task.StatusPending},
-		nil, nil, nil, nil, nil, "not run yet", false,
+		nil, nil, nil, nil, nil, nil, "not run yet", false,
 	)
 
 	encoded, err := json.Marshal(result)
@@ -105,7 +114,7 @@ func TestResultOmitsAbsentSections(t *testing.T) {
 	if err := json.Unmarshal(encoded, &top); err != nil {
 		t.Fatal(err)
 	}
-	for _, absent := range []string{"attempt", "worker", "verification", "worktree", "approval"} {
+	for _, absent := range []string{"attempt", "worker", "verification", "worktree", "approval", "tests_modified"} {
 		if _, present := top[absent]; present {
 			t.Errorf("result has a %q section for a task that has not run: %s", absent, encoded)
 		}
@@ -115,7 +124,7 @@ func TestResultOmitsAbsentSections(t *testing.T) {
 // A zero-valued attempt is not an attempt. Emitting one would tell a caller a task
 // had run when it had not.
 func TestResultIgnoresAZeroAttempt(t *testing.T) {
-	result := NewResult(task.Task{Ref: "TASK-000001"}, &task.TaskAttempt{}, nil, nil, nil, nil, "", false)
+	result := NewResult(task.Task{Ref: "TASK-000001"}, &task.TaskAttempt{}, nil, nil, nil, nil, nil, "", false)
 	if result.Attempt != nil {
 		t.Errorf("Attempt = %+v, want nil for a zero-valued attempt", result.Attempt)
 	}
@@ -135,6 +144,7 @@ func TestResultIncludesEverythingItIsGiven(t *testing.T) {
 		[]task.VerificationRun{{StepIndex: 0, Command: "go test ./...", Status: task.VerificationPassed}},
 		&task.Worktree{Path: "/tmp/wt", Branch: "aidev/TASK-000001", Status: task.WorktreeRemoved},
 		&task.Approval{ID: uuid.Must(uuid.NewV7()), Status: task.ApprovalGranted, DecidedBy: "someone"},
+		[]string{"internal/store/store_test.go"},
 		"succeeded",
 		false,
 	)
@@ -153,6 +163,9 @@ func TestResultIncludesEverythingItIsGiven(t *testing.T) {
 	}
 	if result.Approval == nil || result.Approval.DecidedBy != "someone" {
 		t.Errorf("approval = %+v", result.Approval)
+	}
+	if len(result.TestsModified) != 1 || result.TestsModified[0] != "internal/store/store_test.go" {
+		t.Errorf("tests_modified = %v, want it carried through so a reviewer can see the attempt wrote its own tests", result.TestsModified)
 	}
 }
 

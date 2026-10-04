@@ -316,8 +316,12 @@ func (w *Worktree) Diff(ctx context.Context) (Diff, error) {
 	// A diff against the index loses work the agent committed, when the index
 	// matches the files. Comparing against the base commit keeps it in the
 	// record (docs/research.md 7e).
-	patchArgs := []string{"diff", "--no-color", "--ignore-submodules=dirty"}
-	statArgs := []string{"diff", "--numstat", "--ignore-submodules=dirty"}
+	// --no-ext-diff and --no-textconv keep the diff read-only with respect to
+	// the shared repository: a diff driver or textconv filter the agent put in
+	// config or .gitattributes would otherwise execute when aidev reads the
+	// patch (docs/research.md §7i).
+	patchArgs := []string{"diff", "--no-color", "--ignore-submodules=dirty", "--no-ext-diff", "--no-textconv"}
+	statArgs := []string{"diff", "--numstat", "--ignore-submodules=dirty", "--no-ext-diff", "--no-textconv"}
 	if strings.TrimSpace(w.BaseCommit) != "" {
 		patchArgs = append(patchArgs, w.BaseCommit)
 		statArgs = append(statArgs, w.BaseCommit)
@@ -544,6 +548,20 @@ func (m *Manager) run(ctx context.Context, dir string, env []string, args ...str
 	if maxOutput <= 0 {
 		maxOutput = DefaultMaxOutputBytes
 	}
+
+	// A linked worktree shares .git with the main repository, so config the
+	// agent writes is a command the next git invocation would run
+	// (docs/research.md §7i). Two vectors are disabled for every git command
+	// aidev starts: the fsmonitor hook (core.fsmonitor runs an arbitrary
+	// command from config on status-like commands) and the hooks directory
+	// (post-commit and friends). aidev needs neither — commits already pass
+	// --no-verify, and output is already forced machine-readable via env.
+	// The flags must precede the subcommand, which is why they are prepended
+	// here rather than added at each call site.
+	args = append([]string{
+		"-c", "core.fsmonitor=false",
+		"-c", "core.hooksPath=/dev/null",
+	}, args...)
 
 	return procexec.Run(ctx, procexec.Spec{
 		Command: command,

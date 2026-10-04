@@ -30,12 +30,22 @@ func writeTaskDetail(w io.Writer, t task.Task) {
 	if t.RequiresApproval {
 		fmt.Fprintf(w, "  approval     required\n")
 	}
+	// Shown only when set, like approval: it changes what a run of this task
+	// means — the checks must already fail on the base commit, or the agent
+	// is never called.
+	if t.ExpectFailOnBase {
+		fmt.Fprintf(w, "  base check   must fail before the agent runs\n")
+	}
 	if t.BaseRef != "" {
 		fmt.Fprintf(w, "  base ref     %s\n", t.BaseRef)
 	}
 	if t.Timeout > 0 {
 		fmt.Fprintf(w, "  timeout      %s\n", t.Timeout)
 	}
+	// Shown like model and hardness: where the checks run was decided when
+	// the task was created, and a reviewer comparing two results needs it as
+	// much as they need to know which model did the work.
+	fmt.Fprintf(w, "  verify mode  %s\n", t.VerificationMode)
 	fmt.Fprintf(w, "  id           %s\n", t.ID)
 	fmt.Fprintf(w, "  created      %s\n", t.CreatedAt.UTC().Format(time.RFC3339))
 
@@ -46,6 +56,12 @@ func writeTaskDetail(w io.Writer, t task.Task) {
 		fmt.Fprintf(w, "\n  acceptance criteria\n%s\n", indent(t.AcceptanceCriteria, "    "))
 	}
 
+	if len(t.SetupSteps) > 0 {
+		fmt.Fprintf(w, "\n  setup (runs before verification)\n")
+		for _, step := range t.SetupSteps {
+			fmt.Fprintf(w, "    %s\n", step.String())
+		}
+	}
 	fmt.Fprintf(w, "\n  verification (run by aidev, not by the agent)\n")
 	for _, step := range t.Verification {
 		fmt.Fprintf(w, "    %s\n", step.String())
@@ -90,6 +106,11 @@ func writeRunOutcome(env *Env, outcome worker.Outcome, runs []task.VerificationR
 		}
 		fmt.Fprintln(w)
 		fmt.Fprintf(w, "  changed files %d\n", r.ChangedFiles)
+		if len(outcome.TestsModified) > 0 {
+			// A report for the reviewer: what passed may have been written in
+			// the same attempt (research §7b tier 1).
+			fmt.Fprintf(w, "  tests changed %s\n", strings.Join(outcome.TestsModified, ", "))
+		}
 		fmt.Fprintf(w, "  took          %s\n", r.Duration().Round(time.Second))
 		if r.Summary != "" {
 			// The agent's own account, shown because it helps diagnosis and
@@ -137,6 +158,9 @@ func writeResult(env *Env, outcome worker.Outcome, runs []task.VerificationRun) 
 	if outcome.WorkerRun != nil {
 		r := outcome.WorkerRun
 		fmt.Fprintf(w, "\nagent (%s)  %s  %d file(s) changed\n", r.Backend, r.Status, r.ChangedFiles)
+		if len(outcome.TestsModified) > 0 {
+			fmt.Fprintf(w, "  tests  %s\n", strings.Join(outcome.TestsModified, ", "))
+		}
 		if r.Summary != "" {
 			fmt.Fprintf(w, "  says  %s\n", truncate(oneLine(r.Summary), 140))
 		}

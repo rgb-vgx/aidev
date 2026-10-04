@@ -34,7 +34,10 @@ func (w *Worktree) ChangedPaths(ctx context.Context) ([]string, error) {
 		return nil, fmt.Errorf("stage intent-to-add in %s: %s", w.Path, firstLine(res.Stderr))
 	}
 
-	diffRes, err := w.m.run(ctx, w.Path, env, "diff", "--name-only", "-z", w.BaseCommit)
+	// The same diff-driver caveats as Worktree.Diff apply: reading the file
+	// list must not execute code the agent installed in the shared repository.
+	diffRes, err := w.m.run(ctx, w.Path, env,
+		"diff", "--name-only", "-z", "--no-ext-diff", "--no-textconv", w.BaseCommit)
 	if err != nil {
 		return nil, err
 	}

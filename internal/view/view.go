@@ -32,7 +32,11 @@ type Task struct {
 	Hardness           string   `json:"hardness,omitempty" jsonschema:"how hard the task stated it was: TRIVIAL, STANDARD or HARD; empty means none was stated"`
 	Priority           int      `json:"priority" jsonschema:"higher runs first"`
 	Verification       []string `json:"verification" jsonschema:"the commands aidev runs itself to decide whether the task succeeded"`
+	ProtectedPaths     []string `json:"protected_paths,omitempty" jsonschema:"glob patterns the creator ring-fenced; an attempt that changes a matching path fails verification without running any check"`
+	SetupSteps         []string `json:"setup_steps,omitempty" jsonschema:"commands that run before verification to prepare the checkout; absent when the task needs no preparation"`
+	VerificationMode   string   `json:"verification_mode" jsonschema:"where verification runs: in_place (in the agent's worktree) or clean (a fresh checkout of the result), frozen at creation"`
 	RequiresApproval   bool     `json:"requires_approval" jsonschema:"whether a human decision is required before the task may run"`
+	ExpectFailOnBase   bool     `json:"expect_fail_on_base" jsonschema:"whether the verification commands must already fail on the base commit: they run there before the agent starts, and a pass means they cannot distinguish before from after, so the attempt fails without calling the agent"`
 	MaxRetries         int      `json:"max_retries" jsonschema:"recorded for a future retry feature; aidev does not retry"`
 	BaseRef            string   `json:"base_ref,omitempty" jsonschema:"git ref the task's branch starts from"`
 	TimeoutSeconds     int      `json:"timeout_seconds,omitempty" jsonschema:"per-task agent timeout; 0 means the configured default"`
@@ -47,6 +51,13 @@ func NewTask(t task.Task) Task {
 	for _, step := range t.Verification {
 		commands = append(commands, step.String())
 	}
+	var setup []string
+	if len(t.SetupSteps) > 0 {
+		setup = make([]string, 0, len(t.SetupSteps))
+		for _, step := range t.SetupSteps {
+			setup = append(setup, step.String())
+		}
+	}
 	return Task{
 		Ref:                t.Ref,
 		ID:                 t.ID.String(),
@@ -59,7 +70,11 @@ func NewTask(t task.Task) Task {
 		Hardness:           t.Hardness.String(),
 		Priority:           t.Priority,
 		Verification:       commands,
+		ProtectedPaths:     t.ProtectedPaths,
+		SetupSteps:         setup,
+		VerificationMode:   t.VerificationMode.String(),
 		RequiresApproval:   t.RequiresApproval,
+		ExpectFailOnBase:   t.ExpectFailOnBase,
 		MaxRetries:         t.MaxRetries,
 		BaseRef:            t.BaseRef,
 		TimeoutSeconds:     int(t.Timeout.Seconds()),
@@ -219,7 +234,11 @@ type Result struct {
 	Verification []Verification `json:"verification,omitempty" jsonschema:"the verification aidev ran; this alone decides success"`
 	Worktree     *Worktree      `json:"worktree,omitempty" jsonschema:"the isolated checkout used"`
 	Approval     *Approval      `json:"approval,omitempty" jsonschema:"the most recent approval record"`
-	Message      string         `json:"message,omitempty" jsonschema:"one-line human summary of the outcome"`
+	// TestsModified is a report, not a verdict: editing a test does not fail
+	// the run, but a reviewer must be able to see that what passed was also
+	// written in the same attempt (research §7b tier 1).
+	TestsModified []string `json:"tests_modified,omitempty" jsonschema:"changed paths that look like the tests judging this attempt; a report so a reviewer can see that what passed was also written in the same attempt"`
+	Message       string   `json:"message,omitempty" jsonschema:"one-line human summary of the outcome"`
 }
 
 // Event is one entry of a task's history.
@@ -295,6 +314,7 @@ func NewResult(
 	runs []task.VerificationRun,
 	worktree *task.Worktree,
 	approval *task.Approval,
+	testsModified []string,
 	message string,
 	includeOutput bool,
 ) Result {
@@ -313,6 +333,9 @@ func NewResult(
 	}
 	if approval != nil {
 		result.Approval = NewApproval(*approval)
+	}
+	if len(testsModified) > 0 {
+		result.TestsModified = testsModified
 	}
 	return result
 }

@@ -163,6 +163,12 @@ type Outcome struct {
 	// Approval is set when the run stopped at the approval gate.
 	Approval *task.Approval
 
+	// TestsModified lists the changed paths that look like the tests judging
+	// the attempt (research §7b tier 1). It is a report, not a verdict: the
+	// run is judged as usual. Empty when the attempt left the tests alone or
+	// never reached verification.
+	TestsModified []string
+
 	// Message is a one-line human summary of the outcome.
 	Message string
 }
@@ -204,7 +210,15 @@ func (o *Orchestrator) RunTask(ctx context.Context, idOrRef string) (Outcome, er
 
 // Approve records a human decision and, when granted, returns the task to READY
 // so that it can be run.
-func (o *Orchestrator) Approve(ctx context.Context, idOrRef string, granted bool, decidedBy, reason string) (Outcome, error) {
+//
+// via says which surface the decision came through ("cli" or "mcp") and is
+// written into the approval event: the two have different trust levels — the
+// CLI is the operator, MCP may be the planner that created the task — so the
+// history has to keep them apart.
+func (o *Orchestrator) Approve(ctx context.Context, idOrRef string, granted bool, decidedBy, reason, via string) (Outcome, error) {
+	if via == "" {
+		return Outcome{}, fmt.Errorf("approval decision needs a via (cli or mcp), because the history must say which surface decided")
+	}
 	t, err := o.Store.ResolveTask(ctx, idOrRef)
 	if err != nil {
 		return Outcome{}, err
@@ -241,6 +255,7 @@ func (o *Orchestrator) Approve(ctx context.Context, idOrRef string, granted bool
 		return appendEvent(ctx, tx, t.ID, nil, evType, map[string]any{
 			"decided_by": decidedBy,
 			"reason":     reason,
+			"via":        via,
 		})
 	})
 	if err != nil {
@@ -335,8 +350,16 @@ type run struct {
 	worktree *git.Worktree
 	record   *task.Worktree
 
+	// sharedBefore is the shared git state recorded once the worktree exists,
+	// for the containment check that runs after the agent (research §7i).
+	sharedBefore git.SharedState
+
 	workerRun *task.WorkerRun
 	report    *verification.Report
+
+	// testsModified is set in verify when the changed paths include the tests
+	// judging the attempt, and rides along in the outcome (research §7b tier 1).
+	testsModified []string
 
 	// failureKind records how the run failed for the trace. It stays
 	// FailureNone when the run succeeded or has not failed yet.
@@ -403,8 +426,30 @@ func (r *run) execute(ctx context.Context) (outcome Outcome, retErr error) {
 		outcome, retErr = r.fail(ctx, task.FailureWorktree, err)
 		return outcome, retErr
 	}
+	// The red-before-green gate (research B3): on a task that asked for it,
+	// the verification commands run on the base commit first, while the
+	// worktree still is the base commit. A pass there means the commands
+	// cannot distinguish before from after, so the run stops without ever
+	// calling the agent.
+	if r.task.ExpectFailOnBase {
+		if out, stopped, err := r.baseCheck(ctx); stopped || err != nil {
+			outcome, retErr = out, err
+			return outcome, retErr
+		}
+	}
 	if err := r.runAgent(ctx); err != nil {
 		outcome, retErr = r.fail(ctx, r.workerFailureKind(), err)
+		return outcome, retErr
+	}
+	if err := r.checkContainment(ctx); err != nil {
+		kind := task.FailureContainment
+		if errors.Is(err, errSharedStateUnreadable) {
+			// The check could not run. Calling that a breach would blame the
+			// agent for aidev's own inability to look, so it is classified
+			// with the other inspection failures.
+			kind = task.FailureWorktree
+		}
+		outcome, retErr = r.fail(ctx, kind, err)
 		return outcome, retErr
 	}
 	outcome, retErr = r.verify(ctx)
@@ -484,10 +529,52 @@ func usageAttributes(tokens []byte) []attribute.KeyValue {
 	return attrs
 }
 
+// requiredBy reports why this task must be approved before it runs: "task",
+// "project", "task+project", or "" when neither gate applies. The two flags
+// are OR'd here at run time and deliberately never merged into one stored
+// flag, so "explicitly requested by the creator" stays distinguishable from
+// "inherited from project policy" and switching the policy off does not
+// rewrite any task (migration 0008).
+//
+// A project lookup failure blocks the task: a gate that cannot read its own
+// policy must not let the task through.
+func (r *run) requiredBy(ctx context.Context) (string, error) {
+	p, err := r.o.Store.GetProject(ctx, r.task.ProjectID)
+	if err != nil {
+		return "", fmt.Errorf("read project approval policy: %w", err)
+	}
+	switch {
+	case r.task.RequiresApproval && p.RequiresApproval:
+		return "task+project", nil
+	case r.task.RequiresApproval:
+		return "task", nil
+	case p.RequiresApproval:
+		return "project", nil
+	}
+	return "", nil
+}
+
+// approvalReason renders requiredBy as the sentence recorded on the approval
+// request, so an operator reading the request knows which gate produced it.
+func approvalReason(requiredBy string) string {
+	switch requiredBy {
+	case "task":
+		return "task is marked as requiring approval"
+	case "project":
+		return "project policy requires approval"
+	default:
+		return "task and project policy require approval"
+	}
+}
+
 // enforceApproval applies the approval policy. It is checked before anything is
 // claimed or created, so a gated task leaves no worktree and no attempt behind.
 func (r *run) enforceApproval(ctx context.Context) (Outcome, bool, error) {
-	if !r.task.RequiresApproval {
+	requiredBy, err := r.requiredBy(ctx)
+	if err != nil {
+		return Outcome{}, true, err
+	}
+	if requiredBy == "" {
 		return Outcome{}, false, nil
 	}
 
@@ -510,7 +597,7 @@ func (r *run) enforceApproval(ctx context.Context) (Outcome, bool, error) {
 				return err
 			}
 		}
-		a, reqErr := tx.RequestApproval(ctx, r.task.ID, "task is marked as requiring approval")
+		a, reqErr := tx.RequestApproval(ctx, r.task.ID, approvalReason(requiredBy))
 		switch {
 		case reqErr == nil:
 			approval = a
@@ -525,6 +612,7 @@ func (r *run) enforceApproval(ctx context.Context) (Outcome, bool, error) {
 		}
 		return appendEvent(ctx, tx, r.task.ID, nil, event.TypeApprovalRequired, map[string]any{
 			"approval_id": approval.ID.String(),
+			"required_by": requiredBy,
 		})
 	})
 	if err != nil {
@@ -532,13 +620,14 @@ func (r *run) enforceApproval(ctx context.Context) (Outcome, bool, error) {
 	}
 
 	r.task.Status = task.StatusWaitingApproval
-	r.log.InfoContext(ctx, "task gated pending approval", "approval_id", approval.ID.String())
+	r.log.InfoContext(ctx, "task gated pending approval",
+		"approval_id", approval.ID.String(), "required_by", requiredBy)
 
 	return Outcome{
 		Task:     r.task,
 		Approval: &approval,
-		Message: fmt.Sprintf("%s requires approval and was not run; approve it to continue",
-			r.task.Identifier()),
+		Message: fmt.Sprintf("%s requires approval (%s) and was not run; approve it to continue",
+			r.task.Identifier(), requiredBy),
 	}, true, fmt.Errorf("%s: %w", r.task.Identifier(), ErrApprovalRequired)
 }
 
@@ -629,7 +718,7 @@ func (r *run) prepareWorktree(ctx context.Context) error {
 	writeCtx, cancel := writeContext(ctx)
 	defer cancel()
 
-	return r.o.Store.InTx(writeCtx, func(tx *store.Store) error {
+	if err := r.o.Store.InTx(writeCtx, func(tx *store.Store) error {
 		recorded, err := tx.CreateWorktree(writeCtx, task.Worktree{
 			ID:         uuid.Must(uuid.NewV7()),
 			AttemptID:  r.attempt.ID,
@@ -654,7 +743,21 @@ func (r *run) prepareWorktree(ctx context.Context) error {
 			payload["submodules"] = wt.Submodules
 		}
 		return appendEvent(writeCtx, tx, r.task.ID, &r.attempt.ID, event.TypeWorktreeCreated, payload)
-	})
+	}); err != nil {
+		return err
+	}
+
+	// Baseline for the containment check: taken now, after the worktree exists
+	// and is recorded, so a snapshot failure here is a prepared worktree the
+	// failure path can retain rather than a half-created one. From this point
+	// until the check runs, anything that changes this state changed it
+	// deliberately (docs/research.md §7i).
+	shared, err := r.worktree.SnapshotSharedState(ctx)
+	if err != nil {
+		return fmt.Errorf("snapshot shared repository state: %w", err)
+	}
+	r.sharedBefore = shared
+	return nil
 }
 
 // runAgent delegates the implementation and records what the agent did, including
@@ -852,6 +955,183 @@ func (r *run) persistWorkerRun(ctx context.Context, result agent.Result) *task.W
 	return &stored
 }
 
+// errSharedStateUnreadable marks a containment check that could not run: the
+// shared state could not be re-read, so nothing was found and nothing was
+// proven. Callers classify it as a worktree failure, not as a breach.
+var errSharedStateUnreadable = errors.New("shared repository state could not be re-read")
+
+// checkContainment compares the shared git state the agent ran against with
+// what is there now and reports tampering. It runs after the agent and before
+// verification, because a workspace whose shared state was edited cannot be
+// trusted: verification would be judging evidence the agent has already
+// shaped (docs/research.md §7i).
+//
+// A breach returns an error, which the caller records as FailureContainment.
+// A foreign ref moving is only warned about: another task in the same
+// repository legitimately advances its own branch while this one runs, and
+// the two are not distinguishable from here. The worktree's own branch is
+// ignored for the same reason in reverse — that is where its work belongs,
+// and verification judges it.
+func (r *run) checkContainment(ctx context.Context) error {
+	after, err := r.worktree.SnapshotSharedState(ctx)
+	if err != nil {
+		return fmt.Errorf("%w: %w", errSharedStateUnreadable, err)
+	}
+	changes := r.sharedBefore.Diff(after)
+
+	// The branch must still contain its base commit; otherwise the diff and
+	// the verification would be judged against a history that no longer
+	// exists. A git error here means the check could not conclude.
+	ancestor, err := r.worktree.BaseIsAncestor(ctx)
+	if err != nil {
+		return fmt.Errorf("%w: %w", errSharedStateUnreadable, err)
+	}
+
+	ownRef := "refs/heads/" + r.worktree.Branch
+	foreign := make(map[string]git.RefChange)
+	for ref, ch := range changes.RefChanges {
+		if ref != ownRef {
+			foreign[ref] = ch
+		}
+	}
+	if len(foreign) > 0 {
+		r.emit(ctx, event.TypeSharedRefsChanged, map[string]any{
+			"refs": foreign,
+		})
+	}
+
+	var reasons []string
+	if changes.CommonDirMoved {
+		reasons = append(reasons, fmt.Sprintf("the worktree's gitdir moved from %q to %q", r.sharedBefore.CommonDir, after.CommonDir))
+	}
+	if changes.ConfigChanged {
+		reasons = append(reasons, "the shared config changed")
+	}
+	if len(changes.InfoChanged) > 0 {
+		reasons = append(reasons, "shared info files changed: "+strings.Join(changes.InfoChanged, ", "))
+	}
+	if len(changes.HooksChanged) > 0 {
+		reasons = append(reasons, "shared hooks changed: "+strings.Join(changes.HooksChanged, ", "))
+	}
+	if changes.HeadMoved {
+		reasons = append(reasons, fmt.Sprintf("HEAD moved from %q to %q", r.sharedBefore.HeadRef, after.HeadRef))
+	}
+	if !ancestor {
+		reasons = append(reasons, "the base commit is no longer an ancestor of HEAD")
+	}
+	if len(reasons) == 0 {
+		return nil
+	}
+
+	payload := map[string]any{
+		"reasons":        reasons,
+		"config_changed": changes.ConfigChanged,
+		"head_before":    r.sharedBefore.HeadRef,
+		"head_after":     after.HeadRef,
+	}
+	// Only when there are some: an empty list in every breach event of a
+	// clean run would be noise.
+	if len(changes.InfoChanged) > 0 {
+		payload["info_changed"] = changes.InfoChanged
+	}
+	if len(changes.HooksChanged) > 0 {
+		payload["hooks_changed"] = changes.HooksChanged
+	}
+	if len(foreign) > 0 {
+		payload["refs"] = foreign
+	}
+	r.emit(ctx, event.TypeContainmentBreach, payload)
+
+	return fmt.Errorf("the agent modified state shared with the main repository: %s", strings.Join(reasons, "; "))
+}
+
+// baseCheck runs the task's verification on the base commit before the agent
+// touches anything (research B3, the red-before-green gate). Commands that
+// already pass on the base cannot tell the before state from the after state:
+// such a task would report success while nothing changed, so the attempt stops
+// here — FAILED (VERIFICATION), agent never called. Returns stopped=false when
+// the base is red and the run may proceed to the agent.
+//
+// The pass runs in a detached checkout of the base commit, not in the agent's
+// worktree: setup steps leave artefacts (npm ci, a touched fixture), and an
+// artefact present before the agent ran would later read as a change the agent
+// made — tripping interception or the protected paths on evidence aidev itself
+// produced. The checkout is removed on every path; it is scaffolding, like
+// clean verification's.
+//
+// Plumbing failures fail closed: a base check that could not run has not
+// established that the base is red, and silently skipping the gate would be
+// the exact bug this gate exists to prevent.
+func (r *run) baseCheck(ctx context.Context) (Outcome, bool, error) {
+	ctx, span := otel.Tracer("aidev").Start(ctx, "aidev.base_check")
+	defer span.End()
+
+	wt, err := r.o.Git.CreateDetached(ctx, r.worktree.Repository(),
+		"basecheck-"+r.attempt.ID.String(), r.worktree.BaseCommit)
+	if err != nil {
+		span.SetAttributes(attribute.Bool("aidev.base_check.passed", false))
+		out, failErr := r.fail(ctx, task.FailureWorktree, fmt.Errorf("base check not run: %w", err))
+		return out, true, failErr
+	}
+	defer func() {
+		// Always removed — success, failure and cancellation alike. Not the
+		// caller's context either: a cancelled task must still lose its
+		// scaffolding, or every cancelled run leaks a worktree. Force is
+		// right — running the checks left build artefacts in it.
+		writeCtx, cancel := writeContext(ctx)
+		defer cancel()
+		if err := r.o.Git.Remove(writeCtx, wt, true); err != nil {
+			r.log.ErrorContext(ctx, "could not remove the temporary base-check worktree",
+				"path", wt.Path, "error", err.Error())
+		}
+	}()
+
+	report, err := r.o.Verifier.Run(ctx, verification.Request{
+		AttemptID:  r.attempt.ID,
+		WorkingDir: wt.Path,
+		SetupSteps: r.task.SetupSteps,
+		Steps:      r.task.Verification,
+	})
+	if err != nil {
+		// The pass never ran, so it did not prove the base is red.
+		span.SetAttributes(attribute.Bool("aidev.base_check.passed", false))
+		out, failErr := r.fail(ctx, task.FailureInternal, fmt.Errorf("base check not run: %w", err))
+		return out, true, failErr
+	}
+	span.SetAttributes(attribute.Bool("aidev.base_check.passed", report.Passed))
+	r.traceVerificationSteps(ctx, report)
+
+	// One event for the whole pass, on both paths: a reviewer must be able to
+	// see that the gate ran and what it found, not only that it fired. The
+	// steps are deliberately not persisted as verification_runs rows — the
+	// UNIQUE (attempt_id, step_index) sequence belongs to the post-agent
+	// verdict, and on the firing path the attempt ends before that verdict
+	// ever exists, so the payload's summary is the record.
+	r.emit(ctx, event.TypeBaseCheckCompleted, map[string]any{
+		"passed":       report.Passed,
+		"failure_kind": string(report.FailureKind),
+		"summary":      report.Summary(),
+		"duration_ms":  report.Duration.Milliseconds(),
+	})
+	r.log.InfoContext(ctx, "base check finished",
+		"passed", report.Passed,
+		logging.FieldFailureKind, string(report.FailureKind),
+		logging.FieldDurationMS, report.Duration.Milliseconds())
+
+	if report.Passed {
+		// Carried into the failed payload and the outcome, so a reader sees
+		// what "already passes on the base" meant without re-running it.
+		r.report = &report
+		out, failErr := r.fail(ctx, task.FailureVerification, fmt.Errorf(
+			"verification already passes on the base commit: the commands do not distinguish "+
+				"before from after (%s)", report.Summary()))
+		return out, true, failErr
+	}
+	r.log.InfoContext(ctx, "base is red as required; the commands can tell before from after",
+		"summary", report.Summary())
+	return Outcome{}, false, nil
+}
+
 // verify runs the task's own commands and decides the outcome.
 func (r *run) verify(ctx context.Context) (Outcome, error) {
 	ctx, span := otel.Tracer("aidev").Start(ctx, "aidev.verification")
@@ -859,6 +1139,7 @@ func (r *run) verify(ctx context.Context) (Outcome, error) {
 
 	if err := r.transition(ctx, task.StatusVerifying, event.TypeVerificationStarted, map[string]any{
 		"steps": len(r.task.Verification),
+		"mode":  string(r.task.VerificationMode),
 	}); err != nil {
 		// A Cancel that landed after the agent finished owns the ending.
 		if out, ok := r.cancelledElsewhere(ctx, err); ok {
@@ -875,17 +1156,74 @@ func (r *run) verify(ctx context.Context) (Outcome, error) {
 		return r.fail(ctx, task.FailureInternal,
 			fmt.Errorf("verification not run: cannot establish independence: %w", err))
 	}
-	if intercepted := verification.Interceptions(r.task.Verification, changed); len(intercepted) > 0 {
+
+	// Report the edited tests before the interception check: an attempt that
+	// edited tests and was then caught still edited them, and a reviewer needs
+	// that. The classifier only reports — it never decides the outcome
+	// (research §7b tier 1); refusing a run for touching a test path is the
+	// separate protected_paths decision (tier 2).
+	if paths := verification.TestPaths(changed); len(paths) > 0 {
+		r.testsModified = paths
+		r.emit(ctx, event.TypeVerificationTestsModified, map[string]any{"paths": paths})
+	}
+
+	// Setup commands deserve the same independence protection as the checks
+	// they prepare for: both run from the task, and both are refused before
+	// anything executes if their target changed during the attempt. The
+	// combined list shares one step_index numbering with verification_runs,
+	// so the indexes in the refusal match the rows a reader will find.
+	allSteps := make([]task.VerificationStep, 0, len(r.task.SetupSteps)+len(r.task.Verification))
+	allSteps = append(allSteps, r.task.SetupSteps...)
+	allSteps = append(allSteps, r.task.Verification...)
+
+	intercepted := verification.Interceptions(allSteps, changed)
+	violated, err := verification.Violations(r.task.ProtectedPaths, changed)
+	if err != nil {
+		// A stored pattern that cannot be evaluated means the guard the task's
+		// creator asked for is gone: fail closed rather than run checks that
+		// were supposed to be protected (research §7b tier 2).
 		span.SetAttributes(attribute.Bool("aidev.verification.passed", false))
-		r.emit(ctx, event.TypeVerificationIntercepted, map[string]any{
-			"interceptions": interceptionPayload(intercepted),
-		})
-		return r.fail(ctx, task.FailureVerification, interceptionError(intercepted))
+		return r.fail(ctx, task.FailureInternal, fmt.Errorf("verification not run: %w", err))
+	}
+	if len(intercepted) > 0 || len(violated) > 0 {
+		span.SetAttributes(attribute.Bool("aidev.verification.passed", false))
+		// One event type for both refusals — a reviewer reads
+		// task.verification_intercepted as "this run was not trusted"; the
+		// payload says which reason fired, and only the reasons that did.
+		payload := map[string]any{}
+		if len(intercepted) > 0 {
+			payload["interceptions"] = interceptionPayload(intercepted)
+		}
+		if len(violated) > 0 {
+			payload["protected_paths"] = protectedPayload(violated)
+		}
+		r.emit(ctx, event.TypeVerificationIntercepted, payload)
+		return r.fail(ctx, task.FailureVerification, refusalError(intercepted, violated))
+	}
+
+	// In clean mode the checks run on a detached checkout of the snapshot —
+	// the exact tree a commit would carry — so a file git ignores, or a file
+	// the agent never added, cannot make them pass. Everything from snapshot
+	// to checkout is plumbing: if any of it breaks, the failure kind says so
+	// (FailureWorktree) instead of pretending a check failed.
+	workingDir := r.worktree.Path
+	if r.task.VerificationMode == task.VerificationClean {
+		path, cleanup, err := r.cleanCheckout(ctx)
+		if err != nil {
+			span.SetAttributes(attribute.Bool("aidev.verification.passed", false))
+			return r.fail(ctx, task.FailureWorktree, fmt.Errorf("verification not run: %w", err))
+		}
+		// Always removed — on success, on failure and on cancellation
+		// alike. The detached checkout is scaffolding, not a record: the
+		// agent's worktree on the task branch is what a reviewer inspects.
+		defer cleanup()
+		workingDir = path
 	}
 
 	report, err := r.o.Verifier.Run(ctx, verification.Request{
 		AttemptID:  r.attempt.ID,
-		WorkingDir: r.worktree.Path,
+		WorkingDir: workingDir,
+		SetupSteps: r.task.SetupSteps,
 		Steps:      r.task.Verification,
 	})
 	if err != nil {
@@ -916,6 +1254,47 @@ func (r *run) verify(ctx context.Context) (Outcome, error) {
 	return r.succeed(ctx)
 }
 
+// cleanCheckout builds the detached worktree clean verification runs in:
+// the post-agent tree snapshotted to a tree object, committed without
+// touching any ref, and checked out under the workspace root. It returns the
+// path to verify in and a cleanup that removes the checkout — the caller
+// defers it, so the scaffolding disappears on success, failure and
+// cancellation alike.
+//
+// Every failure is plumbing, not a check: the caller reports them as
+// FailureWorktree so nobody mistakes "the snapshot broke" for "the tests
+// failed".
+func (r *run) cleanCheckout(ctx context.Context) (string, func(), error) {
+	tree, err := r.worktree.SnapshotTree(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	commit, err := r.worktree.CommitTree(ctx, tree,
+		fmt.Sprintf("aidev verification snapshot for %s", r.task.Identifier()))
+	if err != nil {
+		return "", nil, err
+	}
+	wt, err := r.o.Git.CreateDetached(ctx, r.worktree.Repository(),
+		"verify-"+r.attempt.ID.String(), commit)
+	if err != nil {
+		return "", nil, err
+	}
+
+	cleanup := func() {
+		// Deliberately not the caller's context: a cancelled task must
+		// still lose its scaffolding, or every cancelled clean run leaks a
+		// worktree. Force is right here — the checkout exists to be
+		// discarded, and running the checks left build artefacts in it.
+		writeCtx, cancel := writeContext(ctx)
+		defer cancel()
+		if err := r.o.Git.Remove(writeCtx, wt, true); err != nil {
+			r.log.ErrorContext(ctx, "could not remove the temporary verification worktree",
+				"path", wt.Path, "error", err.Error())
+		}
+	}
+	return wt.Path, cleanup, nil
+}
+
 // interceptionPayload lists what was replaced for the audit log, so a reviewer
 // can see which runner each step would have loaded.
 func interceptionPayload(ins []verification.Interception) []map[string]any {
@@ -928,6 +1307,38 @@ func interceptionPayload(ins []verification.Interception) []map[string]any {
 		})
 	}
 	return out
+}
+
+// protectedPayload quotes both sides of a ring-fence refusal — the pattern the
+// creator declared and the path the attempt touched — so a reviewer can judge
+// the refusal from the audit log alone.
+func protectedPayload(vs []verification.Violation) []map[string]any {
+	out := make([]map[string]any, 0, len(vs))
+	for _, v := range vs {
+		out = append(out, map[string]any{
+			"pattern": v.Pattern,
+			"path":    v.Path,
+		})
+	}
+	return out
+}
+
+// refusalError names every reason verification refused to run, so the failure
+// reason tells a reviewer what happened without opening the audit log.
+func refusalError(ins []verification.Interception, vs []verification.Violation) error {
+	if len(vs) == 0 {
+		return interceptionError(ins)
+	}
+	parts := make([]string, 0, len(ins)+len(vs))
+	for _, in := range ins {
+		parts = append(parts, fmt.Sprintf("step %d `%s` would run %s, which changed during this attempt",
+			in.StepIndex+1, in.Step, in.Path))
+	}
+	for _, v := range vs {
+		parts = append(parts, fmt.Sprintf("%s changed during this attempt but is protected by %q",
+			v.Path, v.Pattern))
+	}
+	return fmt.Errorf("verification not run: %s", strings.Join(parts, "; "))
 }
 
 // interceptionError names every step and path, so the failure reason tells a
@@ -1277,12 +1688,13 @@ func (r *run) emit(ctx context.Context, evType event.Type, payload any) {
 func (r *run) outcome(message string) Outcome {
 	attempt := r.attempt
 	out := Outcome{
-		Task:         r.task,
-		Attempt:      &attempt,
-		WorkerRun:    r.workerRun,
-		Verification: r.report,
-		Worktree:     r.record,
-		Message:      message,
+		Task:          r.task,
+		Attempt:       &attempt,
+		WorkerRun:     r.workerRun,
+		Verification:  r.report,
+		Worktree:      r.record,
+		TestsModified: r.testsModified,
+		Message:       message,
 	}
 	return out
 }

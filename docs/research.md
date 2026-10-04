@@ -1171,7 +1171,61 @@ checkout to run a command later.
 
 **Consequence recorded, not assumed:** the worktree boundary contains the working *tree*, not
 git state. aidev does not (and cannot cheaply) sandbox ref or config writes; docs/architecture.md's
-security model states this beside the containment claim.
+security model states this beside the containment claim. What aidev *can* do cheaply is detect
+them: two layers now act on this finding (§7i.1 and §7i.2 below).
+
+### 7i.1. Reading the shared state from a worktree: measured command behaviour **[OBSERVED]**
+
+Measured on git 2.43.0 against a throwaway repository in `.probe/a1/`, to settle which
+commands a snapshot can rely on when it re-reads shared state from inside a linked worktree.
+
+```
+$ git -C wt rev-parse --git-common-dir
+/home/.../repo/.git                  # absolute, even from the linked worktree
+
+$ git -C wt symbolic-ref -q HEAD      # detached HEAD
+$ echo $?
+1                                     # empty stdout; without -q it exits 128 "fatal: ..."
+
+$ git -C wt merge-base --is-ancestor <base> HEAD
+$ echo $?
+0 ancestor / 1 not-ancestor / 128 error (missing object)
+
+$ git -C wt checkout --detach && git -C wt checkout --orphan empty && git commit ...
+$ git -C wt merge-base --is-ancestor <base> HEAD
+1                                     # an orphaned history breaks ancestry for real
+```
+
+One trap was found the hard way: `git rev-parse --git-path hooks` honours `core.hooksPath`,
+and aidev's own flag layer pins `core.hooksPath=/dev/null` for every git command it runs
+(§7i.2). The snapshot therefore saw `/dev/null` instead of the shared hooks directory.
+The fix is to derive `commonDir/hooks` from `--git-common-dir` directly: a *configured*
+hooksPath override lives in the config file and is caught by the config hash anyway.
+Everything else measured works from the worktree as expected — `update-ref`, `tag`,
+`checkout --detach` and `checkout --orphan` all mutate shared state from inside it.
+
+### 7i.2. Two layers: neutralise for aidev's own commands, detect after the agent **[DESIGN]**
+
+Layer 1 (commit `443a736`) prepends `-c core.fsmonitor=false -c core.hooksPath=/dev/null`
+to every git command aidev runs, plus `--no-ext-diff --no-textconv` on diffs, and uses a
+temporary index: an operator-supplied `core.fsmonitor` or planted hook cannot execute during
+aidev's own run. That protects aidev's execution; it does not stop the agent from *writing*
+shared state for the operator's next plain `git` command.
+
+Layer 2 detects those writes. At the end of `prepareWorktree`, after the worktree row is
+recorded, aidev snapshots the shared state: common-dir path, every ref via `for-each-ref`,
+the symbolic HEAD (`symbolic-ref -q`, exit 1 = detached), the hash of `.git/config`, the
+hashes of `.git/info/*` (attributes, exclude) and of each file in `.git/hooks` including
+its mode. After the agent finishes — and **before** verification — it snapshots again and
+diffs. A change in config, info, hooks, HEAD, or the common dir itself fails the attempt as
+`CONTAINMENT`; the base commit no longer being an ancestor of HEAD fails the same way; a
+ref outside the task's own branch moving emits `task.shared_refs_changed` as a warning
+only, because another concurrent task advancing its branch is indistinguishable from the
+agent doing it. If the re-read itself fails, the attempt fails as `WORKTREE` — the honest
+bucket for "aidev could not inspect", distinct from "the agent tampered".
+
+The check sits before verification deliberately: a workspace that tampered with shared
+state cannot be trusted to be verified, even when its files would pass every command.
 
 ## 7j. WaitDelay bounds the wait, not the grandchildren **[OBSERVED]**
 

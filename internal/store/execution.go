@@ -371,7 +371,7 @@ func scanWorkerRun(row scanner) (task.WorkerRun, error) {
 	return r, nil
 }
 
-const verificationRunColumns = `id, attempt_id, step_index, command, status, exit_code,
+const verificationRunColumns = `id, attempt_id, step_index, phase, command, status, exit_code,
 	stdout, stdout_truncated, stderr, stderr_truncated, duration_ms, started_at, finished_at`
 
 // CreateVerificationRun records the result of one verification step that aidev
@@ -379,12 +379,12 @@ const verificationRunColumns = `id, attempt_id, step_index, command, status, exi
 func (s *Store) CreateVerificationRun(ctx context.Context, r task.VerificationRun) (task.VerificationRun, error) {
 	row := s.db.QueryRow(ctx, `
 		INSERT INTO verification_runs (
-			id, attempt_id, step_index, command, status, exit_code,
+			id, attempt_id, step_index, phase, command, status, exit_code,
 			stdout, stdout_truncated, stderr, stderr_truncated, duration_ms,
 			started_at, finished_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 		RETURNING `+verificationRunColumns,
-		r.ID, r.AttemptID, r.StepIndex, r.Command, string(r.Status), r.ExitCode,
+		r.ID, r.AttemptID, r.StepIndex, string(r.Phase), r.Command, string(r.Status), r.ExitCode,
 		r.Stdout, r.StdoutTruncated, r.Stderr, r.StderrTruncated,
 		r.Duration.Milliseconds(), r.StartedAt, r.FinishedAt)
 
@@ -423,15 +423,23 @@ func (s *Store) ListVerificationRuns(ctx context.Context, attemptID uuid.UUID) (
 func scanVerificationRun(row scanner) (task.VerificationRun, error) {
 	var (
 		r          task.VerificationRun
+		phase      string
 		status     string
 		durationMS int64
 	)
-	err := row.Scan(&r.ID, &r.AttemptID, &r.StepIndex, &r.Command, &status, &r.ExitCode,
+	err := row.Scan(&r.ID, &r.AttemptID, &r.StepIndex, &phase, &r.Command, &status, &r.ExitCode,
 		&r.Stdout, &r.StdoutTruncated, &r.Stderr, &r.StderrTruncated, &durationMS,
 		&r.StartedAt, &r.FinishedAt)
 	if err != nil {
 		return task.VerificationRun{}, classify(err)
 	}
+	// The column defaults to 'verify', which is also what rows written
+	// before the column existed mean; anything else not in the vocabulary
+	// could only come from a diverged CHECK constraint.
+	if !task.VerificationPhase(phase).Valid() {
+		return task.VerificationRun{}, fmt.Errorf("verification run %s has unrecognised phase %q", r.ID, phase)
+	}
+	r.Phase = task.VerificationPhase(phase)
 	r.Status = task.VerificationStatus(status)
 	r.Duration = time.Duration(durationMS) * time.Millisecond
 	return r, nil

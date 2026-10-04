@@ -45,11 +45,20 @@ type Request struct {
 	// AttemptID labels the resulting records.
 	AttemptID uuid.UUID
 
-	// WorkingDir is the worktree to verify. Verification runs in the same
-	// isolated checkout the agent worked in, never in the main repository.
+	// WorkingDir is the worktree to verify: the agent's own checkout for
+	// in_place verification, or the temporary detached checkout built from
+	// the snapshot for clean. Never the main repository.
 	WorkingDir string
 
-	// Steps are the commands to run, in order.
+	// SetupSteps run first, in order, to prepare the checkout (npm ci and
+	// friends). They share the pass with Steps: one sequence of
+	// step_index values (setup first), one stop-at-first-failure, one
+	// total timeout. A setup command that fails fails the pass — the
+	// checks that follow would be judging an unprepared tree.
+	SetupSteps []task.VerificationStep
+
+	// Steps are the task's own verification commands, run after
+	// SetupSteps, in order. At least one is required.
 	Steps []task.VerificationStep
 }
 
@@ -134,6 +143,21 @@ func (r *Runner) Run(ctx context.Context, req Request) (Report, error) {
 		return report, fmt.Errorf("verification: no steps defined, so nothing could be verified")
 	}
 
+	// One sequence across both phases: setup steps first, then the task's
+	// own checks, sharing a single step_index counter so a result maps back
+	// to the command that produced it without knowing which phase it was in.
+	type planned struct {
+		phase task.VerificationPhase
+		step  task.VerificationStep
+	}
+	plan := make([]planned, 0, len(req.SetupSteps)+len(req.Steps))
+	for _, step := range req.SetupSteps {
+		plan = append(plan, planned{phase: task.PhaseSetup, step: step})
+	}
+	for _, step := range req.Steps {
+		plan = append(plan, planned{phase: task.PhaseVerify, step: step})
+	}
+
 	// The total budget wraps the caller's context rather than replacing it, so
 	// a cancellation and an exhausted budget stay distinguishable below.
 	runCtx := ctx
@@ -143,12 +167,12 @@ func (r *Runner) Run(ctx context.Context, req Request) (Report, error) {
 		defer cancel()
 	}
 
-	report.Runs = make([]task.VerificationRun, 0, len(req.Steps))
+	report.Runs = make([]task.VerificationRun, 0, len(plan))
 	stopped := false
 
-	for i, step := range req.Steps {
+	for i, p := range plan {
 		if stopped {
-			report.Runs = append(report.Runs, r.skipped(req.AttemptID, i, step))
+			report.Runs = append(report.Runs, r.skipped(req.AttemptID, i, p.phase, p.step))
 			continue
 		}
 
@@ -159,16 +183,16 @@ func (r *Runner) Run(ctx context.Context, req Request) (Report, error) {
 		if err := runCtx.Err(); err != nil {
 			stopped = true
 			if errors.Is(err, context.DeadlineExceeded) {
-				report.Runs = append(report.Runs, r.timedOut(req.AttemptID, i, step))
+				report.Runs = append(report.Runs, r.timedOut(req.AttemptID, i, p.phase, p.step))
 				report.FailureKind = task.FailureTimeout
 			} else {
-				report.Runs = append(report.Runs, r.cancelled(req.AttemptID, i, step))
+				report.Runs = append(report.Runs, r.cancelled(req.AttemptID, i, p.phase, p.step))
 				report.FailureKind = task.FailureCancelled
 			}
 			continue
 		}
 
-		run, outcome := r.runStep(runCtx, req, i, step)
+		run, outcome := r.runStep(runCtx, req, i, p.phase, p.step)
 		// procexec reports any caller-context error as a cancellation; a budget
 		// that expired mid-step is still a timeout, and recording it as a
 		// cancellation would blame the operator for aidev's own deadline.
@@ -199,7 +223,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (Report, error) {
 	return report, nil
 }
 
-func (r *Runner) runStep(ctx context.Context, req Request, index int, step task.VerificationStep) (task.VerificationRun, procexec.Outcome) {
+func (r *Runner) runStep(ctx context.Context, req Request, index int, phase task.VerificationPhase, step task.VerificationStep) (task.VerificationRun, procexec.Outcome) {
 	timeout := r.DefaultTimeout
 	if step.TimeoutSeconds > 0 {
 		timeout = time.Duration(step.TimeoutSeconds) * time.Second
@@ -211,12 +235,16 @@ func (r *Runner) runStep(ctx context.Context, req Request, index int, step task.
 		Dir:            req.WorkingDir,
 		Timeout:        timeout,
 		MaxOutputBytes: r.MaxOutputBytes,
+		// Verification commands come from the task (agent-authored in the
+		// delegation flow); they must not see aidev's own configuration.
+		DropEnv: []string{"AIDEV_"},
 	})
 
 	run := task.VerificationRun{
 		ID:              uuid.Must(uuid.NewV7()),
 		AttemptID:       req.AttemptID,
 		StepIndex:       index,
+		Phase:           phase,
 		Command:         step.String(),
 		ExitCode:        proc.ExitCode,
 		Stdout:          proc.Stdout,
@@ -255,20 +283,21 @@ func (r *Runner) runStep(ctx context.Context, req Request, index int, step task.
 	return run, proc.Outcome
 }
 
-func (r *Runner) skipped(attemptID uuid.UUID, index int, step task.VerificationStep) task.VerificationRun {
+func (r *Runner) skipped(attemptID uuid.UUID, index int, phase task.VerificationPhase, step task.VerificationStep) task.VerificationRun {
 	now := time.Now().UTC()
 	return task.VerificationRun{
 		ID:        uuid.Must(uuid.NewV7()),
 		AttemptID: attemptID,
 		StepIndex: index,
+		Phase:     phase,
 		Command:   step.String(),
 		Status:    task.VerificationSkipped,
 		StartedAt: now,
 	}
 }
 
-func (r *Runner) cancelled(attemptID uuid.UUID, index int, step task.VerificationStep) task.VerificationRun {
-	run := r.skipped(attemptID, index, step)
+func (r *Runner) cancelled(attemptID uuid.UUID, index int, phase task.VerificationPhase, step task.VerificationStep) task.VerificationRun {
+	run := r.skipped(attemptID, index, phase, step)
 	run.Status = task.VerificationCancelled
 	return run
 }
@@ -276,8 +305,8 @@ func (r *Runner) cancelled(attemptID uuid.UUID, index int, step task.Verificatio
 // timedOut marks the step at which the pass ran out of budget: the command
 // itself never got (or never finished) its turn, which is a timeout of the
 // pass, not a failure of that check.
-func (r *Runner) timedOut(attemptID uuid.UUID, index int, step task.VerificationStep) task.VerificationRun {
-	run := r.skipped(attemptID, index, step)
+func (r *Runner) timedOut(attemptID uuid.UUID, index int, phase task.VerificationPhase, step task.VerificationStep) task.VerificationRun {
+	run := r.skipped(attemptID, index, phase, step)
 	run.Status = task.VerificationTimedOut
 	return run
 }

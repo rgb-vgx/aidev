@@ -407,3 +407,62 @@ func TestStripTelemetryEnvKeepsEverythingElse(t *testing.T) {
 		}
 	}
 }
+
+// DropEnv matches on the variable name, not the whole entry: a name that only
+// looks similar must survive, and a value must never influence the decision.
+func TestDropEnvMatchesOnTheNameOnly(t *testing.T) {
+	in := []string{
+		"AIDEV_CONFIG=/etc/aidev/conf.json",
+		"AIDEVLIKE=keep",
+		"SECRET_AIDEV_=keep",
+		"PATH=/usr/bin",
+	}
+	got := dropEnv(in, []string{"AIDEV_"})
+
+	want := map[string]bool{"AIDEVLIKE=keep": true, "SECRET_AIDEV_=keep": true, "PATH=/usr/bin": true}
+	if len(got) != len(want) {
+		t.Fatalf("kept %v, want %d entries", got, len(want))
+	}
+	for _, entry := range got {
+		if !want[entry] {
+			t.Errorf("kept %q, which should have been dropped", entry)
+		}
+	}
+}
+
+// The property agent and verification runs rely on: AIDEV_* (which names the
+// config file containing the database URL) never reaches the child, while the
+// project's own environment — PG*, DATABASE_URL — stays intact.
+func TestDropEnvRemovesAidevVarsButKeepsTheProjects(t *testing.T) {
+	t.Setenv("AIDEV_CONFIG", "/etc/aidev/conf.json")
+	t.Setenv("DATABASE_URL", "postgres://project/kept")
+
+	s := spec(t, "sh", "-c", `printf '%s|%s' "${AIDEV_CONFIG-unset}" "${DATABASE_URL-unset}"`)
+	s.DropEnv = []string{"AIDEV_"}
+
+	res, err := Run(context.Background(), s)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Stdout != "unset|postgres://project/kept" {
+		t.Errorf("child environment = %q, want AIDEV_CONFIG dropped and DATABASE_URL kept", res.Stdout)
+	}
+}
+
+// Dropping must not take away the ability to pass a variable deliberately:
+// ExtraEnv is applied after the drop.
+func TestExtraEnvCanReAddADroppedVariable(t *testing.T) {
+	t.Setenv("AIDEV_CONFIG", "/inherited")
+
+	s := spec(t, "sh", "-c", `printf '%s' "$AIDEV_CONFIG"`)
+	s.DropEnv = []string{"AIDEV_"}
+	s.ExtraEnv = []string{"AIDEV_CONFIG=/deliberate"}
+
+	res, err := Run(context.Background(), s)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Stdout != "/deliberate" {
+		t.Errorf("stdout = %q, want the ExtraEnv value to win over the drop", res.Stdout)
+	}
+}

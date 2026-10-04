@@ -14,8 +14,8 @@ import (
 )
 
 const taskColumns = `id, ref, project_id, title, description, agent, model, hardness, priority, status,
-	acceptance_criteria, verification, max_retries, requires_approval, base_ref,
-	timeout_seconds, created_at, updated_at`
+	acceptance_criteria, verification, protected_paths, setup_steps, verification_mode,
+	max_retries, requires_approval, expect_fail_on_base, base_ref, timeout_seconds, created_at, updated_at`
 
 // CreateTask persists a new task and returns it with the database-assigned
 // reference filled in.
@@ -24,16 +24,36 @@ func (s *Store) CreateTask(ctx context.Context, t task.Task) (task.Task, error) 
 	if err != nil {
 		return task.Task{}, fmt.Errorf("encode verification steps: %w", err)
 	}
+	// A nil slice marshals to null, which the column's array CHECK rejects; a
+	// task that protects nothing — or prepares nothing — stores an empty
+	// array instead.
+	protectedList := t.ProtectedPaths
+	if protectedList == nil {
+		protectedList = []string{}
+	}
+	protected, err := json.Marshal(protectedList)
+	if err != nil {
+		return task.Task{}, fmt.Errorf("encode protected paths: %w", err)
+	}
+	setupList := t.SetupSteps
+	if setupList == nil {
+		setupList = []task.VerificationStep{}
+	}
+	setup, err := json.Marshal(setupList)
+	if err != nil {
+		return task.Task{}, fmt.Errorf("encode setup steps: %w", err)
+	}
 
 	row := s.db.QueryRow(ctx, `
 		INSERT INTO tasks (
 			id, project_id, title, description, agent, model, hardness, priority, status,
-			acceptance_criteria, verification, max_retries, requires_approval,
-			base_ref, timeout_seconds
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+			acceptance_criteria, verification, protected_paths, setup_steps, verification_mode,
+			max_retries, requires_approval, expect_fail_on_base, base_ref, timeout_seconds
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
 		RETURNING `+taskColumns,
 		t.ID, t.ProjectID, t.Title, t.Description, t.Agent, t.Model, string(t.Hardness), t.Priority, string(t.Status),
-		t.AcceptanceCriteria, verification, t.MaxRetries, t.RequiresApproval,
+		t.AcceptanceCriteria, verification, protected, setup, string(t.VerificationMode),
+		t.MaxRetries, t.RequiresApproval, t.ExpectFailOnBase,
 		t.BaseRef, int(t.Timeout.Seconds()))
 
 	created, err := scanTask(row)
@@ -183,11 +203,15 @@ func scanTask(row scanner) (task.Task, error) {
 		status         string
 		hardness       string
 		verification   []byte
+		protectedPaths []byte
+		setupSteps     []byte
+		mode           string
 		timeoutSeconds int
 	)
 	err := row.Scan(
 		&t.ID, &t.Ref, &t.ProjectID, &t.Title, &t.Description, &t.Agent, &t.Model, &hardness, &t.Priority,
-		&status, &t.AcceptanceCriteria, &verification, &t.MaxRetries, &t.RequiresApproval,
+		&status, &t.AcceptanceCriteria, &verification, &protectedPaths, &setupSteps, &mode,
+		&t.MaxRetries, &t.RequiresApproval, &t.ExpectFailOnBase,
 		&t.BaseRef, &timeoutSeconds, &t.CreatedAt, &t.UpdatedAt)
 	if err != nil {
 		return task.Task{}, classify(err)
@@ -216,6 +240,27 @@ func scanTask(row scanner) (task.Task, error) {
 			return task.Task{}, fmt.Errorf("task %s has unreadable verification steps: %w", t.ID, err)
 		}
 	}
+	// The column defaults to '[]', so this is empty rather than absent for
+	// every task that protects nothing; only an unreadable array is an error.
+	if len(protectedPaths) > 0 {
+		if err := json.Unmarshal(protectedPaths, &t.ProtectedPaths); err != nil {
+			return task.Task{}, fmt.Errorf("task %s has unreadable protected paths: %w", t.ID, err)
+		}
+	}
+	// Same for setup steps: the default '[]' means "no preparation", which
+	// is a valid task, not a missing one.
+	if len(setupSteps) > 0 {
+		if err := json.Unmarshal(setupSteps, &t.SetupSteps); err != nil {
+			return task.Task{}, fmt.Errorf("task %s has unreadable setup steps: %w", t.ID, err)
+		}
+	}
+	// The CHECK constraint makes an unknown mode unreachable unless the enum
+	// and the migration have diverged, which is worth reporting loudly.
+	parsedMode, err := task.ParseVerificationMode(mode)
+	if err != nil {
+		return task.Task{}, fmt.Errorf("task %s has unrecognised verification mode: %w", t.ID, err)
+	}
+	t.VerificationMode = parsedMode
 	t.Timeout = time.Duration(timeoutSeconds) * time.Second
 	return t, nil
 }

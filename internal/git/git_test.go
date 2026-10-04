@@ -586,3 +586,68 @@ func TestBaseRefStartsTheBranchElsewhere(t *testing.T) {
 		t.Error("the worktree contains a file from after its base commit")
 	}
 }
+
+// A linked worktree shares .git with the main repository, so config and hooks
+// the agent writes are commands the next git invocation would run
+// (docs/research.md §7i). Every git command aidev starts must disable the
+// fsmonitor and hooks vectors, and every diff must refuse external diff
+// drivers and textconv filters — otherwise "the agent writes only inside its
+// worktree" does not stop the agent's code from executing.
+func TestGitNeverRunsCodeInstalledInTheSharedRepository(t *testing.T) {
+	ctx := context.Background()
+	m := newManager(t)
+
+	// Wrap the real git binary, recording the argv aidev builds for each
+	// invocation: the property lives in the command line, not in git's output.
+	logPath := filepath.Join(t.TempDir(), "argv.log")
+	wrapper := filepath.Join(t.TempDir(), "git")
+	write(t, wrapper, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> "+logPath+"\nexec git \"$@\"\n")
+	if err := os.Chmod(wrapper, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m.Command = wrapper
+
+	repo, err := m.OpenRepository(ctx, newRepo(t))
+	if err != nil {
+		t.Fatalf("OpenRepository: %v", err)
+	}
+	wt, err := m.Create(ctx, CreateRequest{Repository: repo, Name: "guard", Branch: "aidev/guard"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	write(t, filepath.Join(wt.Path, "greet.go"), "package main\n")
+	if _, err := wt.Diff(ctx); err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	if _, err := wt.ChangedPaths(ctx); err != nil {
+		t.Fatalf("ChangedPaths: %v", err)
+	}
+
+	recorded, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read recorded argv: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(recorded)), "\n")
+	if len(lines) < 4 {
+		t.Fatalf("recorded %d git invocations, want the commands above to have run:\n%s", len(lines), recorded)
+	}
+	const prefix = "-c core.fsmonitor=false -c core.hooksPath=/dev/null "
+	var diffs int
+	for _, line := range lines {
+		if !strings.HasPrefix(line, prefix) {
+			t.Errorf("git argv without the containment flags: %q", line)
+		}
+		// Only a diff subcommand needs the diff flags; here it is always the
+		// first argument after the prepended -c pairs.
+		rest := strings.TrimPrefix(line, prefix)
+		if strings.HasPrefix(rest, "diff ") {
+			diffs++
+			if !strings.Contains(rest, "--no-ext-diff") || !strings.Contains(rest, "--no-textconv") {
+				t.Errorf("diff argv without --no-ext-diff/--no-textconv: %q", line)
+			}
+		}
+	}
+	if diffs == 0 {
+		t.Error("no diff invocation was recorded; the diff assertions never ran")
+	}
+}

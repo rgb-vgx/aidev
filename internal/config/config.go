@@ -184,6 +184,14 @@ type Config struct {
 	// Tracing holds the tracing section of the configuration file.
 	Tracing tracing.Settings
 
+	// MCPAllowApproval decides whether the MCP approve tool may record a
+	// decision at all. Default false: anything that can talk to the MCP
+	// server can call it — in the common setup that is an LLM, and a planner
+	// can create the task it would be approving. Approval is a human act, and
+	// the human path is the CLI (`aidev task approve`). Setting this true
+	// hands that power to the MCP client deliberately.
+	MCPAllowApproval bool
+
 	// ConfigFile is the path of the configuration file that was read, so
 	// `aidev config` can report which file is in effect.
 	ConfigFile string
@@ -243,6 +251,9 @@ var configSchema = map[string]any{
 		"routing": kindStringMap,
 	},
 	"log_level": kindString,
+	"mcp": map[string]any{
+		"allow_approval": kindBoolean,
+	},
 	"tracing": map[string]any{
 		"endpoint":        kindString,
 		"traces_endpoint": kindString,
@@ -259,6 +270,7 @@ const (
 	kindString    valueKind = "a string"
 	kindInteger   valueKind = "a whole number"
 	kindNumber    valueKind = "a number"
+	kindBoolean   valueKind = "a boolean"
 	kindStringMap valueKind = "an object of strings"
 )
 
@@ -340,7 +352,10 @@ type fileConfig struct {
 		Routing map[string]string `json:"routing"`
 	} `json:"agent"`
 	LogLevel *string `json:"log_level"`
-	Tracing  *struct {
+	MCP      *struct {
+		AllowApproval *bool `json:"allow_approval"`
+	} `json:"mcp"`
+	Tracing *struct {
 		Endpoint       *string           `json:"endpoint"`
 		TracesEndpoint *string           `json:"traces_endpoint"`
 		Headers        map[string]string `json:"headers"`
@@ -509,6 +524,12 @@ func LoadFile(path string) (Config, error) {
 				cfg.WorktreeCleanup = policy
 			}
 		}
+	}
+
+	// Absent means false: the MCP approval path is opt-in, so a file written
+	// before this setting existed keeps the safe behaviour.
+	if file.MCP != nil && file.MCP.AllowApproval != nil {
+		cfg.MCPAllowApproval = *file.MCP.AllowApproval
 	}
 
 	if file.Agent != nil {
@@ -749,6 +770,9 @@ func matchKind(kind valueKind, v any) (any, bool) {
 			return nil, false
 		}
 		return int64(f), true
+	case kindBoolean:
+		_, ok := v.(bool)
+		return v, ok
 	case kindStringMap:
 		m, ok := v.(map[string]any)
 		if !ok {

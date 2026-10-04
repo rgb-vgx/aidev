@@ -147,6 +147,9 @@ func (c *Codex) Run(ctx context.Context, req Request) (Result, error) {
 		Dir:            req.WorkingDir,
 		Timeout:        req.Timeout,
 		MaxOutputBytes: req.MaxOutputBytes,
+		// The agent executes instructions we do not control; it must not see
+		// aidev's own configuration (AIDEV_CONFIG → database URL).
+		DropEnv: []string{"AIDEV_"},
 		// Parse while the process runs, so events survive even when the
 		// capture cap discards the tail of a very chatty run.
 		Tee: scanner,

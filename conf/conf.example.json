@@ -27,6 +27,9 @@
       "HARD": "opencode/big-pickle"
     }
   },
+  "mcp": {
+    "allow_approval": false
+  },
   "log_level": "info",
   "tracing": {
     "endpoint": "",
