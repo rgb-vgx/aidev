@@ -74,6 +74,11 @@ func Run(ctx context.Context, version string, args []string, stdout, stderr io.W
 			summary: "inspect and reclaim the worktrees tasks left behind",
 			run:     runWorktree,
 		},
+		"prune": {
+			name:    "prune",
+			summary: "clear old captured output to reclaim database space",
+			run:     runPrune,
+		},
 		"stats": {
 			name:    "stats",
 			summary: "show outcomes by model and task hardness",

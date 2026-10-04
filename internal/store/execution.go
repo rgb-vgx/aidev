@@ -10,7 +10,8 @@ import (
 	"aidev/internal/task"
 )
 
-const attemptColumns = `id, task_id, attempt_number, status, failure_kind, error, started_at, finished_at`
+const attemptColumns = `id, task_id, attempt_number, status, failure_kind, error, started_at, finished_at,
+	lease_owner, lease_expires_at`
 
 // NextAttemptNumber returns the number the next attempt for a task should use.
 //
@@ -31,10 +32,12 @@ func (s *Store) NextAttemptNumber(ctx context.Context, taskID uuid.UUID) (int, e
 // CreateAttempt persists a new, running attempt.
 func (s *Store) CreateAttempt(ctx context.Context, a task.TaskAttempt) (task.TaskAttempt, error) {
 	row := s.db.QueryRow(ctx, `
-		INSERT INTO task_attempts (id, task_id, attempt_number, status, failure_kind, error, started_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7)
+		INSERT INTO task_attempts (id, task_id, attempt_number, status, failure_kind, error, started_at,
+			lease_owner, lease_expires_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
 		RETURNING `+attemptColumns,
-		a.ID, a.TaskID, a.AttemptNumber, string(a.Status), string(a.FailureKind), a.Error, a.StartedAt)
+		a.ID, a.TaskID, a.AttemptNumber, string(a.Status), string(a.FailureKind), a.Error, a.StartedAt,
+		a.LeaseOwner, a.LeaseExpiresAt)
 
 	created, err := scanAttempt(row)
 	if err != nil {
@@ -123,7 +126,8 @@ func scanAttempt(row scanner) (task.TaskAttempt, error) {
 		status string
 		kind   string
 	)
-	err := row.Scan(&a.ID, &a.TaskID, &a.AttemptNumber, &status, &kind, &a.Error, &a.StartedAt, &a.FinishedAt)
+	err := row.Scan(&a.ID, &a.TaskID, &a.AttemptNumber, &status, &kind, &a.Error, &a.StartedAt, &a.FinishedAt,
+		&a.LeaseOwner, &a.LeaseExpiresAt)
 	if err != nil {
 		return task.TaskAttempt{}, classify(err)
 	}
@@ -135,15 +139,111 @@ func scanAttempt(row scanner) (task.TaskAttempt, error) {
 	return a, nil
 }
 
-const worktreeColumns = `id, attempt_id, path, branch, base_commit, head_commit, status, created_at, removed_at`
+// RenewLease extends an attempt's lease and returns the task's current status.
+//
+// One round trip does both, and that pairing is the point: the run's claim
+// stays alive only while the run also checks for a cancel, so a watcher that
+// renews is a watcher that polls and neither half can be dropped while the
+// other is observed. The data-modifying CTE runs exactly once even though the
+// main query does not read it, and the status comes from the task row whether
+// or not anything was renewed — a finished or foreign attempt reports its
+// task's status all the same, which is how the watcher learns the run ended
+// even after it stopped holding the lease itself.
+func (s *Store) RenewLease(ctx context.Context, attemptID uuid.UUID, owner string, ttl time.Duration) (task.Status, error) {
+	var status string
+	err := s.db.QueryRow(ctx, `
+		WITH renewed AS (
+			UPDATE task_attempts
+			SET lease_expires_at = now() + make_interval(secs => $3::double precision)
+			WHERE id = $1 AND lease_owner = $2 AND status = 'RUNNING'
+			RETURNING id
+		)
+		SELECT t.status
+		FROM tasks t
+		JOIN task_attempts a ON a.task_id = t.id
+		WHERE a.id = $1`,
+		attemptID, owner, ttl.Seconds()).Scan(&status)
+	if err != nil {
+		return "", fmt.Errorf("renew lease on attempt %s: %w", attemptID, classify(err))
+	}
+	parsed, err := task.ParseStatus(status)
+	if err != nil {
+		return "", fmt.Errorf("renew lease on attempt %s: task has unrecognised status: %w", attemptID, err)
+	}
+	return parsed, nil
+}
+
+// StuckAttempt is a task still RUNNING or VERIFYING whose latest attempt has
+// no live lease: the process that owned it is gone, or never claimed it.
+// LeaseExpiresAt is nil when the lease was never set and LeaseOwner empty when
+// nobody ever reported in.
+type StuckAttempt struct {
+	TaskID         uuid.UUID
+	TaskRef        string
+	Status         task.Status
+	LeaseOwner     string
+	LeaseExpiresAt *time.Time
+	StartedAt      time.Time
+}
+
+// StuckLeases lists tasks whose latest attempt is no longer being heartbeated.
+//
+// An attempt whose lease is still in the future belongs to a process checking
+// in right now and is not reported. A NULL lease counts as expired: nobody is
+// renewing it, so nobody is vouching for it either. A task with no attempts at
+// all — which a crash between the status change and the attempt insert could
+// leave — has nothing to heartbeat and is reported for the same reason.
+func (s *Store) StuckLeases(ctx context.Context) ([]StuckAttempt, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT t.id, t.ref, t.status, a.lease_owner, a.lease_expires_at, a.started_at
+		FROM tasks t
+		LEFT JOIN LATERAL (
+			SELECT lease_owner, lease_expires_at, started_at
+			FROM task_attempts
+			WHERE task_id = t.id
+			ORDER BY attempt_number DESC
+			LIMIT 1
+		) a ON true
+		WHERE t.status IN ('RUNNING', 'VERIFYING')
+		  AND (a.lease_expires_at IS NULL OR a.lease_expires_at < now())
+		ORDER BY t.ref`)
+	if err != nil {
+		return nil, fmt.Errorf("list tasks with an expired lease: %w", classify(err))
+	}
+	defer rows.Close()
+
+	var out []StuckAttempt
+	for rows.Next() {
+		var (
+			item   StuckAttempt
+			status string
+		)
+		if err := rows.Scan(&item.TaskID, &item.TaskRef, &status,
+			&item.LeaseOwner, &item.LeaseExpiresAt, &item.StartedAt); err != nil {
+			return nil, fmt.Errorf("list tasks with an expired lease: %w", classify(err))
+		}
+		parsed, err := task.ParseStatus(status)
+		if err != nil {
+			return nil, fmt.Errorf("task %s has unrecognised status: %w", item.TaskRef, err)
+		}
+		item.Status = parsed
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list tasks with an expired lease: %w", classify(err))
+	}
+	return out, nil
+}
+
+const worktreeColumns = `id, attempt_id, path, branch, base_commit, head_commit, status, created_at, removed_at, agent_tree`
 
 // CreateWorktree records an isolated workspace.
 func (s *Store) CreateWorktree(ctx context.Context, w task.Worktree) (task.Worktree, error) {
 	row := s.db.QueryRow(ctx, `
-		INSERT INTO worktrees (id, attempt_id, path, branch, base_commit, head_commit, status)
-		VALUES ($1,$2,$3,$4,$5,$6,$7)
+		INSERT INTO worktrees (id, attempt_id, path, branch, base_commit, head_commit, status, agent_tree)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
 		RETURNING `+worktreeColumns,
-		w.ID, w.AttemptID, w.Path, w.Branch, w.BaseCommit, w.HeadCommit, string(w.Status))
+		w.ID, w.AttemptID, w.Path, w.Branch, w.BaseCommit, w.HeadCommit, string(w.Status), w.AgentTree)
 
 	created, err := scanWorktree(row)
 	if err != nil {
@@ -160,6 +260,21 @@ func (s *Store) SetWorktreeHead(ctx context.Context, id uuid.UUID, headCommit st
 	}
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("set worktree head %s: %w", id, ErrNotFound)
+	}
+	return nil
+}
+
+// SetWorktreeAgentTree records the tree the agent's work was snapshotted to
+// (research A6): the tree the success commit carries, taken before
+// verification ran. The in-memory copy is what the commit uses; this row is
+// so a later reader can see what was committed without trusting the branch.
+func (s *Store) SetWorktreeAgentTree(ctx context.Context, id uuid.UUID, tree string) error {
+	tag, err := s.db.Exec(ctx, `UPDATE worktrees SET agent_tree = $2 WHERE id = $1`, id, tree)
+	if err != nil {
+		return fmt.Errorf("set worktree agent tree %s: %w", id, classify(err))
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("set worktree agent tree %s: %w", id, ErrNotFound)
 	}
 	return nil
 }
@@ -222,7 +337,7 @@ func (s *Store) ListWorktrees(ctx context.Context, statuses []task.WorktreeStatu
 
 	rows, err := s.db.Query(ctx, `
 		SELECT w.id, w.attempt_id, w.path, w.branch, w.base_commit, w.head_commit,
-		       w.status, w.created_at, w.removed_at,
+		       w.status, w.created_at, w.removed_at, w.agent_tree,
 		       t.id, t.ref, t.title, t.status, a.attempt_number
 		FROM worktrees w
 		JOIN task_attempts a ON a.id = w.attempt_id
@@ -245,6 +360,7 @@ func (s *Store) ListWorktrees(ctx context.Context, statuses []task.WorktreeStatu
 			&item.Worktree.ID, &item.Worktree.AttemptID, &item.Worktree.Path,
 			&item.Worktree.Branch, &item.Worktree.BaseCommit, &item.Worktree.HeadCommit,
 			&wtStatus, &item.Worktree.CreatedAt, &item.Worktree.RemovedAt,
+			&item.Worktree.AgentTree,
 			&item.TaskID, &item.TaskRef, &item.TaskTitle, &taskStatus, &item.AttemptNumber)
 		if err != nil {
 			return nil, fmt.Errorf("list worktrees: %w", classify(err))
@@ -289,7 +405,7 @@ func scanWorktree(row scanner) (task.Worktree, error) {
 		status string
 	)
 	err := row.Scan(&w.ID, &w.AttemptID, &w.Path, &w.Branch, &w.BaseCommit,
-		&w.HeadCommit, &status, &w.CreatedAt, &w.RemovedAt)
+		&w.HeadCommit, &status, &w.CreatedAt, &w.RemovedAt, &w.AgentTree)
 	if err != nil {
 		return task.Worktree{}, classify(err)
 	}
@@ -299,7 +415,7 @@ func scanWorktree(row scanner) (task.Worktree, error) {
 
 const workerRunColumns = `id, attempt_id, backend, model, agent, status, failure_kind, command, working_dir,
 	exit_code, stdout, stdout_truncated, stderr, stderr_truncated, session_id, summary,
-	finish_reason, tokens, cost, diff, diff_truncated, changed_files, started_at, finished_at`
+	finish_reason, tokens, cost, diff, diff_truncated, changed_files, started_at, finished_at, logs_pruned`
 
 // CreateWorkerRun records what an agent backend did.
 func (s *Store) CreateWorkerRun(ctx context.Context, r task.WorkerRun) (task.WorkerRun, error) {
@@ -361,7 +477,7 @@ func scanWorkerRun(row scanner) (task.WorkerRun, error) {
 	err := row.Scan(&r.ID, &r.AttemptID, &r.Backend, &r.Model, &r.Agent, &status, &kind, &r.Command, &r.WorkingDir,
 		&r.ExitCode, &r.Stdout, &r.StdoutTruncated, &r.Stderr, &r.StderrTruncated,
 		&r.SessionID, &r.Summary, &r.FinishReason, &tokens, &r.Cost, &r.Diff,
-		&r.DiffTruncated, &r.ChangedFiles, &r.StartedAt, &r.FinishedAt)
+		&r.DiffTruncated, &r.ChangedFiles, &r.StartedAt, &r.FinishedAt, &r.LogsPruned)
 	if err != nil {
 		return task.WorkerRun{}, classify(err)
 	}
@@ -372,7 +488,7 @@ func scanWorkerRun(row scanner) (task.WorkerRun, error) {
 }
 
 const verificationRunColumns = `id, attempt_id, step_index, phase, command, status, exit_code,
-	stdout, stdout_truncated, stderr, stderr_truncated, duration_ms, started_at, finished_at`
+	stdout, stdout_truncated, stderr, stderr_truncated, duration_ms, started_at, finished_at, logs_pruned`
 
 // CreateVerificationRun records the result of one verification step that aidev
 // ran itself.
@@ -429,7 +545,7 @@ func scanVerificationRun(row scanner) (task.VerificationRun, error) {
 	)
 	err := row.Scan(&r.ID, &r.AttemptID, &r.StepIndex, &phase, &r.Command, &status, &r.ExitCode,
 		&r.Stdout, &r.StdoutTruncated, &r.Stderr, &r.StderrTruncated, &durationMS,
-		&r.StartedAt, &r.FinishedAt)
+		&r.StartedAt, &r.FinishedAt, &r.LogsPruned)
 	if err != nil {
 		return task.VerificationRun{}, classify(err)
 	}

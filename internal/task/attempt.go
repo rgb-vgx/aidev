@@ -125,6 +125,14 @@ type TaskAttempt struct {
 	Error         string
 	StartedAt     time.Time
 	FinishedAt    *time.Time
+
+	// LeaseOwner names the process keeping this attempt alive
+	// (hostname:pid:uuid), and LeaseExpiresAt is when its claim runs out
+	// unless renewed. An empty owner or nil expiry means nobody ever
+	// reported in, which recovery treats as expired: there is no evidence
+	// any process is still working on it.
+	LeaseOwner     string
+	LeaseExpiresAt *time.Time
 }
 
 // NewAttempt builds a running attempt.
@@ -160,11 +168,17 @@ const (
 	// failed or was cancelled and the work may still be useful. Retained
 	// worktrees are never deleted implicitly.
 	WorktreeRetained WorktreeStatus = "RETAINED"
+
+	// WorktreeReused means the attempt failed and the next attempt of the
+	// same task continued in this directory on its own branch (automatic
+	// retry). The record keeps this attempt's branch and head; the directory
+	// belongs to the later attempt's record.
+	WorktreeReused WorktreeStatus = "REUSED"
 )
 
 // AllWorktreeStatuses lists every valid worktree status.
 func AllWorktreeStatuses() []WorktreeStatus {
-	return []WorktreeStatus{WorktreeActive, WorktreeRemoved, WorktreeRetained}
+	return []WorktreeStatus{WorktreeActive, WorktreeRemoved, WorktreeRetained, WorktreeReused}
 }
 
 func (s WorktreeStatus) String() string { return string(s) }
@@ -177,9 +191,13 @@ type Worktree struct {
 	Branch     string
 	BaseCommit string
 	HeadCommit string
-	Status     WorktreeStatus
-	CreatedAt  time.Time
-	RemovedAt  *time.Time
+	// AgentTree is the tree the agent's work was snapshotted to the moment
+	// it finished (research A6): the tree the success commit carries. Empty
+	// before the snapshot, or for rows written before the column existed.
+	AgentTree string
+	Status    WorktreeStatus
+	CreatedAt time.Time
+	RemovedAt *time.Time
 }
 
 // WorkerRunStatus is the outcome of one agent invocation.
@@ -254,6 +272,11 @@ type WorkerRun struct {
 	DiffTruncated bool
 	ChangedFiles  int
 
+	// LogsPruned means Stdout, Stderr and Diff were cleared by `aidev prune`
+	// (research C6): empty because of retention, not because nothing was
+	// printed or changed.
+	LogsPruned bool
+
 	StartedAt  time.Time
 	FinishedAt *time.Time
 }
@@ -313,6 +336,9 @@ type VerificationRun struct {
 	StdoutTruncated bool
 	Stderr          string
 	StderrTruncated bool
+	// LogsPruned means Stdout and Stderr were cleared by `aidev prune`
+	// (research C6).
+	LogsPruned bool
 
 	StartedAt  time.Time
 	FinishedAt *time.Time

@@ -86,7 +86,7 @@ Mỗi bước chạy như một tiến trình con cục bộ trong đúng worktr
 
 Kiểm tra chặn (interception) là phần liên quan nhất tới chuyện sandbox.
 Sau sự cố TASK-000026 — agent viết một file `pytest.py` giả mà verification rồi lại import — aidev liệt kê mọi đường dẫn khác với base commit (kể cả file đã commit và file bị ignore) [OBSERVED] (`aidev:internal/git/changed.go:14-18`) và từ chối mọi bước mà chương trình chấm có thể được nạp từ một đường dẫn đã thay đổi [OBSERVED] (`aidev:internal/verification/interception.go:21-23`).
-Worker thực thi việc này giữa lúc agent chạy xong và lúc verification: thu thập đường dẫn thay đổi, tính các chỗ bị chặn, và fail với loại `VERIFICATION` mà không chạy gì nếu danh sách không rỗng [OBSERVED] (`aidev:internal/worker/worker.go:719-731`), sau khi đã chuyển task sang `VERIFYING` [OBSERVED] (`aidev:internal/worker/worker.go:706-714`).
+Worker thực thi việc này giữa lúc agent chạy xong và lúc verification: thu thập đường dẫn thay đổi, tính các chỗ bị chặn, và fail với loại `VERIFICATION` mà không chạy gì nếu danh sách không rỗng [OBSERVED] (`aidev:internal/worker/run.go:748-771`), sau khi đã chuyển task sang `VERIFYING` [OBSERVED] (`aidev:internal/worker/run.go:709-718`).
 Các rủi ro còn lại đã được ghi nhận là code truyền qua `python -c` / `sh -c`, trình thông dịch ngoài sh/bash/python, và việc import của một script bị che bởi file nằm cạnh nó — kiểm tra này bảo vệ người chấm, không bảo vệ đề thi.
 
 Nói thẳng những gì aidev không bảo vệ: một bước agent độc hại hoặc bị chiếm quyền sẽ chạy với UID, mạng và bí mật của người vận hành, và có thể tuồn dữ liệu ra ngoài, đào coin, hoặc tấn công từ chính máy đó; một phản hồi model độc hại chỉ bị ngăn khỏi thư mục chính, không bị ngăn khỏi việc chạy.
@@ -109,9 +109,9 @@ Cách này giữ allowlist rỗng, nhưng phá vỡ mọi thứ aidev hiện đa
 | Vấn đề | Mount từ máy | Sao chép qua execd |
 |---|---|---|
 | Diff | `git diff` so với base commit chạy như hiện nay (`aidev:internal/git/git.go:285-293`) | phải dựng lại diff từ các file tải về; xử lý intent-to-add, nhận diện file nhị phân và cắt bớt output đều phải viết lại trên một bản sao |
-| Commit khi thành công | commit lên nhánh của task rồi xóa worktree (`aidev:internal/worker/worker.go:862-868`) | commit phải diễn ra hoặc trong sandbox (cần git + danh tính + credential để push ở đó) hoặc bằng cách chép ngược vào worktree rồi commit cục bộ — thêm một bước đồng bộ với những kiểu hỏng riêng của nó |
+| Commit khi thành công | commit lên nhánh của task rồi xóa worktree (`aidev:internal/worker/run.go:966-1014`) | commit phải diễn ra hoặc trong sandbox (cần git + danh tính + credential để push ở đó) hoặc bằng cách chép ngược vào worktree rồi commit cục bộ — thêm một bước đồng bộ với những kiểu hỏng riêng của nó |
 | Công việc hỏng | worktree được giữ nguyên; việc git tự từ chối xóa là lớp chặn cuối (`aidev:internal/git/git.go:386-399`) | công việc hỏng nằm trong sandbox hoặc snapshot, không nằm trong worktree; giữ lại nghĩa là phải quản lý vòng đời snapshot, một hệ thống sổ sách thứ hai bên cạnh `worktrees` |
-| Tính toàn vẹn của người chấm | kiểm tra chặn chạy trên trạng thái git cục bộ (`aidev:internal/worker/worker.go:719-731`) | việc liệt kê đường dẫn thay đổi phải làm trong sandbox hoặc trên cây đã tải về, tức là chính kiểm tra này trở thành một thao tác từ xa |
+| Tính toàn vẹn của người chấm | kiểm tra chặn chạy trên trạng thái git cục bộ (`aidev:internal/worker/run.go:748-771`) | việc liệt kê đường dẫn thay đổi phải làm trong sandbox hoặc trên cây đã tải về, tức là chính kiểm tra này trở thành một thao tác từ xa |
 
 Không đường nào lắp vào là chạy ngay; đường mount giữ được ngữ nghĩa với cái giá là phải kỷ luật với allowlist, đường sao chép giữ được allowlist với cái giá là phải viết lại cả chuỗi bằng chứng.
 

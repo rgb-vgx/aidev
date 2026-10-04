@@ -31,7 +31,10 @@ func TestMCPServerRecoversWhenTheDatabaseComesUp(t *testing.T) {
 		}
 		return h.orchestrator, h.store, nil
 	}
-	server := aidevmcp.NewDeferred(open, "test", logging.Discard())
+	// No run happens in this test, but the default launcher would spawn a real
+	// `aidev task run` child if one ever did: pin the in-process launcher the
+	// way the other harnesses do.
+	server := aidevmcp.NewDeferred(open, "test", logging.Discard(), aidevmcp.WithInProcessRuns())
 
 	serverTransport, clientTransport := sdk.NewInMemoryTransports()
 	serveCtx, cancelServe := context.WithCancel(h.ctx)

@@ -7,9 +7,9 @@ import (
 	"strings"
 )
 
-// SnapshotTree records the worktree's current content as a tree object and
-// returns its id. It is the input to a clean verification: the tree a commit
-// would carry, not the working directory as the agent happened to leave it.
+// CurrentTree records the worktree's current content as a tree object and
+// returns its id: the tree a commit made right now would carry, not the
+// working directory as it happens to look.
 //
 // The snapshot runs on a fresh temporary index — never the real one, and
 // never the intent-to-add copy Diff() uses. Intent-to-add entries have no
@@ -18,7 +18,12 @@ import (
 // reading it. read-tree HEAD seeds the index with what is checked out, then
 // add -A brings it in line with the working directory: untracked files
 // (except those git ignores) join, deletions leave, modifications land.
-func (w *Worktree) SnapshotTree(ctx context.Context) (string, error) {
+//
+// It makes no claim about what the tree contains: a submodule entry is fine
+// here, because the success commit is built from this tree on the task's own
+// branch. Clean verification, which checks the tree out fresh, adds
+// CheckGitlinks on top.
+func (w *Worktree) CurrentTree(ctx context.Context) (string, error) {
 	temp, err := os.CreateTemp("", "aidev-snapshot-index-*")
 	if err != nil {
 		return "", fmt.Errorf("create snapshot index: %w", err)
@@ -49,17 +54,21 @@ func (w *Worktree) SnapshotTree(ctx context.Context) (string, error) {
 	if tree == "" {
 		return "", fmt.Errorf("write-tree produced no tree id")
 	}
+	return tree, nil
+}
 
-	// A submodule entry in the tree would be checked out as an empty
-	// directory in the detached worktree, and the checks would run against
-	// sources that are not there — a false failure nobody can diagnose from
-	// the result alone. Refuse instead, naming the offender.
+// CheckGitlinks refuses a tree that contains a submodule entry, naming the
+// first one it finds. A submodule in the tree would be checked out as an
+// empty directory in a detached worktree, and the checks would run against
+// sources that are not there — a false failure nobody can diagnose from the
+// result alone.
+func (w *Worktree) CheckGitlinks(ctx context.Context, tree string) error {
 	ls, err := w.m.run(ctx, w.Path, nil, "ls-tree", "-r", tree)
 	if err != nil {
-		return "", err
+		return err
 	}
 	if !ls.Succeeded() {
-		return "", fmt.Errorf("snapshot ls-tree: %s", firstLine(ls.Stderr))
+		return fmt.Errorf("snapshot ls-tree: %s", firstLine(ls.Stderr))
 	}
 	for _, line := range strings.Split(ls.Stdout, "\n") {
 		if !strings.HasPrefix(line, "160000 ") {
@@ -69,9 +78,9 @@ func (w *Worktree) SnapshotTree(ctx context.Context) (string, error) {
 		if parts := strings.SplitN(line, "\t", 2); len(parts) == 2 {
 			name = parts[1]
 		}
-		return "", fmt.Errorf("clean verification does not support submodules: %s is a gitlink", name)
+		return fmt.Errorf("clean verification does not support submodules: %s is a gitlink", name)
 	}
-	return tree, nil
+	return nil
 }
 
 // CommitTree writes a commit object for tree with HEAD as its parent and
@@ -83,8 +92,20 @@ func (w *Worktree) SnapshotTree(ctx context.Context) (string, error) {
 // The identity is supplied per invocation, as in Worktree.Commit, so the
 // commit does not depend on the host having git configured.
 func (w *Worktree) CommitTree(ctx context.Context, tree, message string) (string, error) {
+	return w.CommitTreeOnto(ctx, tree, "HEAD", message)
+}
+
+// CommitTreeOnto is CommitTree with the parent named explicitly. The success
+// commit uses it with the commit HEAD was on when the agent's tree was
+// snapshotted, so the tree and its parent are the pair that was recorded
+// together — whatever verification did to HEAD in between cannot pair the
+// agent's tree with a different history.
+func (w *Worktree) CommitTreeOnto(ctx context.Context, tree, parent, message string) (string, error) {
 	if strings.TrimSpace(tree) == "" {
 		return "", fmt.Errorf("commit-tree: tree id is required")
+	}
+	if strings.TrimSpace(parent) == "" {
+		return "", fmt.Errorf("commit-tree: parent is required")
 	}
 	if strings.TrimSpace(message) == "" {
 		return "", fmt.Errorf("commit-tree: message is required")
@@ -92,7 +113,7 @@ func (w *Worktree) CommitTree(ctx context.Context, tree, message string) (string
 	res, err := w.m.run(ctx, w.Path, nil,
 		"-c", "user.name="+commitName,
 		"-c", "user.email="+commitEmail,
-		"commit-tree", tree, "-p", "HEAD", "-m", message)
+		"commit-tree", tree, "-p", parent, "-m", message)
 	if err != nil {
 		return "", err
 	}
@@ -104,6 +125,168 @@ func (w *Worktree) CommitTree(ctx context.Context, tree, message string) (string
 		return "", fmt.Errorf("commit-tree produced no commit id")
 	}
 	return commit, nil
+}
+
+// TreeOf returns the id of the tree commit points at. Comparing it with
+// CurrentTree answers "would a commit on top of this one change anything?"
+// without building that commit.
+func (w *Worktree) TreeOf(ctx context.Context, commit string) (string, error) {
+	if strings.TrimSpace(commit) == "" {
+		return "", fmt.Errorf("resolve tree: commit is required")
+	}
+	res, err := w.m.run(ctx, w.Path, nil, "rev-parse", "--verify", "--end-of-options", commit+"^{tree}")
+	if err != nil {
+		return "", err
+	}
+	if !res.Succeeded() {
+		return "", fmt.Errorf("resolve the tree of %s in %s: %s", commit, w.Path, firstLine(res.Stderr))
+	}
+	tree := strings.TrimSpace(res.Stdout)
+	if tree == "" {
+		return "", fmt.Errorf("rev-parse %s^{tree} produced no tree id", commit)
+	}
+	return tree, nil
+}
+
+// UpdateBranch points branch at commit only if it currently is at expected —
+// a compare-and-set on the ref, so a branch that moved under aidev (another
+// process, a recovered run) fails the publication instead of being silently
+// overwritten. It never re-reads the ref to try again: accepting whatever is
+// there now would commit onto history nobody chose.
+func (w *Worktree) UpdateBranch(ctx context.Context, branch, commit, expected string) error {
+	if strings.TrimSpace(branch) == "" {
+		return fmt.Errorf("update-ref: branch is required")
+	}
+	if strings.TrimSpace(commit) == "" || strings.TrimSpace(expected) == "" {
+		return fmt.Errorf("update-ref %s: commit and expected value are required", branch)
+	}
+	res, err := w.m.run(ctx, w.Path, nil,
+		"update-ref", "refs/heads/"+branch, commit, expected)
+	if err != nil {
+		return err
+	}
+	if !res.Succeeded() {
+		return fmt.Errorf("update-ref %s in %s (expected %s): %s",
+			branch, w.Path, expected, firstLine(res.Stderr))
+	}
+	return nil
+}
+
+// ContinueOnNewBranch creates branch at HEAD and points HEAD at it, leaving
+// the index and the working directory exactly as they are. It is how an
+// automatic retry hands a worktree to the next attempt: the files the failed
+// attempt left stay in place, and from here on commits land on the new
+// attempt's own branch while the old branch keeps the old attempt's end
+// state. Plumbing only — `git branch` and `git symbolic-ref` run no hooks,
+// unlike a checkout. It refuses a branch that already exists.
+func (w *Worktree) ContinueOnNewBranch(ctx context.Context, branch string) error {
+	if strings.TrimSpace(branch) == "" {
+		return fmt.Errorf("continue on a new branch: branch is required")
+	}
+	res, err := w.m.run(ctx, w.Path, nil, "branch", "--no-track", "--", branch, "HEAD")
+	if err != nil {
+		return err
+	}
+	if !res.Succeeded() {
+		return fmt.Errorf("create branch %s in %s: %s", branch, w.Path, firstLine(res.Stderr))
+	}
+	res, err = w.m.run(ctx, w.Path, nil, "symbolic-ref", "HEAD", "refs/heads/"+branch)
+	if err != nil {
+		return err
+	}
+	if !res.Succeeded() {
+		return fmt.Errorf("switch %s to branch %s: %s", w.Path, branch, firstLine(res.Stderr))
+	}
+	w.Branch = branch
+	return nil
+}
+
+// RestoreToHead makes the working directory match HEAD again: tracked files
+// are reset and untracked ones removed, while files git ignores stay — build
+// caches and dependencies the agent installed are not what is being undone.
+// An automatic retry uses it after committing the failed attempt's snapshot,
+// so whatever that attempt's checks wrote afterwards does not ride into the
+// next attempt's commit. Neither command runs hooks.
+func (w *Worktree) RestoreToHead(ctx context.Context) error {
+	res, err := w.m.run(ctx, w.Path, nil, "reset", "--hard", "--quiet", "HEAD")
+	if err != nil {
+		return err
+	}
+	if !res.Succeeded() {
+		return fmt.Errorf("reset %s to HEAD: %s", w.Path, firstLine(res.Stderr))
+	}
+	res, err = w.m.run(ctx, w.Path, nil, "clean", "-f", "-d", "--quiet")
+	if err != nil {
+		return err
+	}
+	if !res.Succeeded() {
+		return fmt.Errorf("clean %s: %s", w.Path, firstLine(res.Stderr))
+	}
+	return nil
+}
+
+// SyncIndex rewrites the real index to match HEAD, leaving the files alone.
+// After a commit built from a snapshot tree the index still describes the
+// tree the worktree was created from, so status would report every committed
+// file as staged-for-deletion and a clean worktree would look dirty — and
+// removal without --force refuses a dirty one. A mixed reset realigns the
+// index without touching the working directory, so status then reports
+// exactly the difference between the files and what was committed.
+func (w *Worktree) SyncIndex(ctx context.Context) error {
+	res, err := w.m.run(ctx, w.Path, nil, "reset")
+	if err != nil {
+		return err
+	}
+	if !res.Succeeded() {
+		return fmt.Errorf("reset index in %s: %s", w.Path, firstLine(res.Stderr))
+	}
+	return nil
+}
+
+// TreeChange is one path that differs between two trees, with git's own
+// status letter: M modified, A added, D deleted, T type changed.
+type TreeChange struct {
+	Status string
+	Path   string
+}
+
+// TreeChanges lists the paths that differ between two tree objects. Rename
+// detection is off, so the status letter is one of A/M/D/T and a path is
+// never two entries — a warning that names half a rename would send a
+// reviewer looking for a file that no longer exists under that name.
+func (w *Worktree) TreeChanges(ctx context.Context, from, to string) ([]TreeChange, error) {
+	if strings.TrimSpace(from) == "" || strings.TrimSpace(to) == "" {
+		return nil, fmt.Errorf("tree diff: both tree ids are required")
+	}
+	// The same diff-driver caveats as Worktree.Diff apply: reading the file
+	// list must not execute code the agent installed in the repository.
+	res, err := w.m.run(ctx, w.Path, nil,
+		"diff", "--name-status", "--no-renames", "--no-ext-diff", "--no-textconv",
+		from, to)
+	if err != nil {
+		return nil, err
+	}
+	if !res.Succeeded() {
+		return nil, fmt.Errorf("git diff %s %s in %s: %s", from, to, w.Path, firstLine(res.Stderr))
+	}
+	// A truncated list is worse than no list: it would tell a reviewer the
+	// verification touched only some of the files it actually touched.
+	if res.StdoutTruncated {
+		return nil, fmt.Errorf("tree diff in %s: git diff produced more output than aidev captures, "+
+			"so the list of changed files is truncated and cannot be trusted", w.Path)
+	}
+	var out []TreeChange
+	for _, line := range strings.Split(strings.TrimSpace(res.Stdout), "\n") {
+		if line == "" {
+			continue
+		}
+		status, path, ok := strings.Cut(line, "\t")
+		if !ok {
+			return nil, fmt.Errorf("tree diff in %s: unexpected git output %q", w.Path, line)
+		}
+		out = append(out, TreeChange{Status: status, Path: path})
+	}
+	return out, nil
 }
 
 // HasGitlinks reports whether the tree at commit contains a submodule entry,

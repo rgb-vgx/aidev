@@ -18,20 +18,27 @@ import (
 // it there fails, nothing was delivered: the task must not be recorded as
 // SUCCEEDED, and the work must stay where it is.
 //
-// The failure is a leftover index.lock in the worktree's administrative directory,
-// which is what a git process that crashed or was killed leaves behind. Hooks
-// cannot be used: aidev commits with --no-verify.
+// The failure is a leftover lock on the task branch's own ref, which is what a
+// git process killed in the middle of updating it leaves behind. The commit is
+// built from the agent's snapshot with commit-tree and published with
+// update-ref (research A6), so the index plays no part and an index.lock no
+// longer stops delivery; the ref lock is what does. Hooks cannot be used:
+// neither command runs any.
 func TestAFailedCommitIsNotASuccess(t *testing.T) {
 	h := newHarness(t, nil)
 	h.backend.Work = func(ctx context.Context, req agent.Request) error {
 		if err := doTheWork(ctx, req); err != nil {
 			return err
 		}
-		out, err := exec.Command("git", "-C", req.WorkingDir, "rev-parse", "--absolute-git-dir").Output()
+		common, err := exec.Command("git", "-C", req.WorkingDir, "rev-parse", "--path-format=absolute", "--git-common-dir").Output()
 		if err != nil {
 			return err
 		}
-		lock := filepath.Join(strings.TrimSpace(string(out)), "index.lock")
+		branch, err := exec.Command("git", "-C", req.WorkingDir, "symbolic-ref", "HEAD").Output()
+		if err != nil {
+			return err
+		}
+		lock := filepath.Join(strings.TrimSpace(string(common)), strings.TrimSpace(string(branch))+".lock")
 		return os.WriteFile(lock, nil, 0o600)
 	}
 

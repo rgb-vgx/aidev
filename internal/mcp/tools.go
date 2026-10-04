@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"aidev/internal/agent"
 	"aidev/internal/config"
 	"aidev/internal/store"
 	"aidev/internal/task"
@@ -102,7 +103,7 @@ func (s *Server) register(server *sdk.Server) {
 
 // CreateTaskInput is the input of aidev_create_task.
 type CreateTaskInput struct {
-	RepoPath string `json:"repo_path" jsonschema:"absolute path to the git repository the task applies to"`
+	RepoPath string `json:"repo_path" jsonschema:"absolute path to the git repository the task applies to. It must already be registered with aidev (aidev project add) unless the server allows registration on demand"`
 	Title    string `json:"title" jsonschema:"one short line stating what to do"`
 
 	Verification []string `json:"verification" jsonschema:"commands aidev will run itself to decide whether the task succeeded, for example [\"go test ./...\", \"go vet ./...\"]. At least one is required. They run in the task's worktree, without a shell, so pipes and redirection are not available"`
@@ -118,6 +119,7 @@ type CreateTaskInput struct {
 	Agent              string `json:"agent,omitempty" jsonschema:"agent to use; defaults to the configured one (build)"`
 	Priority           int    `json:"priority,omitempty" jsonschema:"higher runs first; defaults to 0"`
 	RequiresApproval   bool   `json:"requires_approval,omitempty" jsonschema:"when true the task will not run until a human approves it"`
+	MaxRetries         int    `json:"max_retries,omitempty" jsonschema:"how many more attempts aidev may make, 0 to 10, when an attempt fails in a way another try can fix (the checks ran and failed, or the agent stopped early). Each retry continues in the same worktree and agent session with the failure output in the prompt; defaults to 0, no retry"`
 	ExpectFailOnBase   bool   `json:"expect_fail_on_base,omitempty" jsonschema:"when true the verification commands run on the base commit before the agent starts; if they already pass there they cannot distinguish before from after, so the attempt fails with kind VERIFICATION and the agent is never called (for bug-fix tasks)"`
 	BaseRef            string `json:"base_ref,omitempty" jsonschema:"git ref the task's branch starts from; defaults to the repository's current branch"`
 	TimeoutSeconds     int    `json:"timeout_seconds,omitempty" jsonschema:"bound this task's agent run; defaults to the configured timeout"`
@@ -153,22 +155,27 @@ func (s *Server) createTask(ctx context.Context, _ *sdk.CallToolRequest, in Crea
 	}
 
 	created, err := orchestrator.CreateTask(ctx, worker.CreateTaskInput{
-		RepoPath:           in.RepoPath,
-		Title:              in.Title,
-		Description:        in.Description,
-		AcceptanceCriteria: in.AcceptanceCriteria,
-		Agent:              in.Agent,
-		Priority:           in.Priority,
-		Verification:       steps,
-		ProtectedPaths:     in.ProtectedPaths,
-		SetupSteps:         setupSteps,
-		VerificationMode:   in.VerificationMode,
-		RequiresApproval:   in.RequiresApproval,
-		ExpectFailOnBase:   in.ExpectFailOnBase,
-		BaseRef:            in.BaseRef,
-		Hardness:           in.Hardness,
-		Model:              in.Model,
-		Timeout:            time.Duration(in.TimeoutSeconds) * time.Second,
+		RepoPath: in.RepoPath,
+		// The path comes from the MCP client — usually a planner — so a
+		// repository aidev has never seen is refused unless the operator
+		// opted into registration on demand (research D3).
+		RequireRegisteredProject: !orchestrator.Config.MCPAutoRegisterProjects,
+		Title:                    in.Title,
+		Description:              in.Description,
+		AcceptanceCriteria:       in.AcceptanceCriteria,
+		Agent:                    in.Agent,
+		Priority:                 in.Priority,
+		Verification:             steps,
+		ProtectedPaths:           in.ProtectedPaths,
+		SetupSteps:               setupSteps,
+		VerificationMode:         in.VerificationMode,
+		RequiresApproval:         in.RequiresApproval,
+		ExpectFailOnBase:         in.ExpectFailOnBase,
+		MaxRetries:               in.MaxRetries,
+		BaseRef:                  in.BaseRef,
+		Hardness:                 in.Hardness,
+		Model:                    in.Model,
+		Timeout:                  time.Duration(in.TimeoutSeconds) * time.Second,
 	})
 	if err != nil {
 		return nil, CreateTaskOutput{}, err
@@ -305,7 +312,10 @@ func (s *Server) runTask(ctx context.Context, _ *sdk.CallToolRequest, in RunTask
 		return nil, RunTaskOutput{}, err
 	}
 
-	run, started := s.startRun(orchestrator, t.ID)
+	run, started, err := s.startRun(orchestrator, st, t)
+	if err != nil {
+		return nil, RunTaskOutput{}, err
+	}
 	if started {
 		s.logger.InfoContext(ctx, "task run started from mcp",
 			"task_ref", t.Ref, "wait_seconds", wait)
@@ -331,8 +341,9 @@ func (s *Server) runTask(ctx context.Context, _ *sdk.CallToolRequest, in RunTask
 		}, nil
 
 	case <-ctx.Done():
-		// The client gave up on this call. The run itself is unaffected, because
-		// it is bound to the server's context rather than this one.
+		// The client gave up on this call. The run is unaffected: it is a
+		// separate process that outlives this server (research C2), or, in
+		// tests, bound to the server's context rather than this one.
 		return nil, RunTaskOutput{}, ctx.Err()
 	}
 }
@@ -340,24 +351,23 @@ func (s *Server) runTask(ctx context.Context, _ *sdk.CallToolRequest, in RunTask
 // finishedRunOutput builds the output for a run that has completed.
 func (s *Server) finishedRunOutput(ctx context.Context, orchestrator *worker.Orchestrator, st *store.Store, taskID uuid.UUID, run *backgroundRun) (*sdk.CallToolResult, RunTaskOutput, error) {
 	if run.err != nil {
-		// An approval gate is reported as a result, not an error: the planner
-		// needs to know a human is required, which is not a malfunction.
-		if errors.Is(run.err, worker.ErrApprovalRequired) {
-			result, err := s.buildResult(ctx, st, taskID, false)
-			if err != nil {
-				return nil, RunTaskOutput{}, err
-			}
-			return nil, RunTaskOutput{
-				Result:   result,
-				NextStep: approvalNextStep(orchestrator.Config, result.Task.Ref),
-			}, nil
-		}
 		return nil, RunTaskOutput{}, run.err
 	}
 
 	result, err := s.buildResult(ctx, st, taskID, false)
 	if err != nil {
 		return nil, RunTaskOutput{}, err
+	}
+
+	// An approval gate is reported as a result, not an error: the planner
+	// needs to know a human is required, which is not a malfunction. The
+	// recorded status decides, because the run that hit the gate exited
+	// cleanly — both as a child process and as an orchestrator call.
+	if result.Task.Status == task.StatusWaitingApproval.String() {
+		return nil, RunTaskOutput{
+			Result:   result,
+			NextStep: approvalNextStep(orchestrator.Config, result.Task.Ref),
+		}, nil
 	}
 
 	succeeded := result.Task.Status == task.StatusSucceeded.String()
@@ -379,17 +389,29 @@ func (s *Server) finishedRunOutput(ctx context.Context, orchestrator *worker.Orc
 
 // GetResultInput is the input of aidev_get_task_result.
 type GetResultInput struct {
-	Task        string `json:"task" jsonschema:"task reference such as TASK-000001, or the task's UUID"`
-	IncludeLogs bool   `json:"include_logs,omitempty" jsonschema:"include the agent's full transcript, the collected diff, and the complete verification output. These can be large; ask for them when diagnosing a failure"`
+	Task        string   `json:"task" jsonschema:"task reference such as TASK-000001, or the task's UUID"`
+	IncludeLogs bool     `json:"include_logs,omitempty" jsonschema:"include the agent's transcript, its error output, the collected diff and the complete verification output, each cut to max_bytes. Ask for them when diagnosing a failure"`
+	Sections    []string `json:"sections,omitempty" jsonschema:"which logs to return: transcript (the agent's events as plain text), stdout (its raw event stream), stderr, diff, verification. Defaults to all but stdout; naming any implies include_logs"`
+	MaxBytes    int      `json:"max_bytes,omitempty" jsonschema:"the most bytes returned per section (per step for verification output); defaults to 65536, at most 1048576"`
+	Offset      int      `json:"offset,omitempty" jsonschema:"byte offset each section starts at; pass next_offset from a previous call to read the next page"`
 }
 
 // GetResultOutput is the output of aidev_get_task_result.
 type GetResultOutput struct {
 	Result view.Result `json:"result" jsonschema:"everything known about the task's latest attempt"`
 
-	AgentStdout string `json:"agent_stdout,omitempty" jsonschema:"the agent's raw event stream, only when include_logs is set"`
-	AgentStderr string `json:"agent_stderr,omitempty" jsonschema:"the agent's error output, only when include_logs is set"`
-	Diff        string `json:"diff,omitempty" jsonschema:"the change aidev collected from git, only when include_logs is set"`
+	AgentTranscript string `json:"agent_transcript,omitempty" jsonschema:"the agent's events as plain text, one line per message, tool call or error; only with include_logs"`
+	AgentStdout     string `json:"agent_stdout,omitempty" jsonschema:"the agent's raw event stream; only when the stdout section is asked for"`
+	AgentStderr     string `json:"agent_stderr,omitempty" jsonschema:"the agent's error output; only with include_logs"`
+	Diff            string `json:"diff,omitempty" jsonschema:"the change aidev collected from git; only with include_logs"`
+
+	// The whole size of each returned section, so a cut section is
+	// distinguishable from a short one (research D1).
+	AgentTranscriptTotalBytes int `json:"agent_transcript_total_bytes,omitempty" jsonschema:"size of the whole transcript"`
+	AgentStdoutTotalBytes     int `json:"agent_stdout_total_bytes,omitempty" jsonschema:"size of the whole raw event stream"`
+	AgentStderrTotalBytes     int `json:"agent_stderr_total_bytes,omitempty" jsonschema:"size of the whole error output"`
+	DiffTotalBytes            int `json:"diff_total_bytes,omitempty" jsonschema:"size of the whole diff"`
+	NextOffset                int `json:"next_offset,omitempty" jsonschema:"set when some section has more past this page: pass it back as offset to read on"`
 
 	StillRunning bool `json:"still_running" jsonschema:"true if the task is currently executing"`
 }
@@ -404,22 +426,47 @@ func (s *Server) getResult(ctx context.Context, _ *sdk.CallToolRequest, in GetRe
 		return nil, GetResultOutput{}, err
 	}
 
-	result, err := s.buildResult(ctx, st, t.ID, in.IncludeLogs)
+	req, logs, err := parseLogRequest(in.IncludeLogs, in.Sections, in.Offset, in.MaxBytes)
+	if err != nil {
+		return nil, GetResultOutput{}, err
+	}
+
+	result, err := s.buildResult(ctx, st, t.ID, logs && req.wants(sectionVerification))
 	if err != nil {
 		return nil, GetResultOutput{}, err
 	}
 	out := GetResultOutput{Result: result, StillRunning: t.Status.Active()}
+	if !logs {
+		return nil, out, nil
+	}
 
-	if in.IncludeLogs {
-		if attempt, err := st.LatestAttempt(ctx, t.ID); err == nil {
-			if runs, err := st.ListWorkerRuns(ctx, attempt.ID); err == nil && len(runs) > 0 {
-				latest := runs[len(runs)-1]
-				out.AgentStdout = latest.Stdout
-				out.AgentStderr = latest.Stderr
-				out.Diff = latest.Diff
+	p := &pager{req: req}
+	if req.wants(sectionVerification) {
+		for i := range out.Result.Verification {
+			v := &out.Result.Verification[i]
+			v.Stdout, v.StdoutTotalBytes = p.page(v.Stdout)
+			v.Stderr, v.StderrTotalBytes = p.page(v.Stderr)
+		}
+	}
+	if attempt, err := st.LatestAttempt(ctx, t.ID); err == nil {
+		if runs, err := st.ListWorkerRuns(ctx, attempt.ID); err == nil && len(runs) > 0 {
+			latest := runs[len(runs)-1]
+			if req.wants(sectionTranscript) {
+				transcript, _ := agent.CondenseTranscript(latest.Backend, latest.Stdout)
+				out.AgentTranscript, out.AgentTranscriptTotalBytes = p.page(transcript)
+			}
+			if req.wants(sectionStdout) {
+				out.AgentStdout, out.AgentStdoutTotalBytes = p.page(latest.Stdout)
+			}
+			if req.wants(sectionStderr) {
+				out.AgentStderr, out.AgentStderrTotalBytes = p.page(latest.Stderr)
+			}
+			if req.wants(sectionDiff) {
+				out.Diff, out.DiffTotalBytes = p.page(latest.Diff)
 			}
 		}
 	}
+	out.NextOffset = p.nextOffset()
 	return nil, out, nil
 }
 
@@ -608,35 +655,48 @@ func (s *Server) buildResult(ctx context.Context, st *store.Store, taskID uuid.U
 // Joining rather than starting a second is what makes a repeated aidev_run_task
 // call harmless: the orchestrator would reject the second anyway, but reporting
 // the progress of the first is more useful than an error.
-func (s *Server) startRun(orchestrator *worker.Orchestrator, taskID uuid.UUID) (*backgroundRun, bool) {
+//
+// A task that is already terminal or already being driven somewhere else is
+// refused here, with the orchestrator's own message, before any process is
+// spawned for it — spawning one just to watch it refuse would be wasteful, and
+// the refusal is the answer either way.
+func (s *Server) startRun(orchestrator *worker.Orchestrator, st *store.Store, t task.Task) (*backgroundRun, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if existing, ok := s.runs[taskID]; ok {
+	if existing, ok := s.runs[t.ID]; ok {
 		select {
 		case <-existing.done:
 			// Finished; a new call may start a fresh run.
-			delete(s.runs, taskID)
+			delete(s.runs, t.ID)
 		default:
-			return existing, false
+			return existing, false, nil
 		}
+	}
+	if t.Status.Terminal() || t.Status.Active() {
+		return nil, false, fmt.Errorf("%s is already %s: %w", t.Identifier(), t.Status, worker.ErrNotRunnable)
+	}
+
+	// Started under the lock so two concurrent calls for the same task cannot
+	// both get past the checks above and race to claim it.
+	wait, logPath, err := s.launch(s.baseCtx, orchestrator, t)
+	if err != nil {
+		return nil, false, err
 	}
 
 	run := &backgroundRun{done: make(chan struct{})}
-	s.runs[taskID] = run
+	s.runs[t.ID] = run
 
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
 		defer close(run.done)
 
-		// Bound to the server's context, not a tool call's: the run must outlive
-		// the call that started it, and must stop when the server stops. The
-		// kept orchestrator is used so a run started after a deferred connect
-		// records against the same connection.
-		outcome, err := orchestrator.RunTask(s.baseCtx, taskID.String())
-		run.outcome = outcome
-		run.err = err
+		// The watcher is bound to the server's context, not a tool call's: the
+		// call may return with still_running, or its client go away, long
+		// before the run ends. The kept orchestrator is used so a run started
+		// after a deferred connect records against the same connection.
+		run.err = s.awaitOutcome(s.baseCtx, st, t.ID, wait, logPath)
 	}()
-	return run, true
+	return run, true, nil
 }

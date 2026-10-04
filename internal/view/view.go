@@ -37,8 +37,9 @@ type Task struct {
 	VerificationMode   string   `json:"verification_mode" jsonschema:"where verification runs: in_place (in the agent's worktree) or clean (a fresh checkout of the result), frozen at creation"`
 	RequiresApproval   bool     `json:"requires_approval" jsonschema:"whether a human decision is required before the task may run"`
 	ExpectFailOnBase   bool     `json:"expect_fail_on_base" jsonschema:"whether the verification commands must already fail on the base commit: they run there before the agent starts, and a pass means they cannot distinguish before from after, so the attempt fails without calling the agent"`
-	MaxRetries         int      `json:"max_retries" jsonschema:"recorded for a future retry feature; aidev does not retry"`
+	MaxRetries         int      `json:"max_retries" jsonschema:"how many more attempts aidev may make when one fails in a way another try can fix; 0 means no retry"`
 	BaseRef            string   `json:"base_ref,omitempty" jsonschema:"git ref the task's branch starts from"`
+	BaseCommitAtCreate string   `json:"base_commit_at_create,omitempty" jsonschema:"the commit the base ref pointed at when the task was created"`
 	TimeoutSeconds     int      `json:"timeout_seconds,omitempty" jsonschema:"per-task agent timeout; 0 means the configured default"`
 	ProjectID          string   `json:"project_id" jsonschema:"the repository this task belongs to"`
 	CreatedAt          string   `json:"created_at" jsonschema:"RFC3339 timestamp"`
@@ -77,6 +78,7 @@ func NewTask(t task.Task) Task {
 		ExpectFailOnBase:   t.ExpectFailOnBase,
 		MaxRetries:         t.MaxRetries,
 		BaseRef:            t.BaseRef,
+		BaseCommitAtCreate: t.BaseCommitAtCreate,
 		TimeoutSeconds:     int(t.Timeout.Seconds()),
 		ProjectID:          t.ProjectID.String(),
 		CreatedAt:          t.CreatedAt.UTC().Format(time.RFC3339),
@@ -128,6 +130,7 @@ type Worker struct {
 
 	StdoutTruncated bool `json:"stdout_truncated,omitempty" jsonschema:"true if captured output hit the size limit"`
 	StderrTruncated bool `json:"stderr_truncated,omitempty" jsonschema:"true if captured error output hit the size limit"`
+	LogsPruned      bool `json:"logs_pruned,omitempty" jsonschema:"the run's captured output and diff were cleared by aidev prune; empty logs then mean removed, not silent"`
 }
 
 // NewWorker converts a domain worker run.
@@ -144,6 +147,7 @@ func NewWorker(r task.WorkerRun) *Worker {
 		DurationMS:      r.Duration().Milliseconds(),
 		StdoutTruncated: r.StdoutTruncated,
 		StderrTruncated: r.StderrTruncated,
+		LogsPruned:      r.LogsPruned,
 	}
 }
 
@@ -156,6 +160,14 @@ type Verification struct {
 	DurationMS int64  `json:"duration_ms" jsonschema:"how long the command took"`
 	Stdout     string `json:"stdout,omitempty" jsonschema:"captured output; included for failures, or in full on request"`
 	Stderr     string `json:"stderr,omitempty" jsonschema:"captured error output"`
+
+	// The full sizes, set only where the output was cut to a window (the MCP
+	// result with include_logs), so a reader can tell a short output from a
+	// page of a long one and ask for the next page.
+	StdoutTotalBytes int `json:"stdout_total_bytes,omitempty" jsonschema:"size of the whole captured output, when only a window of it was returned"`
+	StderrTotalBytes int `json:"stderr_total_bytes,omitempty" jsonschema:"size of the whole captured error output, when only a window of it was returned"`
+
+	LogsPruned bool `json:"logs_pruned,omitempty" jsonschema:"the step's captured output was cleared by aidev prune; empty output then means removed, not silent"`
 }
 
 // OutputLimit bounds how much of a failing step's output is included when the
@@ -174,6 +186,7 @@ func NewVerifications(runs []task.VerificationRun, includeOutput bool) []Verific
 			Status:     r.Status.String(),
 			ExitCode:   r.ExitCode,
 			DurationMS: r.Duration.Milliseconds(),
+			LogsPruned: r.LogsPruned,
 		}
 		switch {
 		case includeOutput:
@@ -238,7 +251,12 @@ type Result struct {
 	// the run, but a reviewer must be able to see that what passed was also
 	// written in the same attempt (research §7b tier 1).
 	TestsModified []string `json:"tests_modified,omitempty" jsonschema:"changed paths that look like the tests judging this attempt; a report so a reviewer can see that what passed was also written in the same attempt"`
-	Message       string   `json:"message,omitempty" jsonschema:"one-line human summary of the outcome"`
+	// BaseMoved is a warning, like TestsModified: the attempt ran, but from a
+	// different commit than the base ref named when the task was created
+	// (research D2), so the reviewer is reading work on code the task's
+	// author may never have seen.
+	BaseMoved bool   `json:"base_moved,omitempty" jsonschema:"true when the base ref pointed at a different commit when the attempt started than when the task was created; compare task.base_commit_at_create with worktree.base_commit"`
+	Message   string `json:"message,omitempty" jsonschema:"one-line human summary of the outcome"`
 }
 
 // Event is one entry of a task's history.
@@ -330,6 +348,8 @@ func NewResult(
 	}
 	if worktree != nil {
 		result.Worktree = NewWorktree(*worktree)
+		result.BaseMoved = t.BaseCommitAtCreate != "" && worktree.BaseCommit != "" &&
+			worktree.BaseCommit != t.BaseCommitAtCreate
 	}
 	if approval != nil {
 		result.Approval = NewApproval(*approval)

@@ -195,6 +195,7 @@ Mọi thiết lập đều tùy chọn, trừ `database.url`. Các giá trị m�
 | `agent.routing` | *(none)* | một đối tượng ánh xạ độ khó của task (`TRIVIAL`, `STANDARD`, `HARD`) tới mô hình xứng đáng với độ khó đó; độ khó nào không có mục sẽ để backend tự chọn |
 | `log_level` | `info` | `debug`, `info`, `warn` hoặc `error` |
 | `mcp.allow_approval` | `false` | liệu công cụ `aidev_approve_task` qua MCP có được phép quyết định phê duyệt hay không; khi tắt, việc quyết định thuộc về CLI (`aidev task approve`) |
+| `mcp.auto_register_projects` | `false` | liệu `aidev_create_task` có được tự đăng ký một repository mà aidev chưa từng thấy hay không; khi tắt, task qua MCP bị từ chối với mọi repository chưa được thêm bằng `aidev project add` |
 | `tracing.endpoint` | *(none)* | URL HTTP OTLP cơ sở; không bật tracing khi chưa đặt gì |
 | `tracing.traces_endpoint` | *(none)* | URL đầy đủ mà bộ xuất traces gửi tới, được ưu tiên hơn `tracing.endpoint` |
 | `tracing.headers` | *(none)* | một đối tượng chứa các header OTLP bổ sung, chẳng hạn `Authorization` |
@@ -301,8 +302,12 @@ aidev task result <task> [--logs] [--json]
 aidev task events <task> [--payload] [--after SEQ] [--json]
 aidev task cancel <task> [--reason R] [--json]
 aidev task approve <task> [--deny] [--by WHO] [--reason R] [--json]
+aidev task recover [--dry-run] [--json]   # cancel tasks whose lease expired
+aidev task delete <task>                  # delete a finished task and its history
+aidev prune --logs-older-than 30d [--dry-run]  # clear old captured output
 
-aidev project list  [--json]                      # các repository mà aidev đã chạy task
+aidev project add   [path]                        # đăng ký một repository cho task qua MCP
+aidev project list  [--json]                      # các repository mà aidev biết
 aidev project approval [on|off] [--repo .]        # chặn mọi task của repo chờ người duyệt (chỉ ở CLI)
 aidev project verify-mode [in_place|clean] [--repo .]  # nơi các task mới verify (chỉ ở CLI)
 ```
@@ -338,6 +343,14 @@ git diff main..aidev/TASK-000001
 ```
 
 Không có gì được hợp nhất, và không có gì bao giờ được commit lên nhánh làm việc của bạn.
+
+Một task được tạo với `--max-retries N` (MCP: `max_retries`) có thêm tối đa N lần
+thử khi các lệnh kiểm tra thất bại hoặc agent dừng sớm. Mỗi lần thử lại tiếp tục
+trong cùng worktree và cùng phiên agent, kèm output lỗi trong prompt; công việc
+của lần thử hỏng được commit, đánh dấu là chưa kiểm chứng, lên nhánh riêng của nó,
+và lần thử kế tiếp làm trên `aidev/<ref>-a2`, `-a3`, v.v. Khi thành công, kết quả
+báo nhánh đó. Một lệnh gọi tool bị từ chối, một runner bị chặn hay một lần hết
+thời gian thì không bao giờ được thử lại.
 
 Một task thất bại để lại worktree của nó nguyên vẹn đúng như agent đã bỏ lại, nằm dưới
 `workspace_root`, vì công việc dở dang thường là thứ hữu ích nhất của một thất bại.
@@ -405,7 +418,15 @@ ghi một tập tin `.mcp.json` dùng chung mà mỗi người phải duyệt m�
 Không có chứng thực nào nằm trên lệnh đăng ký: `AIDEV_CONFIG` chỉ tới conf.json, và
 aidev đọc mật khẩu cơ sở dữ liệu từ đó, nên `~/.claude.json` không chứa
 chuỗi kết nối nào. Hãy dùng đúng tập tin và đường dẫn mà `aidev config` báo, để máy chủ
-khởi động đã có sẵn cấu hình. Tám công cụ sau đây sẽ khả dụng:
+khởi động đã có sẵn cấu hình.
+
+Máy chủ chỉ tạo task cho các repository mà aidev đã biết, nên một planner đoán sai
+đường dẫn không thể đưa agent vào nhầm repository. Hãy đăng ký mỗi repository một
+lần bằng `aidev project add <path>` (repository nào bạn đã tạo task bằng CLI thì đã
+được đăng ký sẵn), hoặc đặt `mcp.auto_register_projects` để máy chủ tự đăng ký khi
+cần.
+
+Tám công cụ sau đây sẽ khả dụng:
 
 | Công cụ | Mục đích |
 |---|---|
@@ -418,7 +439,8 @@ khởi động đã có sẵn cấu hình. Tám công cụ sau đây sẽ khả 
 | `aidev_approve_task` | con người cho phép task bị chặn chạy tiếp; bị tắt trừ khi đặt `mcp.allow_approval` |
 
 Một lần chạy mất vài phút, nên `aidev_run_task` chờ một khoảng thời gian giới hạn rồi trả về với
-`still_running: true` trong khi task vẫn tiếp tục; planner thăm dò
+`still_running: true` trong khi task vẫn tiếp tục — nó chạy như một tiến trình
+`aidev task run` riêng nên tồn tại cả khi server này thoát; planner thăm dò
 `aidev_get_task_result`. Trường cần đọc là `succeeded`, chỉ đúng khi
 verification của chính aidev đã qua.
 
@@ -563,7 +585,7 @@ Hai ghi chú rút ra khi làm cho việc này chạy. Langfuse v4 đã bỏ `GET
 
 ## Khi có sự cố
 
-**Hãy bắt đầu với `aidev doctor`.** Lệnh này kiểm tra, theo thứ tự, rằng cấu hình đọc được, rằng git và agent đã cấu hình đã được cài, rằng cơ sở dữ liệu trả lời và đã được migration, và rằng `workspace_root` ghi được. Mỗi vấn đề đi kèm cách xử lý, mật khẩu cơ sở dữ liệu không bao giờ hiện ra, và lệnh thoát với mã 1 khi có gì đó hỏng. `aidev doctor --json` in cùng kết quả dưới dạng danh sách JSON; skill `aidev:doctor` của plugin đọc kết quả đó và sửa những gì nó sửa an toàn được.
+**Hãy bắt đầu với `aidev doctor`.** Lệnh này kiểm tra, theo thứ tự, rằng cấu hình đọc được, rằng git và agent đã cấu hình đã được cài, rằng cơ sở dữ liệu trả lời và đã được migration, rằng không có task nào kẹt với lease hết hạn, và rằng `workspace_root` ghi được. Mỗi vấn đề đi kèm cách xử lý, mật khẩu cơ sở dữ liệu không bao giờ hiện ra, và lệnh thoát với mã 1 khi có gì đó hỏng. `aidev doctor --json` in cùng kết quả dưới dạng danh sách JSON; skill `aidev:doctor` của plugin đọc kết quả đó và sửa những gì nó sửa an toàn được.
 
 ```bash
 aidev doctor
@@ -573,14 +595,14 @@ aidev doctor
 #       fix: Start PostgreSQL with `make db-up` in the aidev repository and ...
 ```
 
-**aidev bị tắt giữa lúc một task đang chạy.** Task kẹt ở `RUNNING`, và không có gì nhận lại nó nữa. Hãy hủy nó:
+**aidev bị tắt giữa lúc một task đang chạy.** Task kẹt ở `RUNNING`, và không có gì nhận lại nó nữa. Trong lúc chạy, attempt giữ một lease mà tiến trình đã chết không còn đẩy tiếp được nữa, nên hãy khôi phục các task lease đã hết:
 
 ```bash
-aidev task list --status RUNNING,VERIFYING
-aidev task cancel TASK-000001 --reason "aidev was killed mid-run"
+aidev task recover --dry-run
+aidev task recover
 ```
 
-Công việc dở dang được giữ lại. aidev cố ý không tự hết hạn một task `RUNNING` cũ — xem [lý do](docs/architecture.md#when-a-run-is-interrupted).
+Task mà tiến trình còn sống thì lease còn hiệu lực và được bỏ qua. Lệnh khôi phục ghi lease hết hạn làm lý do, đóng attempt đang mở, và giữ công việc dở dang lại. Bạn vẫn có thể tự hủy — `aidev task cancel TASK-000001 --reason "aidev was killed mid-run"` — và lý do không lệnh nào tự làm việc này theo giờ nằm trong [ghi chú kiến trúc](docs/architecture.md#when-a-run-is-interrupted).
 
 **Không gian làm việc đầy dần.** Các task thất bại cố ý giữ lại worktree của chúng:
 
@@ -589,6 +611,20 @@ aidev worktree list                        # with tasks, statuses and sizes
 aidev worktree remove TASK-000001          # refused if work is uncommitted
 aidev worktree remove TASK-000001 --force  # discard it deliberately
 ```
+
+**Cơ sở dữ liệu phình to dần.** Mỗi attempt giữ tới 1 MiB output của agent, 1 MiB
+output lỗi và 4 MiB diff. Hãy xóa output của các task cũ đã kết thúc mà vẫn giữ bản
+ghi và lịch sử của chúng, hoặc xóa hẳn các task đã kết thúc:
+
+```bash
+aidev prune --logs-older-than 30d --dry-run
+aidev prune --logs-older-than 30d
+aidev task delete TASK-000001
+```
+
+Run đã bị prune hiện `logs_pruned`, nên output rỗng được hiểu là đã bị xóa chứ không
+phải im lặng. Event log không bao giờ bị prune. `task delete` từ chối task còn có
+thể thay đổi, và task có worktree vẫn còn trên đĩa.
 
 **Có các volume Docker mang tên task.** Một agent đã chạy `docker compose` bên trong worktree của nó, nơi có một bản sao của `docker-compose.yml`, và Compose đã đặt tên dự án theo thư mục. Chúng chỉ là rác rỗng chứ không phải dữ liệu: `docker volume prune` xóa chúng. Tên dự án cố ý để không ghim — xem [lý do](docs/architecture.md#postgresql-data-and-why-the-compose-project-name-is-not-pinned).
 

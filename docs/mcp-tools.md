@@ -57,9 +57,11 @@ files back (docs/research.md §3.2); neither was copied from documentation.
 
 **Which settings affect the tools.** The server is the same aidev binary, so all of
 conf.json applies, but the ones that shape the tools are `database.url` (every call
-reads or writes PostgreSQL), `workspace_root` (where a run isolates its worktree),
+reads or writes PostgreSQL), `workspace_root` (where a run isolates its worktree,
+and where a run's stderr log is written under `run-logs/`),
 `tasks.timeout` and `tasks.verification_timeout` (bound a run and its verification;
-`timeout_seconds` on `aidev_run_task` overrides them for one task),
+together they form the total deadline the run process imposes on itself, plus a
+margin; `timeout_seconds` on `aidev_run_task` overrides them for one task),
 `tasks.max_output_bytes` (caps the streams a result can return), `agent.backend`
 (opencode or codex), `agent.routing` (which model a task's hardness deserves), and
 `tasks.worktree_cleanup` (whether a finished worktree stays).
@@ -67,6 +69,14 @@ reads or writes PostgreSQL), `workspace_root` (where a run isolates its worktree
 **stdout belongs to the protocol.** aidev writes nothing to it in this mode; every
 log line goes to stderr. A test asserts the logger cannot break that rule, because
 one stray byte on stdout corrupts the JSON-RPC stream.
+
+**The first tool call also recovers dead runs.** The database connects lazily, and
+once it does, the server cancels tasks whose lease has expired — the ones a killed
+`aidev task run` left `RUNNING` (see [the architecture notes](architecture.md#when-a-run-is-interrupted)).
+A planner reconnecting after a restart therefore never inherits them. The pass is
+bounded and best-effort: its outcome goes to stderr, and a failure never stops the
+server from answering tools. `aidev task recover --dry-run` shows the same list
+from the terminal.
 
 ## How the tools fit together
 
@@ -87,7 +97,8 @@ Two things about `aidev_run_task` shape how it is used.
 does — measured between 9 and 656 seconds (docs/research.md §7c) — and an MCP client
 will not wait indefinitely. The tool waits `wait_seconds` (120 by default) and then
 returns with `still_running: true`. The run continues regardless, unaffected by the
-call returning or by the client abandoning it. Poll `aidev_get_task_result`.
+call returning or by the client abandoning it — it is a separate `aidev task run`
+process, so even this server exiting does not stop it. Poll `aidev_get_task_result`.
 
 **`succeeded` is the field to read, not the status string.** It is true only when
 the task reached `SUCCEEDED`, which requires aidev's own verification to have
@@ -114,6 +125,7 @@ Creates a task. Does **not** run it.
 | `agent` | string | no | agent to use; defaults to `build` |
 | `priority` | integer | no | higher runs first; default 0 |
 | `requires_approval` | boolean | no | gate the task behind a human decision; the project's own policy can gate a task the same way without this |
+| `max_retries` | integer | no | 0 to 10, default 0: how many more attempts aidev may make when the checks ran and failed or the agent stopped early. Each retry continues in the same worktree and agent session with the failure in the prompt; see `aidev_run_task` |
 | `expect_fail_on_base` | boolean | no | run the verification commands on the base commit before the agent starts; if they already pass there they cannot distinguish before from after, so the attempt fails with kind VERIFICATION and the agent is never called (for bug-fix tasks) |
 | `base_ref` | string | no | git ref to branch from; defaults to the repository's current branch |
 | `timeout_seconds` | integer | no | bound this task's agent run |
@@ -146,6 +158,10 @@ through as literal arguments.
   which cannot hold submodule content, so the checks would go red for the
   wrong reason
 - `base_ref` does not resolve — caught now rather than at worktree creation
+- the repository is not registered with aidev and `mcp.auto_register_projects` is
+  off (the default). The path comes from the planner; a guessed or mistyped one
+  must not become an agent running in the wrong repository. The error names the
+  command a person runs once: `aidev project add <path>`
 - the agent name is unknown to the backend. This check exists because OpenCode
   accepts an unknown name, warns, silently uses its default and exits 0
   (docs/research.md §2.5), which would leave a record claiming an agent that never
@@ -154,8 +170,9 @@ through as literal arguments.
 
 ### Side effects
 
-Registers the repository as a project if it is not known yet, inserts the task, and
-appends a `task.created` event — all in one transaction.
+Inserts the task and appends a `task.created` event in one transaction. The
+repository must already be a project; only with `mcp.auto_register_projects` set
+does the tool register an unknown one first.
 
 ---
 
@@ -194,11 +211,28 @@ would only refuse. Nor is a run that has not finished.
 
 ### Side effects
 
+Starts the run as its own `aidev task run <task>` process, detached from this
+server: its stdout goes to the null device (in this mode stdout is the JSON-RPC
+channel), its stderr to a log file per run under `workspace_root/run-logs/`, and
+it carries its own total deadline — the task's timeout plus the verification
+budget plus a margin — so a run cannot outlive its bounds even though no one
+waits on it. If that process dies before recording an ending, the tool reports
+the crash with the tail of its log.
+
 Creates a git worktree under `workspace_root` and a branch `aidev/<ref>`; runs the
 agent, which writes files there; moves the task through `RUNNING`, `VERIFYING` and a
 terminal state; appends events throughout. On success, commits the work to the task's
 branch and removes the worktree. On failure, keeps the worktree for inspection. The
 repository's own working tree is never touched.
+
+With `max_retries`, an attempt whose checks ran and failed, or whose agent stopped
+early (but not from a refused tool call), does not end the task: the attempt is
+recorded as failed, its work is committed — marked unverified — to its own branch,
+`task.retry_scheduled` is appended, the task goes back to `READY`, and the next
+attempt starts at once in the same directory on `aidev/<ref>-aN`, continuing the
+agent's session with the failing output in the prompt. The success branch is
+therefore the one in `result.worktree.branch`. Earlier attempts' worktree records
+read `REUSED`.
 
 Calling it again while a run is in flight joins that run rather than starting a
 second or failing.
@@ -214,7 +248,10 @@ Reads the outcome of a task's most recent attempt.
 | Field | Type | Required | Meaning |
 |---|---|---|---|
 | `task` | string | **yes** | reference or UUID |
-| `include_logs` | boolean | no | also return the agent transcript, the diff, and full verification output |
+| `include_logs` | boolean | no | also return the logs named by `sections`, each cut to `max_bytes` |
+| `sections` | string[] | no | which logs: `transcript` (the agent's events as plain text), `stdout` (its raw event stream), `stderr`, `diff`, `verification` (each step's full output). Defaults to all but `stdout`; naming any implies `include_logs` |
+| `max_bytes` | integer | no | the most bytes per section, and per step for verification output. Default 65536, at most 1048576 |
+| `offset` | integer | no | byte offset every section starts at; pass back `next_offset` to read the next page |
 
 ### Output
 
@@ -226,9 +263,21 @@ Reads the outcome of a task's most recent attempt.
 | `result.verification` | one entry per step: command, status, exit code. **This is the evidence** |
 | `result.worktree` | path, branch, and whether it was `REMOVED` or `RETAINED` |
 | `result.approval` | the most recent approval record |
+| `result.base_moved` | true when the base ref pointed at a different commit when the attempt started than when the task was created (`result.task.base_commit_at_create` vs `result.worktree.base_commit`) — the work was done on code the task's author may not have seen; absent otherwise |
 | `result.tests_modified` | changed paths that look like the tests judging this attempt — a report so a reviewer can see that what passed was also written in the same attempt; absent when the attempt left the tests alone |
 | `still_running` | the task is currently executing |
-| `agent_stdout`, `agent_stderr`, `diff` | only with `include_logs` |
+| `agent_transcript`, `agent_stderr`, `diff` | only with `include_logs`, each a window of at most `max_bytes` |
+| `agent_stdout` | the raw event stream, only when `sections` names `stdout` |
+| `*_total_bytes` | the whole size of each returned section (`agent_transcript_total_bytes`, `diff_total_bytes`, …; `stdout_total_bytes`/`stderr_total_bytes` on each verification step), so a cut section is distinguishable from a short one |
+| `next_offset` | present when some section has more past this page |
+
+Logs are bounded because one call used to return every captured byte — several
+megabytes into the caller's context. The transcript is the agent's NDJSON stream
+rendered as one line per message, tool call (with the path it was aimed at) or
+error, without ids, timestamps or token counts; a backend whose stream aidev does
+not recognise is passed through unchanged. Windows never split a UTF-8
+character: both ends move back to a character boundary, so pages read with
+`next_offset` fit together exactly.
 
 A failing step's output is included even without `include_logs`, trimmed to the last
 2000 bytes, because it is the first thing anyone needs. A passing step's is not.
@@ -238,7 +287,7 @@ distinguishable from "ran and produced nothing".
 
 ### Errors
 
-No such task. A task that has never run is not an error.
+No such task; an unknown section, a negative `offset` or `max_bytes`, or `max_bytes` over the cap. A task that has never run is not an error.
 
 ### Side effects
 
@@ -385,8 +434,10 @@ appending `task.approval_granted` or `task.approval_denied` with `decided_by`,
   what happens to that branch is a human's call.
 - **No configuration surface.** A planner cannot change `workspace_root`, the model,
   the agent command, or a timeout default.
-- **No project or event writes.** Projects are registered as a side effect of
-  creating a task, and the event log is append-only by construction.
+- **No project or event writes.** Projects are added by a person (`aidev project
+  add`, or a first `aidev task create`); the MCP server registers one only when
+  `mcp.auto_register_projects` allows it. The event log is append-only by
+  construction.
 
 ## Testing it
 

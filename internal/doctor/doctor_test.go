@@ -29,7 +29,10 @@ func healthy() Deps {
 			return nil
 		},
 		PendingMigrations: func(context.Context, string) ([]string, error) { return nil, nil },
-		CheckWorkspace:    func(string) error { return nil },
+		StuckTasks: func(context.Context, string) ([]string, error) {
+			return nil, nil
+		},
+		CheckWorkspace: func(string) error { return nil },
 	}
 }
 
@@ -58,7 +61,7 @@ func TestEverythingHealthyReportsEveryCheckInOrder(t *testing.T) {
 			t.Errorf("%s: an ok result has nothing to fix, got %q", r.Name, r.Fix)
 		}
 	}
-	want := []string{CheckConfig, CheckGit, CheckAgent, CheckDatabase, CheckMigrations, CheckWorkspace}
+	want := []string{CheckConfig, CheckGit, CheckAgent, CheckDatabase, CheckMigrations, CheckStuckTasks, CheckWorkspace}
 	if strings.Join(names, ",") != strings.Join(want, ",") {
 		t.Errorf("checks = %v, want %v", names, want)
 	}
@@ -103,7 +106,7 @@ func TestUnreadableConfigFailsAndSkipsWhatNeedsIt(t *testing.T) {
 	if got[CheckGit].Status != StatusOK {
 		t.Errorf("git: status %s, want ok even without a configuration", got[CheckGit].Status)
 	}
-	for _, name := range []string{CheckAgent, CheckDatabase, CheckMigrations, CheckWorkspace} {
+	for _, name := range []string{CheckAgent, CheckDatabase, CheckMigrations, CheckStuckTasks, CheckWorkspace} {
 		if got[name].Status != StatusSkipped {
 			t.Errorf("%s: status %s, want skipped when the configuration cannot be read", name, got[name].Status)
 		}
@@ -195,6 +198,9 @@ func TestUnreachableDatabaseSuggestsStartingItAndNeverShowsThePassword(t *testin
 	if migrationsAsked {
 		t.Error("migrations were queried although the database did not answer")
 	}
+	if got[CheckStuckTasks].Status != StatusSkipped {
+		t.Errorf("stuck tasks: status %s, want skipped when the database is unreachable", got[CheckStuckTasks].Status)
+	}
 	for _, r := range results {
 		if strings.Contains(r.Summary+r.Fix, "hunter2") {
 			t.Errorf("%s leaks the database password: %+v", r.Name, r)
@@ -221,10 +227,19 @@ func TestPendingMigrationsFailWithTheCommandThatAppliesThem(t *testing.T) {
 	deps.PendingMigrations = func(context.Context, string) ([]string, error) {
 		return []string{"0004_task_hardness", "0005_protected_paths"}, nil
 	}
+	// The lease columns the stuck-task check queries may not exist yet, so the
+	// check must not ask the database about them while migrations are pending.
+	deps.StuckTasks = func(context.Context, string) ([]string, error) {
+		t.Fatal("stuck tasks were checked although migrations are pending")
+		return nil, nil
+	}
 	got := byName(t, Run(context.Background(), deps))
 	assertFail(t, got[CheckMigrations], "aidev migrate")
 	if !strings.Contains(got[CheckMigrations].Summary, "2") {
 		t.Errorf("migrations summary should say how many are pending, got %q", got[CheckMigrations].Summary)
+	}
+	if got[CheckStuckTasks].Status != StatusSkipped {
+		t.Errorf("stuck tasks: status %s, want skipped while migrations are pending", got[CheckStuckTasks].Status)
 	}
 
 	deps = healthy()
@@ -266,5 +281,63 @@ func TestOnePendingMigrationIsSingular(t *testing.T) {
 	got := byName(t, Run(context.Background(), deps))
 	if s := got[CheckMigrations].Summary; !strings.Contains(s, "1 migration is pending") {
 		t.Errorf("summary = %q, want it to say \"1 migration is pending\"", s)
+	}
+}
+
+// A task whose process died leaves it RUNNING forever; doctor must name it and
+// point at the command that clears it. It is a warning, not a failure: aidev
+// itself still works, and the operator decides when to recover.
+func TestStuckTasksWarnWithTheCommandThatRecoversThem(t *testing.T) {
+	deps := healthy()
+	deps.StuckTasks = func(context.Context, string) ([]string, error) {
+		return []string{"task_0001 (RUNNING)", "task_0002 (VERIFYING)"}, nil
+	}
+	got := byName(t, Run(context.Background(), deps))
+	r := got[CheckStuckTasks]
+	if r.Status != StatusWarn {
+		t.Errorf("status = %s, want warn (summary %q)", r.Status, r.Summary)
+	}
+	if !strings.Contains(r.Summary, "task_0001 (RUNNING)") || !strings.Contains(r.Summary, "task_0002 (VERIFYING)") {
+		t.Errorf("summary should name the stuck tasks, got %q", r.Summary)
+	}
+	if !strings.Contains(r.Summary, "2 tasks are") {
+		t.Errorf("summary = %q, want \"2 tasks are\"", r.Summary)
+	}
+	if !strings.Contains(r.Fix, "aidev task recover") {
+		t.Errorf("fix %q does not mention `aidev task recover`", r.Fix)
+	}
+	if Failed(Run(context.Background(), deps)) {
+		t.Error("stuck tasks are a warning: a doctor that warns must still exit 0")
+	}
+}
+
+// One stuck task reads as "1 task is", not "1 tasks are".
+func TestOneStuckTaskIsSingular(t *testing.T) {
+	deps := healthy()
+	deps.StuckTasks = func(context.Context, string) ([]string, error) {
+		return []string{"task_0001 (RUNNING)"}, nil
+	}
+	got := byName(t, Run(context.Background(), deps))
+	if s := got[CheckStuckTasks].Summary; !strings.Contains(s, "1 task is stuck") {
+		t.Errorf("summary = %q, want it to say \"1 task is stuck\"", s)
+	}
+}
+
+// The check reports the database's refusal as a failure of the check — the
+// operator needs to know it could not look, not to believe nothing is there.
+func TestStuckTasksErrorFailsAndSaysWhy(t *testing.T) {
+	deps := healthy()
+	deps.StuckTasks = func(context.Context, string) ([]string, error) {
+		return nil, errors.New("failed to connect to `" + secretURL + "`: connection refused")
+	}
+	got := byName(t, Run(context.Background(), deps))
+	assertFail(t, got[CheckStuckTasks], "aidev task recover")
+	if !strings.Contains(got[CheckStuckTasks].Summary, "connection refused") {
+		t.Errorf("summary should say why it failed, got %q", got[CheckStuckTasks].Summary)
+	}
+	for _, r := range []Result{got[CheckConfig], got[CheckDatabase], got[CheckStuckTasks]} {
+		if strings.Contains(r.Summary+r.Fix, "hunter2") {
+			t.Errorf("%s leaks the database password: %+v", r.Name, r)
+		}
 	}
 }

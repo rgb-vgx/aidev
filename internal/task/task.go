@@ -105,8 +105,10 @@ type Task struct {
 	// change while a task is in flight.
 	VerificationMode VerificationMode
 
-	// MaxRetries is recorded for the future retry feature. The MVP never
-	// retries automatically.
+	// MaxRetries is how many more attempts the run may make when one fails
+	// in a way another try can fix — the checks ran and failed, or the agent
+	// stopped early. Each retry continues in the same worktree directory and
+	// agent session (internal/worker/retry.go). Zero means no retry.
 	MaxRetries int
 
 	RequiresApproval bool
@@ -121,6 +123,13 @@ type Task struct {
 	// BaseRef is the git ref the task's worktree branches from. Empty means the
 	// project's default branch.
 	BaseRef string
+
+	// BaseCommitAtCreate is the commit the base ref pointed at when the task
+	// was created (research D2). The ref is resolved again when the task
+	// runs; if it has moved in between, the work starts from code the task's
+	// author never saw, and the run says so. Empty for tasks created before
+	// the field existed.
+	BaseCommitAtCreate string
 
 	// Timeout bounds the agent run. Zero means "use the configured default".
 	Timeout time.Duration
@@ -151,7 +160,10 @@ type NewTaskInput struct {
 	RequiresApproval bool
 	ExpectFailOnBase bool
 	BaseRef          string
-	Timeout          time.Duration
+	// BaseCommitAtCreate is resolved by the caller, which has the repository;
+	// this package does not touch git.
+	BaseCommitAtCreate string
+	Timeout            time.Duration
 }
 
 // ValidationError reports one or more rejected fields.
@@ -309,6 +321,7 @@ func New(input NewTaskInput, defaultAgent string) (Task, error) {
 		RequiresApproval:   input.RequiresApproval,
 		ExpectFailOnBase:   input.ExpectFailOnBase,
 		BaseRef:            strings.TrimSpace(input.BaseRef),
+		BaseCommitAtCreate: strings.TrimSpace(input.BaseCommitAtCreate),
 		Timeout:            input.Timeout,
 		CreatedAt:          now,
 		UpdatedAt:          now,

@@ -68,9 +68,10 @@ The unit of delegated work.
 | `protected_paths` | JSONB array of glob patterns (default `[]`); an attempt changing a matching path fails verification before any check runs (migration 0010) |
 | `setup_steps` | JSONB array of argv commands (default `[]`) that run before verification to prepare the checkout; a failing one fails the task before any check runs (migration 0011) |
 | `verification_mode` | where this task's verification runs: `in_place` or `clean`, frozen at creation from the caller's choice or the project's default (migration 0011) |
-| `max_retries` | recorded for a future retry feature; the MVP never retries |
+| `max_retries` | how many more attempts a run may make when one fails in a way another try can fix — the checks ran and failed, or the agent stopped early (0 to 10; migration 0017 added the retry itself) |
 | `requires_approval` | the task's own gate (the creator's ask); OR'd at run time with the project's policy, never overwritten by it |
 | `expect_fail_on_base` | when true the verification commands run on the base commit before the agent starts, and a pass there fails the attempt with kind VERIFICATION without ever calling the agent (migration 0012) |
+| `base_commit_at_create` | the commit the base ref (`base_ref`, else the project's default branch) pointed at when the task was created. The run resolves the ref again; when the worktree starts from a different commit it records `task.base_moved` and the result reports `base_moved`, but goes ahead on the current commit. `''` for tasks created before the column existed, never reported as moved (migration 0015) |
 | `base_ref` | git ref to branch from; empty means the project default |
 | `timeout_seconds` | 0 means "use the configured default" |
 
@@ -124,6 +125,13 @@ A finished attempt always has a finish time and a running one never does, so
 `FinishAttempt` additionally matches `WHERE status = 'RUNNING'`, so finishing an
 attempt twice returns a conflict instead of quietly replacing the first outcome.
 
+`lease_owner` and `lease_expires_at` (migration `0013_attempt_lease`) say which
+process is alive on the attempt. The owner is `hostname:pid:uuid`, written when
+the attempt starts; the run's own cancel poll pushes the expiry 30 seconds
+forward every time it ticks. A NULL expiry means nobody ever reported in — a run
+killed before its first tick — and is treated as expired, because there is no
+holder to wait for. `aidev task recover` cancels tasks whose lease has run out.
+
 ### `worktrees`
 The isolated workspace an attempt ran in. `attempt_id` is **unique**: the
 isolation boundary is per attempt, so a second worktree for one attempt would be a
@@ -135,9 +143,23 @@ CONSTRAINT worktrees_removed_consistent CHECK (
     (status <> 'REMOVED' AND removed_at IS NULL))
 ```
 
+`REUSED` (migration 0017) marks the record of an attempt whose directory was handed
+to the next attempt by an automatic retry: the row keeps that attempt's branch and
+its unverified `head_commit`, while the later attempt's row owns the directory. A
+`REUSED` row is never something on disk to remove, so `task delete` and
+`worktree list` look only at `ACTIVE` and `RETAINED` rows.
+
 `RETAINED` is a deliberate state: it means the attempt failed or was cancelled and
 the worktree was kept on disk for inspection. A retained worktree therefore has no
 removal time. `ListRetainedWorktrees` is how an operator finds abandoned work.
+
+`agent_tree` (migration `0014_agent_tree`) is the tree object the agent's work was
+snapshotted to as soon as the agent finished, before verification ran. The success
+commit carries exactly this tree, so on a succeeded attempt `head_commit^{tree}`
+equals `agent_tree`, and anything verification wrote afterwards is not in it. `''`
+means no snapshot was taken: a row from before the migration, or an attempt that
+ended before the agent finished. The same migration adds
+`task.verification_worktree_modified` to `events_type_valid`.
 
 ### `worker_runs`
 What an agent backend actually did: the argv, the captured streams, the exit code,
@@ -155,6 +177,15 @@ point, would be invisible (docs/research.md §4.4).
 
 Environment variables are deliberately **not** stored. The argv is task-defined
 and safe to record; an environment can carry credentials.
+
+`logs_pruned` (migration `0016_logs_pruned`, also on `verification_runs`) is set
+when `aidev prune --logs-older-than` cleared the run's `stdout`, `stderr` and `diff`
+for retention. Only runs of finished tasks are pruned, and only these columns; the
+row, its outcome and every event stay. A task can also be deleted outright with
+`aidev task delete` once it has finished and its worktree is off the disk: the
+`ON DELETE CASCADE` foreign keys then remove its attempts, runs, worktree records,
+approvals and events together — the retention operation migration 0001 leaves
+DELETE unblocked for.
 
 ### `verification_runs`
 One row per verification step that aidev ran itself, with
@@ -256,9 +287,11 @@ asserted by tests rather than left to review:
 - **Every non-terminal state can reach `CANCELLED`,** so no task can become
   unstoppable.
 
-`FAILED → READY` (retry) is deliberately absent. Attempts are persisted so retry
-can be added later; the edge is missing rather than present-and-unused, so adding
-it is a deliberate change with a test to update.
+Automatic retry (migration `0017_retry`) adds `RUNNING → READY` and
+`VERIFYING → READY`: an attempt that failed in a way another try can fix, on a task
+with retries left, is finished as `FAILED` while the task goes back to `READY` and
+the same run starts the next attempt. `FAILED → READY` stays absent — a task that
+will retry never passes through `FAILED`, so `FAILED` is still final.
 
 The machine also exists in the database: migration 0007 installs a
 `BEFORE UPDATE OF status` trigger (`tasks_transition_guard`) that rejects any

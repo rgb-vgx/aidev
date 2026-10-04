@@ -282,8 +282,8 @@ run 2: opencode run -s ses_f69534640ffeZtuI27AghGGUpT "What was the secret numbe
 ```
 
 Context survives across separate process invocations. aidev persists the session id on every
-`TaskAttempt` now, so retry-with-context can be built later without a schema change. The MVP
-does not resume sessions.
+`TaskAttempt`, and since automatic retry (migration 0017, docs/architecture.md "Automatic
+retry") a retried attempt continues the failed attempt's session.
 
 **A session belongs to its directory** (measured 2026-09-17, OpenCode 1.18.31, 9router muse,
 probe in `.probe/resume-dir/`). A session created with `--dir a` and continued with

@@ -127,12 +127,18 @@ func worktreeList(ctx context.Context, env *Env, args []string) error {
 	var total int64
 	for _, item := range items {
 		present, size := inspectPath(item.Worktree.Path)
-		total += size
+		// A REUSED record shares its directory with the later attempt that
+		// continued in it (automatic retry); counting it again would double
+		// the total, and its directory is that attempt's to report.
+		owns := item.Worktree.Status != task.WorktreeReused
+		if owns {
+			total += size
+		}
 
 		marker := " "
 		note := ""
 		switch {
-		case !present && item.Worktree.Status != task.WorktreeRemoved:
+		case !present && owns && item.Worktree.Status != task.WorktreeRemoved:
 			// Recorded as present but gone from disk: something outside aidev
 			// deleted it. Saying so is more useful than showing a path that does
 			// not exist.
@@ -146,7 +152,7 @@ func worktreeList(ctx context.Context, env *Env, args []string) error {
 			marker, item.TaskRef, item.TaskStatus, item.AttemptNumber,
 			item.Worktree.Status, item.Worktree.Path, note)
 		fmt.Fprintf(env.Stdout, "    %s  branch %s\n", truncate(item.TaskTitle, 56), item.Worktree.Branch)
-		if present && size > 0 {
+		if present && size > 0 && owns {
 			fmt.Fprintf(env.Stdout, "    %s on disk\n", humanBytes(size))
 		}
 	}

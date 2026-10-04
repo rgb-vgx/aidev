@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"strings"
 	"time"
 
 	aidevmcp "aidev/internal/mcp"
@@ -16,6 +17,12 @@ import (
 // connectTimeout: a database that is still starting must surface as a quick
 // tool error the client can retry, not a long stall that looks like a hang.
 const mcpConnectTimeout = 5 * time.Second
+
+// mcpRecoverTimeout bounds the recovery that runs when the database first
+// connects. It is best-effort: a slow database delays the first tool call at
+// most this long, and the outcome is logged to stderr — stdout belongs to the
+// protocol (research C1).
+const mcpRecoverTimeout = 10 * time.Second
 
 // runMCPServer starts the MCP server on stdio.
 //
@@ -62,6 +69,23 @@ protocol.
 			return nil, err
 		}
 		logger.InfoContext(ctx, "mcp database connected")
+		// Recovery runs once per connection: a planner reconnecting after a
+		// restart must not inherit tasks that a killed run left RUNNING
+		// (research C1). Bounded and best-effort — failing to recover must
+		// not keep the server from answering tool calls.
+		recoverCtx, cancelRecover := context.WithTimeout(attemptCtx, mcpRecoverTimeout)
+		defer cancelRecover()
+		recovered, recErr := a.orchestrator.Recover(recoverCtx, false)
+		switch {
+		case recErr != nil:
+			logger.WarnContext(ctx, "automatic recovery after connecting failed", "error", recErr.Error())
+		case len(recovered) > 0:
+			refs := make([]string, 0, len(recovered))
+			for _, r := range recovered {
+				refs = append(refs, r.Ref)
+			}
+			logger.InfoContext(ctx, "cancelled tasks whose lease expired", "tasks", strings.Join(refs, ", "))
+		}
 		return a, nil
 	})
 	defer lazy.close()

@@ -209,6 +209,7 @@ binary uses when a key is absent; conf/conf.example.json shows them all in one f
 | `agent.routing` | *(none)* | an object mapping a task hardness (`TRIVIAL`, `STANDARD`, `HARD`) to the model that hardness deserves; a hardness with no entry leaves the choice to the backend |
 | `log_level` | `info` | `debug`, `info`, `warn` or `error` |
 | `mcp.allow_approval` | `false` | whether the MCP `aidev_approve_task` tool may grant or deny approvals; when off, decisions are the CLI's (`aidev task approve`) |
+| `mcp.auto_register_projects` | `false` | whether `aidev_create_task` may register a repository aidev has never seen; when off, MCP tasks are refused for any repository not added with `aidev project add` |
 | `tracing.endpoint` | *(none)* | base OTLP HTTP URL; tracing is off when nothing is set |
 | `tracing.traces_endpoint` | *(none)* | the full URL the traces exporter posts to, taking precedence over `tracing.endpoint` |
 | `tracing.headers` | *(none)* | an object of extra OTLP headers, such as `Authorization` |
@@ -327,8 +328,12 @@ aidev task result <task> [--logs] [--json]
 aidev task events <task> [--payload] [--after SEQ] [--json]
 aidev task cancel <task> [--reason R] [--json]
 aidev task approve <task> [--deny] [--by WHO] [--reason R] [--json]
+aidev task recover [--dry-run] [--json]   # cancel tasks whose lease expired
+aidev task delete <task>                  # delete a finished task and its history
+aidev prune --logs-older-than 30d [--dry-run]  # clear old captured output
 
-aidev project list  [--json]                      # repositories aidev has run against
+aidev project add   [path]                        # register a repository for MCP tasks
+aidev project list  [--json]                      # repositories aidev knows
 aidev project approval [on|off] [--repo .]        # gate every task of the repo (operator only)
 aidev project verify-mode [in_place|clean] [--repo .]  # where new tasks verify (operator only)
 ```
@@ -364,6 +369,14 @@ git diff main..aidev/TASK-000001
 ```
 
 Nothing is merged, and nothing is ever committed to your working branch.
+
+A task created with `--max-retries N` (MCP: `max_retries`) gets up to N more
+attempts when its checks fail or its agent stops early. Each retry continues in
+the same worktree and agent session, with the failing output in the prompt; the
+failed attempt's work is committed, marked unverified, to its own branch, and
+the next attempt works on `aidev/<ref>-a2`, `-a3` and so on. A success then
+reports that branch. A refused tool call, an intercepted runner or a timeout is
+never retried.
 
 A failed task leaves its worktree exactly as the agent left it, under
 `workspace_root`, because partial work is often the most useful thing about a
@@ -431,7 +444,15 @@ project` writes a shareable `.mcp.json` that each person must approve once.
 No credentials go on the registration: `AIDEV_CONFIG` names the conf.json, and
 aidev reads the database password out of it, so `~/.claude.json` holds no
 connection string. Use the same file and path that `aidev config` reports, so the
-server starts configured. Eight tools become available:
+server starts configured.
+
+The server creates tasks only for repositories aidev already knows, so a planner
+that guesses a path cannot send an agent into the wrong one. Register each
+repository once with `aidev project add <path>` (a repository you have created a
+task for with the CLI is already registered), or set
+`mcp.auto_register_projects` to let the server register them on demand.
+
+Eight tools become available:
 
 | Tool | Purpose |
 |---|---|
@@ -444,7 +465,8 @@ server starts configured. Eight tools become available:
 | `aidev_approve_task` | a human releases a gated task; off unless `mcp.allow_approval` is set |
 
 A run takes minutes, so `aidev_run_task` waits a bounded time and then returns with
-`still_running: true` while the task continues; the planner polls
+`still_running: true` while the task continues — as a separate `aidev task run`
+process, it survives even this server exiting; the planner polls
 `aidev_get_task_result`. The field to read is `succeeded`, which is true only when
 aidev's own verification passed.
 
@@ -608,10 +630,11 @@ your backend under aidev's name.
 
 **Start with `aidev doctor`.** It checks, in order, that the configuration can be
 read, that git and the configured agent are installed, that the database answers
-and is migrated, and that `workspace_root` is writable. Each problem comes with
-what to do about it, the database password is never shown, and it exits 1 when
-something is broken. `aidev doctor --json` prints the same results as a JSON list;
-the plugin's `aidev:doctor` skill reads that and repairs what it safely can.
+and is migrated, that no task is stuck with an expired lease, and that
+`workspace_root` is writable. Each problem comes with what to do about it, the
+database password is never shown, and it exits 1 when something is broken.
+`aidev doctor --json` prints the same results as a JSON list; the plugin's
+`aidev:doctor` skill reads that and repairs what it safely can.
 
 ```bash
 aidev doctor
@@ -622,15 +645,19 @@ aidev doctor
 ```
 
 **aidev was killed while a task was running.** The task is stuck in `RUNNING`, and
-nothing will pick it up again. Cancel it:
+nothing will pick it up again. While it ran, the attempt held a lease that the
+dead process can no longer renew, so recover the tasks whose lease has run out:
 
 ```bash
-aidev task list --status RUNNING,VERIFYING
-aidev task cancel TASK-000001 --reason "aidev was killed mid-run"
+aidev task recover --dry-run
+aidev task recover
 ```
 
-The partial work is kept. aidev deliberately does not expire a stale `RUNNING` task
-by itself — see [the reasoning](docs/architecture.md#when-a-run-is-interrupted).
+A task whose process is still alive keeps a live lease and is left alone. The
+recovery records the expired lease as the reason, closes the open attempt, and
+keeps the partial work. You can still cancel by hand — `aidev task cancel
+TASK-000001 --reason "aidev was killed mid-run"` — and the reasoning for why
+nothing does this on a timer is in [the architecture notes](docs/architecture.md#when-a-run-is-interrupted).
 
 **The workspace is filling up.** Failed tasks keep their worktrees on purpose:
 
@@ -639,6 +666,20 @@ aidev worktree list                        # with tasks, statuses and sizes
 aidev worktree remove TASK-000001          # refused if work is uncommitted
 aidev worktree remove TASK-000001 --force  # discard it deliberately
 ```
+
+**The database is growing.** Each attempt keeps up to 1 MiB of agent output, 1 MiB
+of error output and 4 MiB of diff. Clear the output of old finished tasks and keep
+their records and history, or delete finished tasks outright:
+
+```bash
+aidev prune --logs-older-than 30d --dry-run
+aidev prune --logs-older-than 30d
+aidev task delete TASK-000001
+```
+
+A pruned run shows `logs_pruned`, so empty output reads as removed rather than
+silent. The event log is never pruned. `task delete` refuses a task that can still
+change, and one whose worktree is still on disk.
 
 **There are Docker volumes named after tasks.** An agent ran `docker compose` inside
 its worktree, where a copy of `docker-compose.yml` exists, and Compose named the

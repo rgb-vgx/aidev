@@ -8,6 +8,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"aidev/internal/config"
 	"aidev/internal/store"
@@ -30,6 +31,8 @@ func runTask(ctx context.Context, env *Env, args []string) error {
 		"events":  {"show a task's event history", taskEvents},
 		"cancel":  {"cancel a task that has not finished", taskCancel},
 		"approve": {"approve or deny a task that requires approval", taskApprove},
+		"recover": {"cancel tasks whose lease expired", taskRecover},
+		"delete":  {"delete a finished task and its history", taskDelete},
 	}
 
 	writeTaskUsage := func(w *Env) {
@@ -114,7 +117,7 @@ func taskCreate(ctx context.Context, env *Env, args []string) error {
 	model := fs.String("model", "", "model to use (default: agent.opencode.model in conf.json)")
 	hardness := fs.String("hardness", "", "how hard the task is: TRIVIAL, STANDARD or HARD (picks a model from agent.routing in conf.json)")
 	priority := fs.Int("priority", 0, "higher runs first")
-	maxRetries := fs.Int("max-retries", 0, "recorded for a future retry feature; the MVP never retries")
+	maxRetries := fs.Int("max-retries", 0, "retry up to N more times when the checks fail or the agent stops early (0-10)")
 	requiresApproval := fs.Bool("requires-approval", false, "do not run until a human approves")
 	expectFailOnBase := fs.Bool("expect-fail-on-base", false, "run the verification commands on the base commit before the agent starts; fail immediately if they already pass, because commands that pass on the base cannot distinguish before from after (for bug-fix tasks)")
 	baseRef := fs.String("base-ref", "", "git ref to branch from (default: the project's default branch)")
@@ -310,6 +313,27 @@ func taskGet(ctx context.Context, env *Env, args []string) error {
 	return nil
 }
 
+// runBudgetMargin is the slack in the total deadline a run puts on itself, on
+// top of the task's timeout and the verification budget. Those bounds cover the
+// agent and the checks; the work around them — creating the worktree, the git
+// operations, waiting on a pool — has no bound of its own, and a run that hangs
+// between phases must still not outlive invariant 6.
+const runBudgetMargin = 10 * time.Minute
+
+// runTotalBudget is the deadline a run imposes on itself. Every attempt the
+// task may take — the first and up to max_retries more, all in this one run —
+// gets the agent's timeout and the verification budget. A task that expects
+// its verification to fail on the base spends one more verification pass
+// there, before the first attempt only.
+func runTotalBudget(cfg config.Config, t task.Task) time.Duration {
+	attempts := time.Duration(1 + max(t.MaxRetries, 0))
+	budget := attempts*(t.EffectiveTimeout(cfg.DefaultTaskTimeout)+cfg.VerificationTotalTimeout) + runBudgetMargin
+	if t.ExpectFailOnBase {
+		budget += cfg.VerificationTotalTimeout
+	}
+	return budget
+}
+
 func taskRun(ctx context.Context, env *Env, args []string) error {
 	fs := flag.NewFlagSet("task run", flag.ContinueOnError)
 	fs.SetOutput(env.Stderr)
@@ -322,7 +346,11 @@ it, then runs the task's own verification commands and records the outcome.
 
 This can take several minutes. The first run against a repository OpenCode has
 not seen before can take longer still. Ctrl-C cancels it and records the
-cancellation; the worktree is kept.
+cancellation; the worktree is kept. A task with --max-retries that fails in a
+way another try can fix (the checks failed, or the agent stopped early) starts
+its next attempt within the same run, in the same worktree. A total deadline
+also applies — the task's timeout plus the verification budget for every
+attempt it may take, plus a margin — so a run that hangs cannot last forever.
 `)
 		fs.PrintDefaults()
 	}
@@ -341,6 +369,19 @@ cancellation; the worktree is kept.
 	}
 	defer app.close()
 
+	// The run bounds itself, because nothing else will: the agent has its
+	// timeout and verification has its budget, but nothing bounded the two
+	// together, and this command — which the MCP server spawns as a detached
+	// child (research C2) — must return either way. Resolving here costs one
+	// query; RunTask resolves the task again itself.
+	t, err := app.store.ResolveTask(ctx, identifier)
+	if err != nil {
+		return err
+	}
+	budget := runTotalBudget(app.cfg, t)
+	ctx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+
 	outcome, runErr := app.orchestrator.RunTask(ctx, identifier)
 
 	// An approval gate is not a failure: report it and exit 0 so that a script
@@ -354,6 +395,9 @@ cancellation; the worktree is kept.
 		return nil
 	}
 	if runErr != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("the run for %s exceeded its total budget of %s: %w", t.Identifier(), budget, runErr)
+		}
 		return runErr
 	}
 
@@ -371,8 +415,13 @@ cancellation; the worktree is kept.
 	}
 
 	// A task that did not succeed exits non-zero, so `aidev task run X && deploy`
-	// behaves the way a shell user expects.
+	// behaves the way a shell user expects. When the deadline is what stopped
+	// it, say so: the outcome above is recorded, but the reason deserves to be
+	// on stderr too, and it must not look like a plain verification failure.
 	if outcome.Task.Status != task.StatusSucceeded {
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("the run for %s exceeded its total budget of %s (task timeout + verification budget + margin)", t.Identifier(), budget)
+		}
 		return &exitError{code: 1}
 	}
 	return nil
@@ -540,6 +589,48 @@ func taskCancel(ctx context.Context, env *Env, args []string) error {
 		return writeJSON(env.Stdout, buildResultView(outcome, nil, false))
 	}
 	fmt.Fprintln(env.Stdout, outcome.Message)
+	return nil
+}
+
+func taskRecover(ctx context.Context, env *Env, args []string) error {
+	fs := flag.NewFlagSet("task recover", flag.ContinueOnError)
+	fs.SetOutput(env.Stderr)
+	dryRun := fs.Bool("dry-run", false, "list the tasks that would be cancelled, without cancelling anything")
+	asJSON := fs.Bool("json", false, "print as JSON")
+	if err := fs.Parse(args); err != nil {
+		return usagef("aidev task recover: %v", err)
+	}
+	if fs.NArg() > 0 {
+		return usagef("aidev task recover takes no arguments")
+	}
+
+	app, err := openApp(ctx)
+	if err != nil {
+		return err
+	}
+	defer app.close()
+
+	recovered, err := app.orchestrator.Recover(ctx, *dryRun)
+	if err != nil {
+		return err
+	}
+	if *asJSON {
+		return writeJSON(env.Stdout, map[string]any{
+			"dry_run": *dryRun,
+			"tasks":   recovered,
+		})
+	}
+	if len(recovered) == 0 {
+		fmt.Fprintln(env.Stdout, "no tasks with an expired lease")
+		return nil
+	}
+	for _, r := range recovered {
+		action := "cancelled"
+		if r.Action == "would_cancel" {
+			action = "would cancel"
+		}
+		fmt.Fprintf(env.Stdout, "%s  %-14s  %s\n", r.Ref, action, r.Reason)
+	}
 	return nil
 }
 

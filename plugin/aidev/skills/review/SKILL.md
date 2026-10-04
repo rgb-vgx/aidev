@@ -11,13 +11,16 @@ the commands cannot. Nothing is merged until you have.
 
 ## 1. Collect the change
 
-The result names the branch, `aidev/<ref>`. Compare it with the branch the task
-started from (its `base_ref`, usually `spec/<name>`):
+The result names the branch in `result.worktree.branch`: `aidev/<ref>`, or
+`aidev/<ref>-aN` when a retry succeeded (its history then includes the earlier
+attempts' unverified commits — review the whole range). Below, `<branch>` is that
+name. Compare it with the branch the task started from (its `base_ref`, usually
+`spec/<name>`):
 
 ```
-git log --oneline <base_ref>..aidev/<ref>
-git diff --stat <base_ref> aidev/<ref>
-git diff <base_ref> aidev/<ref>
+git log --oneline <base_ref>..<branch>
+git diff --stat <base_ref> <branch>
+git diff <base_ref> <branch>
 ```
 
 ## 2. Hard conditions: any failure means do not merge
@@ -40,7 +43,7 @@ Read the whole diff, not only the summary. Look for:
 - a copy of existing code instead of reuse, or a change far wider than asked;
 - anything that needs a real run to trust (a command the project provides, a page
   in a browser): run it yourself in a scratch worktree
-  (`git worktree add <dir> aidev/<ref>`), then remove the worktree.
+  (`git worktree add <dir> <branch>`), then remove the worktree.
 
 Write down what you find. A finding you can fix in a few lines becomes a separate
 commit after the merge, with its own test first. A larger one becomes a new task.
@@ -50,7 +53,7 @@ commit after the merge, with its own test first. A larger one becomes a new task
 Only with the user's go-ahead, unless they already asked you to merge reviewed work.
 
 1. Switch to the user's branch and make sure it is clean.
-2. `git merge --no-ff --no-commit aidev/<ref>` and run the project's full check (for
+2. `git merge --no-ff --no-commit <branch>` and run the project's full check (for
    example `make check`). If it fails, `git merge --abort` and report.
 3. Write the merge message to a file and commit with `git commit -F <file>`
    (never `-F -`). Say what changed, why, and what you checked beyond the tests.

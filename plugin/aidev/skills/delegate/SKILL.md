@@ -72,7 +72,11 @@ spec branch, and run them one after another, each based on the previous result.
 
 Call `aidev_create_task` with:
 
-- `repo_path`: absolute path of the repository.
+- `repo_path`: absolute path of the repository. aidev refuses a repository that
+  is not registered with it, so nothing runs in a path you guessed wrong. If the
+  error says so, do not retry with another path: tell the user, and ask them to
+  run `aidev project add <path>` themselves — registering a repository is their
+  decision.
 - `title`: one line.
 - `description`: exactly what to change and where (files, functions), which tests
   specify it (name the spec commit), and the constraints. Always include:
@@ -85,6 +89,10 @@ Call `aidev_create_task` with:
   only the new tests, so nothing else breaks unnoticed.
 - `base_ref`: the spec branch.
 - `hardness`: `TRIVIAL`, `STANDARD` or `HARD` when it helps pick a model.
+- `max_retries`: `1` is a good default. When the checks fail or the agent stops
+  early, aidev then tries once more in the same worktree and agent session, with
+  the failing output in the prompt, before reporting a failure. A refused tool
+  call, an intercepted runner or a timeout is never retried.
 
 ## 6. Run it and wait
 
@@ -97,7 +105,12 @@ tasks of this size take.
 ## 7. When it fails
 
 Read `aidev_get_task_result` (with `include_logs` if the summary is not enough) and
-find which it was:
+find which it was. Logs come back cut to 64 KiB per section; when a
+`*_total_bytes` field says there is more, ask for just that section with
+`sections` and page on with `offset` set to the returned `next_offset`, rather
+than raising `max_bytes`. With `max_retries`, a FAILED task has already used its
+retries: the `task.retry_scheduled` events say what each earlier attempt hit, and
+the result describes the last one:
 
 - **The agent stopped early** (few or no files changed, a final message announcing
   more work): create a new task with the same spec, a smaller scope, and the
@@ -115,8 +128,9 @@ find which it was:
 
 ## 8. When it succeeds
 
-A success leaves a commit on `aidev/<ref>` and nothing else. Use the `review` skill
-before anything reaches the user's branch.
+A success leaves a commit on the branch named in `result.worktree.branch` —
+`aidev/<ref>`, or `aidev/<ref>-aN` when a retry passed — and nothing else. Use the
+`review` skill before anything reaches the user's branch.
 
 ## Never
 

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -793,6 +794,11 @@ func TestARefusedCallOutsideTheWorktreeSaysSo(t *testing.T) {
 	}
 	if res.Err == nil {
 		t.Fatal("a run cut short by a refusal reported no error")
+	}
+	// Automatic retry tells a refusal from an early stop by this marker: the
+	// same request in the same session would only be refused again.
+	if !errors.Is(res.Err, ErrToolRefused) {
+		t.Errorf("errors.Is(%v, ErrToolRefused) = false, want a refusal to be marked as one", res.Err)
 	}
 	message := res.Err.Error()
 	for _, want := range []string{"outside its worktree", "/home/thuyetmt/work/pingpong/ocr-service/Makefile", "refus"} {

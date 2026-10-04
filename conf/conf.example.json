@@ -28,7 +28,8 @@
     }
   },
   "mcp": {
-    "allow_approval": false
+    "allow_approval": false,
+    "auto_register_projects": false
   },
   "log_level": "info",
   "tracing": {

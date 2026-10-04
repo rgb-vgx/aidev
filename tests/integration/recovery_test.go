@@ -17,7 +17,11 @@ import (
 // crashDuringRun leaves the database in the state a `kill -9` would: the task
 // RUNNING, an attempt open, and a worktree on disk recorded as ACTIVE. No
 // orchestrator is involved, because the point is that nothing ran to clean up.
-func crashDuringRun(t *testing.T, h *harness) (task.Task, task.TaskAttempt, task.Worktree) {
+//
+// prepare, when given, adjusts the attempt before it is written. A run killed
+// before its first heartbeat leaves a NULL lease; a run killed after one leaves
+// an owner and an expiry, and the recovery tests need to be able to say which.
+func crashDuringRun(t *testing.T, h *harness, prepare ...func(*task.TaskAttempt)) (task.Task, task.TaskAttempt, task.Worktree) {
 	t.Helper()
 
 	created := h.createTask(nil)
@@ -28,7 +32,11 @@ func crashDuringRun(t *testing.T, h *harness) (task.Task, task.TaskAttempt, task
 	if err := h.store.TransitionTask(h.ctx, created.ID, task.StatusReady, task.StatusRunning); err != nil {
 		t.Fatal(err)
 	}
-	attempt, err := h.store.CreateAttempt(h.ctx, task.NewAttempt(created.ID, 1))
+	attempt := task.NewAttempt(created.ID, 1)
+	for _, prepareAttempt := range prepare {
+		prepareAttempt(&attempt)
+	}
+	attempt, err := h.store.CreateAttempt(h.ctx, attempt)
 	if err != nil {
 		t.Fatal(err)
 	}

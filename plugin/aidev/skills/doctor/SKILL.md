@@ -43,6 +43,11 @@ Work through the failures in order and run `aidev doctor` again after each fix.
   either file.
 - **agent** and **git**: tell the user what to install; installing software is
   their decision.
+- **project not registered** (`aidev_create_task` says the repository is not
+  registered): the MCP server only creates tasks for repositories a person has
+  added. Show the user `aidev project add <path>` for the repository they mean,
+  and let them run it; do not register repositories on their behalf or turn on
+  `mcp.auto_register_projects` without asking.
 
 ## 3. Report
 

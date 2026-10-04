@@ -9,6 +9,46 @@ curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh
 
 ## Unreleased
 
+- **Automatic retry.** `--max-retries N` (MCP: `max_retries`, 0 to 10) lets a
+  task try again, within the same run, when its checks fail or its agent stops
+  early. The retry continues in the same worktree and agent session with the
+  failing output in its prompt; the failed attempt's work is kept, marked
+  unverified, on its own branch, and a success lands on `aidev/<ref>-aN` — the
+  result names the branch. A refused tool call, an intercepted runner or a
+  timeout is never retried.
+
+- **What is committed is what the agent delivered.** The success commit is the
+  worktree as it stood when the agent finished, not as the verification commands
+  left it, so a `cover.out` or a build product the checks wrote never reaches the
+  branch. When in-place checks change files, `task.verification_worktree_modified`
+  says which.
+
+- **MCP runs outlive the session.** `aidev_run_task` starts a separate
+  `aidev task run` process with its own deadline and a log under
+  `workspace_root/run-logs/`, so closing Claude Code no longer stops a task.
+  Runs hold a lease; `aidev task recover` cancels tasks whose process died.
+
+- **MCP only creates tasks for registered repositories.** Register one with
+  `aidev project add <path>` (a repository you created a task for with the CLI is
+  already registered), or set `mcp.auto_register_projects`. A planner that
+  guesses a path can no longer send an agent into the wrong repository.
+
+- **Bounded logs.** `include_logs` returns each section cut to 64 KiB with its
+  full size and a `next_offset` to page on; the agent's event stream comes back as
+  a plain-text transcript unless the raw `stdout` section is asked for.
+
+- **The base commit is recorded at creation.** If the base ref moved before the
+  task ran, the run says so (`task.base_moved`, `result.base_moved`) and goes
+  ahead on the current code.
+
+- **Retention.** `aidev prune --logs-older-than 30d` clears old captured output
+  of finished tasks and keeps their records and history; `aidev task delete`
+  removes a finished task whose worktree is gone.
+
+- Plugin 0.4.0: the delegate skill suggests `max_retries 1` and pages long logs;
+  the review skill reviews the branch the result names; the doctor skill explains
+  an unregistered repository.
+
 - **Submodules**: a project whose repository keeps its sources in git submodules
   can now be delegated to. `aidev project submodules read_only` (per repository,
   off by default) gives every task worktree a checkout of each submodule at the

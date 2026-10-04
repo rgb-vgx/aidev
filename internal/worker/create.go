@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -17,9 +18,16 @@ import (
 
 // CreateTaskInput is what a caller supplies to create a task. It names the
 // repository by path rather than by project id, because that is what a person or
-// a planner actually has; the project is registered on demand.
+// a planner actually has; the project is registered on demand unless
+// RequireRegisteredProject says otherwise.
 type CreateTaskInput struct {
 	RepoPath string
+	// RequireRegisteredProject refuses a repository aidev has never seen
+	// instead of registering it (research D3). The MCP server sets it unless
+	// mcp.auto_register_projects is on: there the path comes from a planner,
+	// and a wrong guess must not become an agent running in the wrong
+	// repository. The CLI leaves it off — a person typed that path.
+	RequireRegisteredProject bool
 
 	Title              string
 	Description        string
@@ -102,7 +110,26 @@ func (o *Orchestrator) CreateTask(ctx context.Context, in CreateTaskInput) (task
 		return task.Task{}, err
 	}
 
-	project, err := o.Store.EnsureProject(ctx, filepath.Base(repo.Path), repo.Path, o.Git.CurrentBranch(ctx, repo))
+	var project task.Project
+	if in.RequireRegisteredProject {
+		project, err = o.Store.GetProjectByPath(ctx, repo.Path)
+		if errors.Is(err, store.ErrNotFound) {
+			return task.Task{}, fmt.Errorf("%w: %s; a person registers it with `aidev project add %s`, "+
+				"or mcp.auto_register_projects lets the MCP server register repositories on demand",
+				ErrProjectNotRegistered, repo.Path, repo.Path)
+		}
+	} else {
+		project, err = o.Store.EnsureProject(ctx, filepath.Base(repo.Path), repo.Path, o.Git.CurrentBranch(ctx, repo))
+	}
+	if err != nil {
+		return task.Task{}, err
+	}
+
+	// Record what the base ref points at now (research D2), resolved by the
+	// same rule the run uses — the task's ref, else the project's default
+	// branch — so the two commits are comparable and a ref that moved in
+	// between is a real move, not two different rules disagreeing.
+	baseAtCreate, err := o.Git.ResolveCommit(ctx, repo, effectiveBaseRef(in.BaseRef, project.DefaultBranch))
 	if err != nil {
 		return task.Task{}, err
 	}
@@ -129,10 +156,7 @@ func (o *Orchestrator) CreateTask(ctx context.Context, in CreateTaskInput) (task
 	// rather than letting such a task fail, or silently stop protecting,
 	// with a result nobody can explain.
 	if mode == task.VerificationClean || in.ExpectFailOnBase {
-		base, err := o.Git.ResolveCommit(ctx, repo, in.BaseRef)
-		if err != nil {
-			return task.Task{}, err
-		}
+		base := baseAtCreate
 		if found, path, err := o.Git.HasGitlinks(ctx, repo, base); err != nil {
 			return task.Task{}, err
 		} else if found {
@@ -167,6 +191,7 @@ func (o *Orchestrator) CreateTask(ctx context.Context, in CreateTaskInput) (task
 		RequiresApproval:   in.RequiresApproval,
 		ExpectFailOnBase:   in.ExpectFailOnBase,
 		BaseRef:            in.BaseRef,
+		BaseCommitAtCreate: baseAtCreate,
 		Timeout:            in.Timeout,
 	}, o.Config.OpenCodeAgent)
 	if err != nil {
@@ -194,6 +219,7 @@ func (o *Orchestrator) CreateTask(ctx context.Context, in CreateTaskInput) (task
 			"verification":        commands,
 			"verification_mode":   string(stored.VerificationMode),
 			"repo_path":           repo.Path,
+			"base_commit":         stored.BaseCommitAtCreate,
 		})
 	})
 	if err != nil {
@@ -208,4 +234,15 @@ func (o *Orchestrator) CreateTask(ctx context.Context, in CreateTaskInput) (task
 		"verification_steps", len(created.Verification))
 
 	return created, nil
+}
+
+// effectiveBaseRef is the ref a task's worktree branches from: the task's own
+// base_ref, or the project's default branch when it names none. CreateTask
+// and the run both use it, so the commit recorded at creation and the one
+// the worktree starts from are resolved the same way.
+func effectiveBaseRef(taskRef, defaultBranch string) string {
+	if strings.TrimSpace(taskRef) != "" {
+		return taskRef
+	}
+	return defaultBranch
 }

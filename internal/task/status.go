@@ -83,11 +83,13 @@ var transitions = map[Status]map[Status]bool{
 	},
 	StatusRunning: {
 		StatusVerifying: true,
+		StatusReady:     true, // the agent stopped early and the task will retry
 		StatusFailed:    true,
 		StatusCancelled: true,
 	},
 	StatusVerifying: {
 		StatusSucceeded: true,
+		StatusReady:     true, // the checks failed and the task will retry
 		StatusFailed:    true,
 		StatusCancelled: true,
 	},

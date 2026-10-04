@@ -39,6 +39,9 @@ func writeTaskDetail(w io.Writer, t task.Task) {
 	if t.BaseRef != "" {
 		fmt.Fprintf(w, "  base ref     %s\n", t.BaseRef)
 	}
+	if t.BaseCommitAtCreate != "" {
+		fmt.Fprintf(w, "  base commit  %s (when created)\n", shortCommit(t.BaseCommitAtCreate))
+	}
 	if t.Timeout > 0 {
 		fmt.Fprintf(w, "  timeout      %s\n", t.Timeout)
 	}
@@ -125,6 +128,7 @@ func writeRunOutcome(env *Env, outcome worker.Outcome, runs []task.VerificationR
 		fmt.Fprintf(w, "\nworktree\n")
 		fmt.Fprintf(w, "  %s  %s\n", outcome.Worktree.Status, outcome.Worktree.Path)
 		fmt.Fprintf(w, "  branch  %s\n", outcome.Worktree.Branch)
+		writeBaseMoved(w, outcome)
 	}
 
 	writeNextSteps(w, outcome)
@@ -167,6 +171,11 @@ func writeResult(env *Env, outcome worker.Outcome, runs []task.VerificationRun) 
 		if r.SessionID != "" {
 			fmt.Fprintf(w, "  session  %s\n", r.SessionID)
 		}
+		if r.LogsPruned {
+			// Retention cleared the output: say so, or the empty logs read
+			// as an agent that printed nothing (research C6).
+			fmt.Fprintf(w, "  logs  pruned\n")
+		}
 	}
 
 	writeVerificationTable(w, runs)
@@ -178,6 +187,7 @@ func writeResult(env *Env, outcome worker.Outcome, runs []task.VerificationRun) 
 			fmt.Fprintf(w, " @ %s", shortCommit(outcome.Worktree.HeadCommit))
 		}
 		fmt.Fprintln(w)
+		writeBaseMoved(w, outcome)
 	}
 
 	writeNextSteps(w, outcome)
@@ -270,4 +280,16 @@ func shortCommit(c string) string {
 		return c[:10]
 	}
 	return c
+}
+
+// writeBaseMoved warns, under the worktree, when the attempt started from a
+// different commit than the base ref named at creation (research D2). It is
+// a report: the run went ahead on the newer code.
+func writeBaseMoved(w io.Writer, outcome worker.Outcome) {
+	at := outcome.Task.BaseCommitAtCreate
+	if at == "" || outcome.Worktree == nil || outcome.Worktree.BaseCommit == "" || outcome.Worktree.BaseCommit == at {
+		return
+	}
+	fmt.Fprintf(w, "  base moved  %s when created, %s when run\n",
+		shortCommit(at), shortCommit(outcome.Worktree.BaseCommit))
 }

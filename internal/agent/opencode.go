@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -276,6 +277,11 @@ func classify(proc procexec.Result, events transcript, req Request) (task.Worker
 // asked for something that is not in the checkout. A refusal inside the worktree
 // is a permission configuration, and the remedy is elsewhere entirely.
 func refusalError(events transcript, workingDir string) error {
+	return toolRefused{refusalMessage(events, workingDir)}
+}
+
+// refusalMessage words the refusal; refusalError marks it as one.
+func refusalMessage(events transcript, workingDir string) error {
 	also := ""
 	if events.Refusals > 1 {
 		also = fmt.Sprintf(" (%d refused in all)", events.Refusals)
@@ -294,6 +300,20 @@ func refusalError(events transcript, workingDir string) error {
 			"the session, so nothing after it ran", path, also)
 	}
 }
+
+// ErrToolRefused marks an agent run that a refused tool call cut short. A
+// refusal ends the session, and the same request in the same session would be
+// refused again, so automatic retry leaves these runs alone; errors.Is finds
+// it without changing the wording of the message.
+var ErrToolRefused = errors.New("a tool call was refused")
+
+// toolRefused carries a refusal's message and answers errors.Is for
+// ErrToolRefused.
+type toolRefused struct{ err error }
+
+func (e toolRefused) Error() string        { return e.err.Error() }
+func (e toolRefused) Unwrap() error        { return e.err }
+func (e toolRefused) Is(target error) bool { return target == ErrToolRefused }
 
 // outside reports whether path is not under dir. It compares the paths as
 // written: this decides the wording of a message, not access to anything, and

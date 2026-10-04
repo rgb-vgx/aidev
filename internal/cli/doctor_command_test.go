@@ -43,7 +43,7 @@ func TestDoctorReportsEveryCheckAndFailsOnAnUnreachableDatabase(t *testing.T) {
 	if errors.As(err, &usage) {
 		t.Fatalf("a failed check is not a usage error (exit 2): %v", err)
 	}
-	for _, name := range []string{"config", "git", "agent", "database", "migrations", "workspace"} {
+	for _, name := range []string{"config", "git", "agent", "database", "migrations", "stuck tasks", "workspace"} {
 		if !strings.Contains(stdout, name) {
 			t.Errorf("output does not list the %s check:\n%s", name, stdout)
 		}
@@ -79,6 +79,9 @@ func TestDoctorJSONIsTheListOfResults(t *testing.T) {
 	}
 	if status["config"] != "ok" || status["database"] != "fail" || status["migrations"] != "skipped" {
 		t.Errorf("statuses = %v, want config ok, database fail, migrations skipped", status)
+	}
+	if status["stuck tasks"] != "skipped" {
+		t.Errorf("stuck tasks: status %q, want skipped when the database did not answer", status["stuck tasks"])
 	}
 	if status["workspace"] != "ok" {
 		t.Errorf("workspace: status %q, want ok for a creatable directory under a temp dir", status["workspace"])

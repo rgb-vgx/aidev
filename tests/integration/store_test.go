@@ -160,6 +160,7 @@ func TestTaskRoundTrip(t *testing.T) {
 		in.RequiresApproval = true
 		in.ExpectFailOnBase = true
 		in.BaseRef = "main"
+		in.BaseCommitAtCreate = "0123456789abcdef0123456789abcdef01234567"
 		in.Timeout = 15 * time.Minute
 		in.Verification = []task.VerificationStep{
 			{Command: "go", Args: []string{"test", "./..."}},
@@ -189,6 +190,9 @@ func TestTaskRoundTrip(t *testing.T) {
 	}
 	if got.Timeout != 15*time.Minute {
 		t.Errorf("timeout = %s, want 15m", got.Timeout)
+	}
+	if got.BaseCommitAtCreate != "0123456789abcdef0123456789abcdef01234567" {
+		t.Errorf("base_commit_at_create = %q, did not survive the round trip", got.BaseCommitAtCreate)
 	}
 	if len(got.Verification) != 2 {
 		t.Fatalf("got %d verification steps, want 2", len(got.Verification))

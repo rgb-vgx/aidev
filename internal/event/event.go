@@ -26,11 +26,20 @@ const (
 	TypeTaskSucceeded Type = "task.succeeded"
 	TypeTaskFailed    Type = "task.failed"
 	TypeTaskCancelled Type = "task.cancelled"
+	// TypeRetryScheduled records that an attempt failed in a way another try
+	// can fix and the task went back to READY for its next attempt, in the
+	// same worktree directory, instead of failing (automatic retry).
+	TypeRetryScheduled Type = "task.retry_scheduled"
 
 	// Worktree isolation.
 	TypeWorktreeCreated  Type = "task.worktree_created"
 	TypeWorktreeRemoved  Type = "task.worktree_removed"
 	TypeWorktreeRetained Type = "task.worktree_retained"
+	// TypeBaseMoved warns that the base ref resolved to a different commit
+	// when the run began than when the task was created (research D2): the
+	// agent works from code the task's author may never have seen. The run
+	// continues from the current commit; the event is for the reviewer.
+	TypeBaseMoved Type = "task.base_moved"
 
 	// Agent execution.
 	TypeWorkerStarted   Type = "task.worker_started"
@@ -52,6 +61,12 @@ const (
 	// a verdict: the run is judged as usual, and a reviewer can see that what
 	// passed was also written in the same attempt.
 	TypeVerificationTestsModified Type = "task.verification_tests_modified"
+	// TypeVerificationWorktreeModified reports that the verification steps
+	// changed tracked files after the agent's work was snapshotted (research
+	// A6). The commit carries the snapshot, so what passed is not exactly
+	// what the branch receives. Like TypeVerificationTestsModified it is a
+	// report, not a verdict: the run is judged as usual.
+	TypeVerificationWorktreeModified Type = "task.verification_worktree_modified"
 
 	// Approval policy.
 	TypeApprovalRequired Type = "task.approval_required"
@@ -72,12 +87,14 @@ const (
 func AllTypes() []Type {
 	return []Type{
 		TypeTaskCreated, TypeTaskReady, TypeTaskStarted, TypeTaskSucceeded,
-		TypeTaskFailed, TypeTaskCancelled,
+		TypeTaskFailed, TypeTaskCancelled, TypeRetryScheduled,
 		TypeWorktreeCreated, TypeWorktreeRemoved, TypeWorktreeRetained,
+		TypeBaseMoved,
 		TypeWorkerStarted, TypeWorkerCompleted,
 		TypeBaseCheckCompleted,
 		TypeVerificationStarted, TypeVerificationStepRan, TypeVerificationCompleted,
 		TypeVerificationIntercepted, TypeVerificationTestsModified,
+		TypeVerificationWorktreeModified,
 		TypeApprovalRequired, TypeApprovalGranted, TypeApprovalDenied,
 		TypeContainmentBreach, TypeSharedRefsChanged,
 	}

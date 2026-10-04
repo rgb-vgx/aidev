@@ -175,9 +175,9 @@ be loaded from a changed path [OBSERVED]
 (`aidev:internal/verification/interception.go:21-23`). The worker enforces it
 between the agent run and verification: collect changed paths, compute
 interceptions, fail as `VERIFICATION` without running anything when the list
-is non-empty [OBSERVED] (`aidev:internal/worker/worker.go:719-731`), after
+is non-empty [OBSERVED] (`aidev:internal/worker/run.go:748-771`), after
 moving the task into `VERIFYING` [OBSERVED]
-(`aidev:internal/worker/worker.go:706-714`). The documented residual risks are
+(`aidev:internal/worker/run.go:709-718`). The documented residual risks are
 code passed via `python -c` / `sh -c`, interpreters other than sh/bash/python,
 and a script's own imports being shadowed beside it — the check guards the
 judge, not the exam.
@@ -218,9 +218,9 @@ empty, but it breaks everything aidev currently gets from git for free:
 | Concern | Host mount | Copy through execd |
 |---|---|---|
 | Diff | `git diff` against the base commit works as today (`aidev:internal/git/git.go:285-293`) | the diff must be reconstructed from downloaded files; intent-to-add handling, binary detection and truncation all need re-implementation against a copy |
-| Commit on success | commit to the task branch, then remove the worktree (`aidev:internal/worker/worker.go:862-868`) | the commit must happen either inside the sandbox (which needs git + identity + push credentials there) or by copying back into the worktree and committing locally — an extra sync step with its own failure modes |
+| Commit on success | commit to the task branch, then remove the worktree (`aidev:internal/worker/run.go:966-1014`) | the commit must happen either inside the sandbox (which needs git + identity + push credentials there) or by copying back into the worktree and committing locally — an extra sync step with its own failure modes |
 | Failed work | worktree retained untouched; git's own refusal is the backstop (`aidev:internal/git/git.go:386-399`) | failed work lives in a sandbox or snapshot, not in a worktree; retention means snapshot lifecycle management, a second bookkeeping system beside `worktrees` |
-| Judge integrity | the interception check runs against local git state (`aidev:internal/worker/worker.go:719-731`) | changed-path listing must be performed inside the sandbox or over the downloaded tree, i.e. the check itself becomes a remote operation |
+| Judge integrity | the interception check runs against local git state (`aidev:internal/worker/run.go:748-771`) | changed-path listing must be performed inside the sandbox or over the downloaded tree, i.e. the check itself becomes a remote operation |
 
 Neither route is a drop-in; the mount route preserves semantics at the price
 of allowlist discipline, the copy route preserves the allowlist at the price

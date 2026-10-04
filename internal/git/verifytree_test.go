@@ -9,11 +9,11 @@ import (
 	"testing"
 )
 
-// SnapshotTree records what the working directory holds — untracked files
+// CurrentTree records what the working directory holds — untracked files
 // join, ignored files stay out, deletions leave — without touching the
 // worktree's real index, which a human may still be inspecting after a
 // failed attempt.
-func TestSnapshotTreeReflectsTheWorkingDirectoryNotTheIndex(t *testing.T) {
+func TestCurrentTreeReflectsTheWorkingDirectoryNotTheIndex(t *testing.T) {
 	ctx := context.Background()
 	m := newManager(t)
 	repo, err := m.OpenRepository(ctx, newRepo(t))
@@ -34,12 +34,12 @@ func TestSnapshotTreeReflectsTheWorkingDirectoryNotTheIndex(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tree, err := wt.SnapshotTree(ctx)
+	tree, err := wt.CurrentTree(ctx)
 	if err != nil {
-		t.Fatalf("SnapshotTree: %v", err)
+		t.Fatalf("CurrentTree: %v", err)
 	}
 	if tree == "" {
-		t.Fatal("SnapshotTree returned no tree id")
+		t.Fatal("CurrentTree returned no tree id")
 	}
 
 	ls, err := exec.Command("git", "-C", wt.Path, "ls-tree", "-r", tree).Output()
@@ -73,9 +73,10 @@ func TestSnapshotTreeReflectsTheWorkingDirectoryNotTheIndex(t *testing.T) {
 
 // A submodule in the snapshot would check out as an empty directory in the
 // detached worktree, and the checks would fail against sources that are not
-// there — a result nobody could diagnose. The snapshot refuses instead,
-// naming the offender.
-func TestSnapshotTreeRefusesGitlinks(t *testing.T) {
+// there — a result nobody could diagnose. CheckGitlinks refuses instead,
+// naming the offender. CurrentTree itself must not refuse: the success commit
+// is built from it, and in-place verification supports submodules.
+func TestCheckGitlinksRefusesASubmoduleSnapshot(t *testing.T) {
 	ctx := context.Background()
 	m := newManager(t)
 	f := newSubmoduleRepo(t)
@@ -86,7 +87,11 @@ func TestSnapshotTreeRefusesGitlinks(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	if _, err := wt.SnapshotTree(ctx); err == nil {
+	tree, err := wt.CurrentTree(ctx)
+	if err != nil {
+		t.Fatalf("CurrentTree refused a tree with a gitlink: %v", err)
+	}
+	if err := wt.CheckGitlinks(ctx, tree); err == nil {
 		t.Fatal("a snapshot containing a gitlink was accepted")
 	} else if !strings.Contains(err.Error(), "gitlink") || !strings.Contains(err.Error(), f.path) {
 		t.Errorf("error = %v, want it to name the gitlink and its path", err)
@@ -148,9 +153,9 @@ func TestSnapshotCommitAndDetachedCheckoutAgree(t *testing.T) {
 
 	write(t, filepath.Join(wt.Path, "marker.txt"), "done\n")
 
-	tree, err := wt.SnapshotTree(ctx)
+	tree, err := wt.CurrentTree(ctx)
 	if err != nil {
-		t.Fatalf("SnapshotTree: %v", err)
+		t.Fatalf("CurrentTree: %v", err)
 	}
 	commit, err := wt.CommitTree(ctx, tree, "aidev verification snapshot")
 	if err != nil {

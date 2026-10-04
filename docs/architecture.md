@@ -164,6 +164,12 @@ something failed* without the domain knowing anything about OpenCode.
    (WORKTREE), RETAINED)
   VERIFYING ──▶ SUCCEEDED
   remove worktree
+
+  With max_retries left, a failed check or an agent that stopped early (not a
+  refused tool call) does not end the task: the attempt is FAILED, its work is
+  committed (unverified) to its branch, the task goes back to READY, and the run
+  opens the next attempt in the same directory on aidev/<ref>-aN
+  ── see "Automatic retry" below.
 ```
 
 Three properties of this flow are worth stating separately, because they are what
@@ -183,6 +189,51 @@ does not succeed is the expected case, and the caller needs the record rather th
 an exception. `RunTask` returns an error only when it could not conduct the run at
 all.
 
+## Automatic retry
+
+Designed with the user on 2026-09-17, after a task whose agent stopped early had
+to be retried by hand. A task's `max_retries` (0 to 10, default 0) is how many
+more attempts one run may make when an attempt fails in a way another try can fix:
+
+- the verification commands ran and at least one failed (`VERIFICATION`) — but not
+  a refusal to run them (interception, protected paths), which another try would
+  not change;
+- the agent stopped early (`AGENT_EXIT`, `AGENT_ERROR`) — unless a tool call was
+  refused, because a refusal ends the session and the same session would be
+  refused again (`agent.ErrToolRefused`).
+
+Cancellation, timeouts (an attempt that ran out of time would most likely do so
+again, at the same cost), containment breaches, worktree and internal errors and a
+passing base check are never retried.
+
+The next attempt continues in **the same worktree directory**, because an OpenCode
+session can only be continued in the directory it was created in
+(docs/research.md §2.12):
+
+1. The failed attempt's work — the snapshot taken when its agent finished, when
+   there is one — is committed to that attempt's branch with a message marking it
+   unverified, and the directory is reset to that commit, so whatever the failed
+   checks wrote does not ride into the next commit (research A6).
+2. In one transaction: the attempt is finished `FAILED` with its kind, its worktree
+   record becomes `REUSED` with the partial commit as head, `task.retry_scheduled`
+   is appended, and the task moves `RUNNING`/`VERIFYING → READY`. A Cancel that
+   landed first wins, as everywhere.
+3. The run opens the next attempt (`READY → RUNNING`, a new attempt row and
+   lease — the cancel watch follows it), creates `aidev/<ref>-aN` at the partial
+   commit with plumbing (`git branch`, `git symbolic-ref`; no hooks, no checkout),
+   records a new worktree row for the same path, and takes a fresh containment
+   baseline. The base check is not repeated; changed paths are still measured from
+   the task's original base, so interception sees a runner any attempt rewrote.
+4. The agent's session is continued (`-s`) with `prompts/retry_task.tmpl`: which
+   attempt this is, why the last one failed, the tail of each failing check's
+   output, and the commands that will judge it. With no session to continue, the
+   whole task prompt comes first.
+
+`FAILED` stays terminal: a task that retries never passes through it. The success
+branch is the last attempt's, which the result names; its history holds the earlier
+attempts' unverified commits. The CLI's total deadline grows with `max_retries`,
+since every attempt runs inside the one `aidev task run` process.
+
 ## Cleanup policy
 
 The policy exists because the obvious options are both wrong. Removing a
@@ -198,6 +249,26 @@ uncommitted. Keeping every worktree grows the workspace without bound.
 
 Committing is not merging: only the task's own branch is written, and the result is
 reviewable with `git log aidev/<ref>` and `git diff main..aidev/<ref>`.
+
+What is committed is the agent's work as it stood when the agent finished, not
+the worktree as verification left it (docs/research.md A6). Right after the
+containment check, aidev snapshots the worktree to a tree object on a temporary
+index — untracked files join, ignored files stay out, the real index is not
+touched — and records it in `worktrees.agent_tree`. When verification passes, the
+commit is built from that tree with `git commit-tree`, parented on the commit HEAD
+was on at snapshot time (usually the base; an agent that committed its own work
+moved it), and the branch is moved with `git update-ref` as a compare-and-set
+against that same commit. A branch that moved in between fails the task with kind
+WORKTREE instead of being overwritten. The real index is then reset to the new
+HEAD so the worktree reads as clean when its files match the commit.
+
+So a coverage file, a build product or a reformatted source that the checks wrote
+never reaches the branch. When in-place checks do change the worktree, the run
+records `task.verification_worktree_modified` listing what changed, because what
+passed is then not exactly what was committed; the run is judged as usual, and the
+worktree is usually `RETAINED` because the files left out make it dirty. Clean
+verification checks out the same snapshot, so there "verified" and "committed" are
+the same tree by construction.
 
 There is deliberately no policy that discards failed work, and `--force` is never
 passed automatically. Git refuses to remove a worktree holding uncommitted
@@ -408,14 +479,13 @@ place a listed future feature plugs in without a rewrite.
 
 | Future feature | Seam that already exists |
 |---|---|
-| Retry | `task_attempts` is append-only with numbered attempts; `max_retries` is stored; `worker_runs.session_id` records the resumable agent session; worktree and branch names already include the attempt number so a second attempt cannot collide with the first. Only the `FAILED → READY` edge and a policy are missing. |
 | Concurrent workers | `tasks_ready_claim_idx` matches a `FOR UPDATE SKIP LOCKED` claim; status changes are already compare-and-set. |
 | Another agent backend | `agent.Backend`; orchestration never names a backend. Codex was added exactly this way (`internal/agent/codex.go`, selected with `agent.backend` set to `"codex"`) and is **paused since 2026-09-15**: OpenCode is the backend in use. The code and its tests stay, so resuming is a configuration change. Codex took 6–8 minutes on trivial tasks and, in TASK-000029, read another project's virtualenv outside its worktree. A server-mode OpenCode backend would be another new file in `internal/agent`. |
 | Sandboxed agent execution | `internal/procexec` is the one place processes start, and `agent.Request.WorkingDir` is the only path an agent is given, so containing the agent is a change to how a backend launches. Verification stays local whatever happens: a remote exit code is not aidev's own measurement (docs/opensandbox.md). **Parked as a future feature on 2026-09-15** — tasks are not yet complex enough to need it. Unmeasured: a worktree's `.git` file points into the main repository, so a container would need both mounted. |
 | Dependency DAG | `PENDING` exists as "not yet eligible"; the eligibility check is the hook. |
 | Observability / event-driven features | `events.seq` gives every event a position, and `AppendEvent` takes a per-task advisory lock so that within a task the sequence order is also the commit order: a consumer can resume from a cursor without missing an event. Across tasks the order is allocation order, not commit order. |
 | Approval workflows | `approvals` with one-pending-per-task, plus `WAITING_APPROVAL` in the state machine. |
-| Merge | every successful task leaves a reviewable commit on `aidev/<ref>`, and `worktrees` records branch, base commit and head commit; nothing merges yet, by design. |
+| Merge | every successful task leaves a reviewable commit on its branch (`aidev/<ref>`, or `aidev/<ref>-aN` after a retry), and `worktrees` records branch, base commit and head commit; nothing merges yet, by design. |
 
 Deliberately **not** present: a scheduler, a DAG executor, automatic merge, a web
 dashboard, authentication, Redis, Kafka, Kubernetes, or an LLM inside aidev.
@@ -564,21 +634,37 @@ obvious fix for it is a hazard.
 
 If aidev is killed mid-run — `kill -9`, a closed laptop, a container stopped — the
 task is left `RUNNING` with an open attempt and a worktree on disk. Nothing will
-pick it up again: a running task is not runnable, and aidev cannot know whether
-another process is still working on it.
+pick it up again: a running task is not runnable.
 
-The way back is to cancel it:
+A run started from the MCP server is a separate `aidev task run` process in its
+own session, so the cases are not symmetric: the server exiting — the client
+disconnecting, a session ending — stops only the watching, never the run, which
+keeps going with its own total deadline (task timeout + verification budget +
+margin) and writes its stderr to a log under `workspace_root/run-logs/`. What
+leaves a task `RUNNING` behind is the run process itself dying — and that is
+exactly the case the lease below covers.
+
+Every attempt therefore carries a lease: an owner (`hostname:pid:uuid`) and an
+expiry, written when the attempt starts and pushed forward by the run's own
+cancel poll (every 2 seconds by default, expiry 30 seconds ahead). A process that
+is still working on the task keeps its lease alive; one that died stops renewing,
+and the lease runs out.
+
+The way back is to cancel the tasks whose lease has expired:
 
 ```bash
-aidev task list --status RUNNING,VERIFYING   # find them
-aidev task cancel TASK-000001 --reason "aidev was killed mid-run"
+aidev task recover --dry-run                 # what would be cancelled
+aidev task recover                           # cancel them
+aidev task list --status RUNNING,VERIFYING   # the rest, if any
 aidev worktree list                          # the work is retained
 aidev worktree remove TASK-000001 --force    # once you are done with it
 ```
 
-Cancelling closes every open attempt and retains every active worktree, so the
-partial work survives and the task's history stays coherent.
-`TestRecoveryFromAnInterruptedRun` executes exactly this sequence.
+Recovery goes through the same path as a manual cancel, with the expired lease as
+the recorded reason — it closes every open attempt and retains every active
+worktree, so the partial work survives and the task's history stays coherent.
+`TestRecoveryFromAnInterruptedRun` executes the manual sequence;
+`TestRecoverCancelsTasksWithAnExpiredLease` the recovery one.
 
 A cancel also stops the running agent and verification rather than only
 changing the database: a run on the same process is stopped immediately, and a
@@ -586,11 +672,13 @@ run in another process notices the `CANCELLED` status on its next poll (every 2
 seconds by default) and stops then. The stopped run adopts the ending the
 cancel already recorded instead of writing a second one.
 
-aidev does **not** time out a stale `RUNNING` task on its own. A timeout that
-declared a task dead while another process was still driving it would be worse than
-a task an operator has to cancel deliberately, and there is no reliable way to tell
-those apart without a lease mechanism — which the MVP does not have and which
-concurrent workers will need.
+Recovery is never fully automatic in the worker: a lease is evidence, and aidev
+does not read it as an instruction. A human runs `aidev task recover` (doctor
+warns when there is something for it to do), and the MCP server runs it once when
+it first connects to the database, so a planner reconnecting after a restart does
+not inherit a dead run. The alternative — declaring a task dead on a timer while
+another process might still be driving it — would be worse than a task someone
+must decide to cancel.
 
 ### Reclaiming disk
 
@@ -659,11 +747,10 @@ Stated plainly so that nobody has to infer it from absence.
 
 | Not implemented | Where the seam is |
 |---|---|
-| Automatic retry | attempts are numbered and appended, `max_retries` is stored, the agent session id is recorded, and branch and worktree names already carry the attempt number. Only the `FAILED → READY` edge and a policy are missing. |
-| Concurrent workers | status changes are compare-and-set and `tasks_ready_claim_idx` matches a `FOR UPDATE SKIP LOCKED` claim. A lease would also be needed, so that a crashed worker's task could be reclaimed without a human cancelling it. |
+| Concurrent workers | status changes are compare-and-set and `tasks_ready_claim_idx` matches a `FOR UPDATE SKIP LOCKED` claim, and the lease columns exist so a crashed worker's task can be recognised. What is missing is the claim itself becoming a lease: taking a task must write an owner the way `startAttempt` does, not only a status. |
 | Dependency graphs | `PENDING` exists as "not yet eligible"; the eligibility check in `becomeReady` is the hook. |
 | Merging | a successful task leaves a reviewable commit on its own branch. Nothing merges it, by design. |
-| Expiring a stale `RUNNING` task | deliberate, see [Operating it](#when-a-run-is-interrupted). |
+| Automatic expiry of a stale `RUNNING` task | the lease makes staleness detectable and `aidev task recover` acts on it, but nothing cancels on a timer by itself — deliberate, see [Operating it](#when-a-run-is-interrupted). |
 | A second agent backend | `agent.Backend`, plus a server-mode OpenCode option evaluated and documented in docs/research.md §2.8. |
 | A web surface, auth, multi-tenancy | explicit non-goals. aidev is a local-first tool for one operator. |
 

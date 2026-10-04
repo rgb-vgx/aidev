@@ -151,7 +151,7 @@ func TestOpenSandboxAssessmentIsStructured(t *testing.T) {
 		"aidev:internal/verification/verification.go",
 		"aidev:internal/agent/agent.go",
 		"aidev:internal/git/git.go",
-		"aidev:internal/worker/worker.go",
+		"aidev:internal/worker/run.go",
 	} {
 		if !cited[must] {
 			t.Errorf("the assessment never cites `%s`", must)
