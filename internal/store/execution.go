@@ -235,15 +235,15 @@ func (s *Store) StuckLeases(ctx context.Context) ([]StuckAttempt, error) {
 	return out, nil
 }
 
-const worktreeColumns = `id, attempt_id, path, branch, base_commit, head_commit, status, created_at, removed_at`
+const worktreeColumns = `id, attempt_id, path, branch, base_commit, head_commit, status, created_at, removed_at, agent_tree`
 
 // CreateWorktree records an isolated workspace.
 func (s *Store) CreateWorktree(ctx context.Context, w task.Worktree) (task.Worktree, error) {
 	row := s.db.QueryRow(ctx, `
-		INSERT INTO worktrees (id, attempt_id, path, branch, base_commit, head_commit, status)
-		VALUES ($1,$2,$3,$4,$5,$6,$7)
+		INSERT INTO worktrees (id, attempt_id, path, branch, base_commit, head_commit, status, agent_tree)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
 		RETURNING `+worktreeColumns,
-		w.ID, w.AttemptID, w.Path, w.Branch, w.BaseCommit, w.HeadCommit, string(w.Status))
+		w.ID, w.AttemptID, w.Path, w.Branch, w.BaseCommit, w.HeadCommit, string(w.Status), w.AgentTree)
 
 	created, err := scanWorktree(row)
 	if err != nil {
@@ -260,6 +260,21 @@ func (s *Store) SetWorktreeHead(ctx context.Context, id uuid.UUID, headCommit st
 	}
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("set worktree head %s: %w", id, ErrNotFound)
+	}
+	return nil
+}
+
+// SetWorktreeAgentTree records the tree the agent's work was snapshotted to
+// (research A6): the tree the success commit carries, taken before
+// verification ran. The in-memory copy is what the commit uses; this row is
+// so a later reader can see what was committed without trusting the branch.
+func (s *Store) SetWorktreeAgentTree(ctx context.Context, id uuid.UUID, tree string) error {
+	tag, err := s.db.Exec(ctx, `UPDATE worktrees SET agent_tree = $2 WHERE id = $1`, id, tree)
+	if err != nil {
+		return fmt.Errorf("set worktree agent tree %s: %w", id, classify(err))
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("set worktree agent tree %s: %w", id, ErrNotFound)
 	}
 	return nil
 }
@@ -322,7 +337,7 @@ func (s *Store) ListWorktrees(ctx context.Context, statuses []task.WorktreeStatu
 
 	rows, err := s.db.Query(ctx, `
 		SELECT w.id, w.attempt_id, w.path, w.branch, w.base_commit, w.head_commit,
-		       w.status, w.created_at, w.removed_at,
+		       w.status, w.created_at, w.removed_at, w.agent_tree,
 		       t.id, t.ref, t.title, t.status, a.attempt_number
 		FROM worktrees w
 		JOIN task_attempts a ON a.id = w.attempt_id
@@ -345,6 +360,7 @@ func (s *Store) ListWorktrees(ctx context.Context, statuses []task.WorktreeStatu
 			&item.Worktree.ID, &item.Worktree.AttemptID, &item.Worktree.Path,
 			&item.Worktree.Branch, &item.Worktree.BaseCommit, &item.Worktree.HeadCommit,
 			&wtStatus, &item.Worktree.CreatedAt, &item.Worktree.RemovedAt,
+			&item.Worktree.AgentTree,
 			&item.TaskID, &item.TaskRef, &item.TaskTitle, &taskStatus, &item.AttemptNumber)
 		if err != nil {
 			return nil, fmt.Errorf("list worktrees: %w", classify(err))
@@ -389,7 +405,7 @@ func scanWorktree(row scanner) (task.Worktree, error) {
 		status string
 	)
 	err := row.Scan(&w.ID, &w.AttemptID, &w.Path, &w.Branch, &w.BaseCommit,
-		&w.HeadCommit, &status, &w.CreatedAt, &w.RemovedAt)
+		&w.HeadCommit, &status, &w.CreatedAt, &w.RemovedAt, &w.AgentTree)
 	if err != nil {
 		return task.Worktree{}, classify(err)
 	}

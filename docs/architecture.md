@@ -199,6 +199,26 @@ uncommitted. Keeping every worktree grows the workspace without bound.
 Committing is not merging: only the task's own branch is written, and the result is
 reviewable with `git log aidev/<ref>` and `git diff main..aidev/<ref>`.
 
+What is committed is the agent's work as it stood when the agent finished, not
+the worktree as verification left it (docs/research.md A6). Right after the
+containment check, aidev snapshots the worktree to a tree object on a temporary
+index — untracked files join, ignored files stay out, the real index is not
+touched — and records it in `worktrees.agent_tree`. When verification passes, the
+commit is built from that tree with `git commit-tree`, parented on the commit HEAD
+was on at snapshot time (usually the base; an agent that committed its own work
+moved it), and the branch is moved with `git update-ref` as a compare-and-set
+against that same commit. A branch that moved in between fails the task with kind
+WORKTREE instead of being overwritten. The real index is then reset to the new
+HEAD so the worktree reads as clean when its files match the commit.
+
+So a coverage file, a build product or a reformatted source that the checks wrote
+never reaches the branch. When in-place checks do change the worktree, the run
+records `task.verification_worktree_modified` listing what changed, because what
+passed is then not exactly what was committed; the run is judged as usual, and the
+worktree is usually `RETAINED` because the files left out make it dirty. Clean
+verification checks out the same snapshot, so there "verified" and "committed" are
+the same tree by construction.
+
 There is deliberately no policy that discards failed work, and `--force` is never
 passed automatically. Git refuses to remove a worktree holding uncommitted
 changes, so the guard is the tool's own behaviour rather than aidev's diligence

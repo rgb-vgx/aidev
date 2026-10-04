@@ -52,6 +52,12 @@ const (
 	// a verdict: the run is judged as usual, and a reviewer can see that what
 	// passed was also written in the same attempt.
 	TypeVerificationTestsModified Type = "task.verification_tests_modified"
+	// TypeVerificationWorktreeModified reports that the verification steps
+	// changed tracked files after the agent's work was snapshotted (research
+	// A6). The commit carries the snapshot, so what passed is not exactly
+	// what the branch receives. Like TypeVerificationTestsModified it is a
+	// report, not a verdict: the run is judged as usual.
+	TypeVerificationWorktreeModified Type = "task.verification_worktree_modified"
 
 	// Approval policy.
 	TypeApprovalRequired Type = "task.approval_required"
@@ -78,6 +84,7 @@ func AllTypes() []Type {
 		TypeBaseCheckCompleted,
 		TypeVerificationStarted, TypeVerificationStepRan, TypeVerificationCompleted,
 		TypeVerificationIntercepted, TypeVerificationTestsModified,
+		TypeVerificationWorktreeModified,
 		TypeApprovalRequired, TypeApprovalGranted, TypeApprovalDenied,
 		TypeContainmentBreach, TypeSharedRefsChanged,
 	}

@@ -165,6 +165,7 @@ aidev worktree remove TASK-000001 --force</code></pre>
 <tr><td><code>task.verification_completed</code></td><td>Lượt verification xong, với số bước qua.</td></tr>
 <tr><td><code>task.verification_intercepted</code></td><td>Agent đã sửa runner verification, hoặc đụng vào đường dẫn được task bảo vệ (<code>protected_paths</code>), nên verification không chạy lần nào; lần chạy FAILED với loại VERIFICATION. Payload cho biết lý do nào đã kích hoạt.</td></tr>
 <tr><td><code>task.verification_tests_modified</code></td><td>Lần chạy đã sửa các file giống test đang chấm nó. Đây là báo cáo cho người review, không phải kết luận: sửa test không làm run thất bại.</td></tr>
+<tr><td><code>task.verification_worktree_modified</code></td><td>Các lệnh kiểm tra chạy in-place đã pass nhưng làm worktree khác với ảnh chụp lấy lúc agent làm xong — một formatter viết lại file, hay lượt chạy test để lại file đầu ra. Commit mang theo ảnh chụp, nên thứ đã pass không hoàn toàn là thứ nhánh nhận được. Payload liệt kê <code>paths</code> (kèm chữ trạng thái của git, tối đa 50) và <code>total</code>. Đây là báo cáo, không phải kết luận: run vẫn được chấm như thường.</td></tr>
 <tr><td><code>task.approval_required</code></td><td>Task bị giữ sau quyết định của con người.</td></tr>
 <tr><td><code>task.approval_granted</code></td><td>Con người duyệt task; nó sang READY.</td></tr>
 <tr><td><code>task.approval_denied</code></td><td>Con người từ chối task; nó sang FAILED với loại APPROVAL_DENIED.</td></tr>

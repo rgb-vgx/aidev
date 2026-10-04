@@ -146,6 +146,14 @@ CONSTRAINT worktrees_removed_consistent CHECK (
 the worktree was kept on disk for inspection. A retained worktree therefore has no
 removal time. `ListRetainedWorktrees` is how an operator finds abandoned work.
 
+`agent_tree` (migration `0014_agent_tree`) is the tree object the agent's work was
+snapshotted to as soon as the agent finished, before verification ran. The success
+commit carries exactly this tree, so on a succeeded attempt `head_commit^{tree}`
+equals `agent_tree`, and anything verification wrote afterwards is not in it. `''`
+means no snapshot was taken: a row from before the migration, or an attempt that
+ended before the agent finished. The same migration adds
+`task.verification_worktree_modified` to `events_type_valid`.
+
 ### `worker_runs`
 What an agent backend actually did: the argv, the captured streams, the exit code,
 and the structured result where the backend reports one (`finish_reason`, `tokens`,

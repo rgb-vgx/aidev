@@ -165,6 +165,7 @@ aidev worktree remove TASK-000001 --force</code></pre>
 <tr><td><code>task.verification_completed</code></td><td>The verification pass finished, with the count of passed steps.</td></tr>
 <tr><td><code>task.verification_intercepted</code></td><td>The agent had changed a verification runner, or touched a path the task protects (<code>protected_paths</code>), so verification did not run at all; the attempt fails with kind VERIFICATION. The payload says which reason fired.</td></tr>
 <tr><td><code>task.verification_tests_modified</code></td><td>The attempt changed files that look like the tests judging it. A report for the reviewer, not a verdict: editing a test does not fail the run.</td></tr>
+<tr><td><code>task.verification_worktree_modified</code></td><td>Passing in-place checks left the worktree different from the snapshot taken when the agent finished — a formatter rewrote a file, or a test run left output behind. The commit carries the snapshot, so what passed is not exactly what the branch receives. The payload lists the <code>paths</code> (with git status letters, at most 50) and their <code>total</code>. A report, not a verdict: the run is judged as usual.</td></tr>
 <tr><td><code>task.approval_required</code></td><td>The task was gated behind a human decision.</td></tr>
 <tr><td><code>task.approval_granted</code></td><td>A human approved the task; it becomes READY.</td></tr>
 <tr><td><code>task.approval_denied</code></td><td>A human denied the task; it becomes FAILED with kind APPROVAL_DENIED.</td></tr>

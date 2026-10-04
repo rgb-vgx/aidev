@@ -185,9 +185,13 @@ type Worktree struct {
 	Branch     string
 	BaseCommit string
 	HeadCommit string
-	Status     WorktreeStatus
-	CreatedAt  time.Time
-	RemovedAt  *time.Time
+	// AgentTree is the tree the agent's work was snapshotted to the moment
+	// it finished (research A6): the tree the success commit carries. Empty
+	// before the snapshot, or for rows written before the column existed.
+	AgentTree string
+	Status    WorktreeStatus
+	CreatedAt time.Time
+	RemovedAt *time.Time
 }
 
 // WorkerRunStatus is the outcome of one agent invocation.

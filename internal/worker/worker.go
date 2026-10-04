@@ -414,6 +414,17 @@ type run struct {
 	worktree *git.Worktree
 	record   *task.Worktree
 
+	// agentTree is the tree the agent's work was snapshotted to the moment
+	// it finished (research A6): what the success commit carries, and what
+	// clean verification checks out. Verification runs afterwards, so
+	// nothing the checks write can reach it.
+	agentTree string
+	// agentHead is the commit HEAD was on when agentTree was taken — the
+	// tree's parent, and the value the branch must still hold when the
+	// success commit is published. Usually the base commit; an agent that
+	// committed its own work moved it.
+	agentHead string
+
 	// sharedBefore is the shared git state recorded once the worktree exists,
 	// for the containment check that runs after the agent (research §7i).
 	sharedBefore git.SharedState
@@ -516,8 +527,47 @@ func (r *run) execute(ctx context.Context) (outcome Outcome, retErr error) {
 		outcome, retErr = r.fail(ctx, kind, err)
 		return outcome, retErr
 	}
+	// The agent's delivery, as a tree object (research A6). Everything
+	// verification does happens after this point, so whatever the checks
+	// write — coverage output, a regenerated fixture, a gofmt run — cannot
+	// reach the commit. Failing to snapshot is a plumbing failure, not a
+	// check that failed, so it is classified like the other worktree errors.
+	if err := r.snapshotAgentTree(ctx); err != nil {
+		outcome, retErr = r.fail(ctx, task.FailureWorktree, err)
+		return outcome, retErr
+	}
 	outcome, retErr = r.verify(ctx)
 	return outcome, retErr
+}
+
+// snapshotAgentTree records what the agent delivered as a tree object and
+// keeps its id for the commit. The database copy is best-effort: the
+// in-memory one is what the commit uses, and losing the row's copy costs a
+// later reader the ability to inspect the snapshot, which is not worth
+// failing a run over (the same trade SetWorktreeHead makes).
+func (r *run) snapshotAgentTree(ctx context.Context) error {
+	// HEAD first: CurrentTree seeds its index from HEAD, so reading HEAD
+	// before and the tree after names the pair the tree was built on. Nothing
+	// runs in the worktree between the two — the agent has exited.
+	head, err := r.worktree.HeadCommit(ctx)
+	if err != nil {
+		return fmt.Errorf("snapshot the agent's work: %w", err)
+	}
+	tree, err := r.worktree.CurrentTree(ctx)
+	if err != nil {
+		return fmt.Errorf("snapshot the agent's work: %w", err)
+	}
+	r.agentHead, r.agentTree = head, tree
+
+	if r.record == nil {
+		return nil
+	}
+	writeCtx, cancel := writeContext(ctx)
+	defer cancel()
+	if err := r.o.Store.SetWorktreeAgentTree(writeCtx, r.record.ID, tree); err != nil {
+		r.log.WarnContext(ctx, "could not record the agent's tree", "error", err.Error())
+	}
+	return nil
 }
 
 // finishRootSpan records the final status on the run span. It runs deferred,
@@ -1308,6 +1358,10 @@ func (r *run) verify(ctx context.Context) (Outcome, error) {
 
 	r.persistVerification(ctx, report)
 
+	if report.Passed && r.task.VerificationMode != task.VerificationClean {
+		r.reportWorktreeDrift(ctx)
+	}
+
 	r.emit(ctx, event.TypeVerificationCompleted, map[string]any{
 		"passed":       report.Passed,
 		"failure_kind": string(report.FailureKind),
@@ -1325,6 +1379,54 @@ func (r *run) verify(ctx context.Context) (Outcome, error) {
 	return r.succeed(ctx)
 }
 
+// maxDriftPaths bounds the paths a drift warning lists. A verification that
+// regenerates a whole tree would otherwise write an event the size of the
+// tree; the count still says how many there were.
+const maxDriftPaths = 50
+
+// reportWorktreeDrift warns when the passing checks left the worktree
+// different from the tree snapshotted before they ran (research A6). The
+// commit carries the snapshot, so a gofmt, a codegen step or a stray output
+// file the checks produced is not in it — what passed is not exactly what
+// the branch receives. It is a report: it never changes the outcome, and an
+// error working it out is logged rather than failing a run that passed.
+//
+// Clean mode skips it, because there the checks never touched this worktree.
+func (r *run) reportWorktreeDrift(ctx context.Context) {
+	if r.agentTree == "" {
+		return
+	}
+	after, err := r.worktree.CurrentTree(ctx)
+	if err != nil {
+		r.log.WarnContext(ctx, "could not check whether verification changed the worktree", "error", err.Error())
+		return
+	}
+	if after == r.agentTree {
+		return
+	}
+	changes, err := r.worktree.TreeChanges(ctx, r.agentTree, after)
+	if err != nil {
+		r.log.WarnContext(ctx, "could not list what verification changed in the worktree", "error", err.Error())
+		return
+	}
+	listed := changes
+	if len(listed) > maxDriftPaths {
+		listed = listed[:maxDriftPaths]
+	}
+	paths := make([]map[string]any, 0, len(listed))
+	for _, c := range listed {
+		paths = append(paths, map[string]any{"status": c.Status, "path": c.Path})
+	}
+	r.emit(ctx, event.TypeVerificationWorktreeModified, map[string]any{
+		"agent_tree": r.agentTree,
+		"after_tree": after,
+		"paths":      paths,
+		"total":      len(changes),
+	})
+	r.log.WarnContext(ctx, "verification changed the worktree; the commit carries the agent's snapshot",
+		"paths", len(changes))
+}
+
 // cleanCheckout builds the detached worktree clean verification runs in:
 // the post-agent tree snapshotted to a tree object, committed without
 // touching any ref, and checked out under the workspace root. It returns the
@@ -1336,8 +1438,19 @@ func (r *run) verify(ctx context.Context) (Outcome, error) {
 // FailureWorktree so nobody mistakes "the snapshot broke" for "the tests
 // failed".
 func (r *run) cleanCheckout(ctx context.Context) (string, func(), error) {
-	tree, err := r.worktree.SnapshotTree(ctx)
-	if err != nil {
+	// The tree checked is the tree the commit will carry (research A6): the
+	// snapshot execute took when the agent finished. Taking a second one here
+	// would read the same files, but reusing the first makes "verified" and
+	// "committed" the same object by construction rather than by timing.
+	tree := r.agentTree
+	if tree == "" {
+		snap, err := r.worktree.CurrentTree(ctx)
+		if err != nil {
+			return "", nil, err
+		}
+		tree = snap
+	}
+	if err := r.worktree.CheckGitlinks(ctx, tree); err != nil {
 		return "", nil, err
 	}
 	commit, err := r.worktree.CommitTree(ctx, tree,
@@ -1538,7 +1651,20 @@ func (r *run) commitWork(ctx context.Context) (bool, error) {
 	commitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), git.DefaultTimeout)
 	defer cancel()
 
-	commit, err := r.worktree.Commit(commitCtx, fmt.Sprintf("%s %s", r.task.Identifier(), r.task.Title))
+	message := fmt.Sprintf("%s %s", r.task.Identifier(), r.task.Title)
+	var (
+		commit string
+		err    error
+	)
+	if r.agentTree != "" {
+		commit, err = r.commitAgentTree(commitCtx, message)
+	} else {
+		// No snapshot means the run reached success without passing through
+		// execute's snapshot — not a path today, but committing the working
+		// directory as it stands is the behaviour aidev had before research
+		// A6, and is still better than delivering nothing.
+		commit, err = r.worktree.Commit(commitCtx, message)
+	}
 	if err != nil {
 		return false, err
 	}
@@ -1554,6 +1680,40 @@ func (r *run) commitWork(ctx context.Context) (bool, error) {
 	}
 	r.setHeadCommit(commit)
 	return true, nil
+}
+
+// commitAgentTree publishes the tree snapshotted when the agent finished
+// (research A6) and returns the new commit, or "" when that tree is what the
+// branch already holds. The commit is built from objects, not from the
+// working directory: whatever verification wrote afterwards stays out.
+//
+// The branch moves by compare-and-set against the commit the snapshot was
+// taken on. If anything moved it in between, publishing fails rather than
+// stacking the agent's tree on history nobody verified.
+func (r *run) commitAgentTree(ctx context.Context, message string) (string, error) {
+	headTree, err := r.worktree.TreeOf(ctx, r.agentHead)
+	if err != nil {
+		return "", err
+	}
+	if headTree == r.agentTree {
+		return "", nil
+	}
+	commit, err := r.worktree.CommitTreeOnto(ctx, r.agentTree, r.agentHead, message)
+	if err != nil {
+		return "", err
+	}
+	if err := r.worktree.UpdateBranch(ctx, r.worktree.Branch, commit, r.agentHead); err != nil {
+		return "", err
+	}
+	// The branch now holds the commit but the real index still describes
+	// its parent; without realigning it every delivered worktree would look
+	// dirty and keep-on-dirty removal would never remove one. A failure here
+	// leaves the commit published, so it is a warning: the worst outcome is
+	// a worktree retained that could have been removed.
+	if err := r.worktree.SyncIndex(ctx); err != nil {
+		r.log.WarnContext(ctx, "could not realign the index after committing", "error", err.Error())
+	}
+	return commit, nil
 }
 
 // cleanupAfterSuccess removes the worktree when the policy asks for it. It runs
