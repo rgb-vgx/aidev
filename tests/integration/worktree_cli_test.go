@@ -116,6 +116,52 @@ func TestWorktreeListShowsRetainedWork(t *testing.T) {
 	}
 }
 
+// The approval policy has no MCP counterpart on purpose — the party creating
+// tasks must not decide whether its own work is gated — so the CLI is the
+// surface that must read and set it, and the change must read back.
+func TestProjectApprovalIsSetFromTheCLI(t *testing.T) {
+	h := newHarness(t, nil)
+	created := h.createTask(nil) // registers the project
+
+	stdout, _, err := h.runCLI(t, "project", "approval", "-repo", h.repoPath)
+	if err != nil {
+		t.Fatalf("project approval: %v", err)
+	}
+	if strings.TrimSpace(stdout) != "off" {
+		t.Errorf("approval = %q, want off by default", strings.TrimSpace(stdout))
+	}
+
+	stdout, _, err = h.runCLI(t, "project", "approval", "-repo", h.repoPath, "on")
+	if err != nil {
+		t.Fatalf("project approval on: %v", err)
+	}
+	if !strings.Contains(stdout, "approval on") {
+		t.Errorf("confirmation does not say the policy is on:\n%s", stdout)
+	}
+
+	project, err := h.store.GetProject(h.ctx, created.ProjectID)
+	if err != nil {
+		t.Fatalf("GetProject: %v", err)
+	}
+	if !project.RequiresApproval {
+		t.Error("the policy was not persisted")
+	}
+
+	// project list shows the state, so an operator can audit it without
+	// knowing the flag's name.
+	stdout, _, err = h.runCLI(t, "project", "list")
+	if err != nil {
+		t.Fatalf("project list: %v", err)
+	}
+	if !strings.Contains(stdout, "approval on") {
+		t.Errorf("project list does not show the approval policy:\n%s", stdout)
+	}
+
+	if _, _, err := h.runCLI(t, "project", "approval", "-repo", h.repoPath, "maybe"); err == nil {
+		t.Error("an unknown word was accepted as a policy")
+	}
+}
+
 // Removing a worktree that still holds uncommitted work must be refused, and the
 // refusal must say how to proceed deliberately.
 func TestWorktreeRemoveProtectsUncommittedWork(t *testing.T) {

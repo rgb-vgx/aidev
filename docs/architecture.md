@@ -508,6 +508,26 @@ stdio means stdout is the JSON-RPC channel. The logger has no stdout option at a
 and a test redirects `os.Stdout` to assert nothing reaches it, because this is the
 rule a future change is most likely to break by accident.
 
+### Who may decide that a task may run
+
+Two gates, OR'd at run time in `run.enforceApproval` and deliberately never
+merged into one stored flag: `tasks.requires_approval` is the *creator's*
+explicit ask, `projects.requires_approval` (migration 0008) is the *operator's*
+policy. Copying the project flag into tasks at creation would make the two
+indistinguishable and would survive the policy being switched off again;
+`task.approval_required` records `required_by` (`task`, `project`,
+`task+project`) so the audit keeps them apart, and every decision event
+records `via` (`cli` or `mcp`).
+
+The surfaces are deliberately not equal. The project flag is writable only
+from `aidev project approval` — there is no MCP tool that touches it — because
+the party creating tasks must not decide whether its own work is gated. And
+`mcp.allow_approval` is off by default: the MCP client may be the planner that
+created the task, so `aidev_approve_task` refuses both granting and denying
+until the operator turns it on, sending the reader to `aidev task approve`.
+A gate that cannot read its own policy (the project lookup fails) blocks
+rather than proceeds.
+
 ## Operating it
 
 ### PostgreSQL data, and why the compose project name is not pinned

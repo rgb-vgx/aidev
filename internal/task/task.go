@@ -36,6 +36,14 @@ type Project struct {
 	// content of the repository's git submodules. Default SubmodulesNone.
 	Submodules SubmoduleMode
 
+	// RequiresApproval is the project's approval policy: every task of this
+	// project needs a human decision before it runs, whether or not the task
+	// itself asks for one. It is set only from the CLI (aidev project
+	// approval), never from MCP, because the party creating tasks must not
+	// decide whether its own work is gated. Checked at run time against the
+	// task's own flag; deliberately not copied into tasks at creation.
+	RequiresApproval bool
+
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }

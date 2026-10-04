@@ -208,6 +208,7 @@ binary uses when a key is absent; conf/conf.example.json shows them all in one f
 | `agent.codex.sandbox` | `workspace-write` | passed as `--sandbox` when set |
 | `agent.routing` | *(none)* | an object mapping a task hardness (`TRIVIAL`, `STANDARD`, `HARD`) to the model that hardness deserves; a hardness with no entry leaves the choice to the backend |
 | `log_level` | `info` | `debug`, `info`, `warn` or `error` |
+| `mcp.allow_approval` | `false` | whether the MCP `aidev_approve_task` tool may grant or deny approvals; when off, decisions are the CLI's (`aidev task approve`) |
 | `tracing.endpoint` | *(none)* | base OTLP HTTP URL; tracing is off when nothing is set |
 | `tracing.traces_endpoint` | *(none)* | the full URL the traces exporter posts to, taking precedence over `tracing.endpoint` |
 | `tracing.headers` | *(none)* | an object of extra OTLP headers, such as `Authorization` |
@@ -326,6 +327,9 @@ aidev task result <task> [--logs] [--json]
 aidev task events <task> [--payload] [--after SEQ] [--json]
 aidev task cancel <task> [--reason R] [--json]
 aidev task approve <task> [--deny] [--by WHO] [--reason R] [--json]
+
+aidev project list  [--json]                      # repositories aidev has run against
+aidev project approval [on|off] [--repo .]        # gate every task of the repo (operator only)
 ```
 
 `<task>` is either the reference (`TASK-000001`, case-insensitive) or the UUID.
@@ -334,7 +338,10 @@ default. Logs always go to stderr, so `aidev task get TASK-000001 --json | jq`
 works while diagnostics stay visible.
 
 Tasks marked `--requires-approval` stop before doing anything — no worktree, no
-attempt — until `aidev task approve` releases them.
+attempt — until `aidev task approve` releases them. So does every task of a
+project whose policy is on (`aidev project approval on`), whatever the task
+itself said; the policy is the operator's and exists only at the CLI, so a
+planner creating tasks cannot decide whether its own work is gated.
 
 ## What happens under the hood
 
@@ -433,7 +440,7 @@ server starts configured. Eight tools become available:
 | `aidev_get_task_events` | history, and progress while a task runs |
 | `aidev_list_tasks` / `aidev_get_task` | find work |
 | `aidev_cancel_task` | stop a task; its worktree is kept |
-| `aidev_approve_task` | a human releases a gated task |
+| `aidev_approve_task` | a human releases a gated task; off unless `mcp.allow_approval` is set |
 
 A run takes minutes, so `aidev_run_task` waits a bounded time and then returns with
 `still_running: true` while the task continues; the planner polls

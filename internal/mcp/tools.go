@@ -10,11 +10,23 @@ import (
 	"github.com/google/uuid"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"aidev/internal/config"
 	"aidev/internal/store"
 	"aidev/internal/task"
 	"aidev/internal/view"
 	"aidev/internal/worker"
 )
+
+// approvalNextStep says what has to happen before a gated task runs. With
+// mcp.allow_approval off — the default — the tool it would name refuses the
+// decision, so pointing the planner at it would send it into a wall; the
+// answer then is the operator's CLI.
+func approvalNextStep(cfg config.Config, ref string) string {
+	if cfg.MCPAllowApproval {
+		return fmt.Sprintf("this task requires approval; a human must call %s before it can run", ToolApprove)
+	}
+	return fmt.Sprintf("this task requires approval; a human must run: aidev task approve %s --by <name>", ref)
+}
 
 // Tool names. They are prefixed so they are unambiguous in a client that has
 // several servers connected.
@@ -149,7 +161,7 @@ func (s *Server) createTask(ctx context.Context, _ *sdk.CallToolRequest, in Crea
 
 	next := fmt.Sprintf("run it with %s", ToolRunTask)
 	if created.RequiresApproval {
-		next = fmt.Sprintf("this task requires approval; a human must call %s before it can run", ToolApprove)
+		next = approvalNextStep(orchestrator.Config, created.Ref)
 	}
 	return nil, CreateTaskOutput{Task: view.NewTask(created), NextStep: next}, nil
 }
@@ -286,7 +298,7 @@ func (s *Server) runTask(ctx context.Context, _ *sdk.CallToolRequest, in RunTask
 
 	select {
 	case <-run.done:
-		return s.finishedRunOutput(ctx, st, t.ID, run)
+		return s.finishedRunOutput(ctx, orchestrator, st, t.ID, run)
 
 	case <-time.After(time.Duration(wait) * time.Second):
 		// Still going. Report where it has got to rather than an error: a long
@@ -311,7 +323,7 @@ func (s *Server) runTask(ctx context.Context, _ *sdk.CallToolRequest, in RunTask
 }
 
 // finishedRunOutput builds the output for a run that has completed.
-func (s *Server) finishedRunOutput(ctx context.Context, st *store.Store, taskID uuid.UUID, run *backgroundRun) (*sdk.CallToolResult, RunTaskOutput, error) {
+func (s *Server) finishedRunOutput(ctx context.Context, orchestrator *worker.Orchestrator, st *store.Store, taskID uuid.UUID, run *backgroundRun) (*sdk.CallToolResult, RunTaskOutput, error) {
 	if run.err != nil {
 		// An approval gate is reported as a result, not an error: the planner
 		// needs to know a human is required, which is not a malfunction.
@@ -321,9 +333,8 @@ func (s *Server) finishedRunOutput(ctx context.Context, st *store.Store, taskID 
 				return nil, RunTaskOutput{}, err
 			}
 			return nil, RunTaskOutput{
-				Result: result,
-				NextStep: fmt.Sprintf("this task requires approval; a human must call %s before it will run",
-					ToolApprove),
+				Result:   result,
+				NextStep: approvalNextStep(orchestrator.Config, result.Task.Ref),
 			}, nil
 		}
 		return nil, RunTaskOutput{}, run.err
@@ -491,11 +502,20 @@ func (s *Server) approveTask(ctx context.Context, _ *sdk.CallToolRequest, in App
 	if err != nil {
 		return nil, ApproveTaskOutput{}, err
 	}
+	// mcp.allow_approval is off by default: the MCP client may be the planner
+	// that created this task, and a party must not wave through (or fail) its
+	// own work. The operator's path is the CLI, and both approve and deny are
+	// blocked here so a planner cannot fail someone else's task either.
+	if !orchestrator.Config.MCPAllowApproval {
+		return nil, ApproveTaskOutput{}, fmt.Errorf(
+			"approvals over MCP are disabled (set mcp.allow_approval to allow them); decide with the CLI instead: aidev task approve %s --by <name>%s",
+			in.Task, map[bool]string{true: " --deny", false: ""}[in.Approve])
+	}
 	decidedBy := strings.TrimSpace(in.DecidedBy)
 	if decidedBy == "" {
 		decidedBy = "mcp client"
 	}
-	outcome, err := orchestrator.Approve(ctx, in.Task, in.Approve, decidedBy, in.Reason)
+	outcome, err := orchestrator.Approve(ctx, in.Task, in.Approve, decidedBy, in.Reason, "mcp")
 	if err != nil {
 		return nil, ApproveTaskOutput{}, err
 	}

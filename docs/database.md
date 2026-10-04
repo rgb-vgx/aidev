@@ -46,6 +46,7 @@ A git repository aidev may run tasks against.
 | `name` | non-blank |
 | `repo_path` | **unique**, must be absolute (`CHECK repo_path LIKE '/%'`) |
 | `default_branch` | base for task branches when a task does not name one |
+| `requires_approval` | project approval policy: every task stops for a human first; set only via `aidev project approval` (migration 0008) |
 
 `repo_path` is unique so that registering the same repository twice is idempotent.
 `EnsureProject` does insert-or-select in a single statement, so two callers racing
@@ -64,7 +65,7 @@ The unit of delegated work.
 | `status` | the lifecycle state, see below |
 | `verification` | JSONB array of argv objects, **at least one required** |
 | `max_retries` | recorded for a future retry feature; the MVP never retries |
-| `requires_approval` | policy gate |
+| `requires_approval` | the task's own gate (the creator's ask); OR'd at run time with the project's policy, never overwritten by it |
 | `base_ref` | git ref to branch from; empty means the project default |
 | `timeout_seconds` | 0 means "use the configured default" |
 
@@ -170,6 +171,12 @@ CREATE UNIQUE INDEX approvals_one_pending_per_task ON approvals (task_id)
 At most one open request per task, enforced by the database rather than by a
 read-then-write in application code. After a decision a new request may be opened,
 so re-review is possible.
+
+The request's `reason` says which gate produced it ("task is marked as
+requiring approval", "project policy requires approval", or both), and the
+`task.approval_required` / `task.approval_granted` / `task.approval_denied`
+events carry `required_by` and `via` (`cli` or `mcp`) — the history has to keep
+the creator's ask, the operator's policy and the surface that decided apart.
 
 ### `events`
 The append-only history.

@@ -113,6 +113,42 @@ func TestProjectSubmoduleModeIsStickyAcrossEnsureProject(t *testing.T) {
 	}
 }
 
+// The approval policy is the operator's (CLI only, migration 0008). It must
+// default off, survive the EnsureProject every task creation runs, and report
+// an unknown project rather than silently doing nothing.
+func TestProjectApprovalPolicyIsStickyAcrossEnsureProject(t *testing.T) {
+	db, ctx := openStore(t)
+
+	path := "/tmp/aidev-approval-" + uuid.NewString()
+	created, err := db.EnsureProject(ctx, "aidev", path, "main")
+	if err != nil {
+		t.Fatalf("EnsureProject: %v", err)
+	}
+	if created.RequiresApproval {
+		t.Error("a new project requires approval, want the policy off by default")
+	}
+
+	updated, err := db.SetProjectRequiresApproval(ctx, created.ID, true)
+	if err != nil {
+		t.Fatalf("SetProjectRequiresApproval: %v", err)
+	}
+	if !updated.RequiresApproval {
+		t.Error("after setting, requires_approval = false, want true")
+	}
+
+	again, err := db.EnsureProject(ctx, "aidev", path, "main")
+	if err != nil {
+		t.Fatalf("second EnsureProject: %v", err)
+	}
+	if !again.RequiresApproval {
+		t.Error("EnsureProject reset the approval policy; an operator's choice must survive it")
+	}
+
+	if _, err := db.SetProjectRequiresApproval(ctx, uuid.Must(uuid.NewV7()), true); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("SetProjectRequiresApproval for an unknown project = %v, want ErrNotFound", err)
+	}
+}
+
 func TestTaskRoundTrip(t *testing.T) {
 	db, ctx := openStore(t)
 	p := seedProject(t, ctx, db)

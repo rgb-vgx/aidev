@@ -2,6 +2,7 @@ package integration
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -155,6 +156,29 @@ func (h *harness) eventTypes(taskID uuid.UUID) []string {
 		names = append(names, e.Type.String())
 	}
 	return names
+}
+
+// eventPayload returns the payload of the most recent event of the given type,
+// so a test can assert on what the audit log actually recorded (which gate
+// fired, which surface decided).
+func (h *harness) eventPayload(taskID uuid.UUID, typ string) map[string]any {
+	h.t.Helper()
+	events, err := h.store.ListEvents(h.ctx, store.EventFilter{TaskID: taskID})
+	if err != nil {
+		h.t.Fatalf("ListEvents: %v", err)
+	}
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].Type.String() != typ {
+			continue
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(events[i].Payload, &payload); err != nil {
+			h.t.Fatalf("payload of %s is not an object: %v (%s)", typ, err, events[i].Payload)
+		}
+		return payload
+	}
+	h.t.Fatalf("no event of type %s in the history", typ)
+	return nil
 }
 
 // repoIsClean reports whether the repository's own working tree was left alone.

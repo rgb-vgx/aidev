@@ -432,7 +432,10 @@ func TestMCPRunReturnsWhileStillRunning(t *testing.T) {
 }
 
 func TestMCPApprovalGate(t *testing.T) {
-	m := newMCPHarness(t)
+	// mcp.allow_approval is off by default (a party must not wave through its
+	// own work); this test opts in, and TestMCPApprovalIsOffByDefault covers
+	// the shipped behaviour.
+	m := newMCPHarnessWith(t, func(c *config.Config) { c.MCPAllowApproval = true })
 	m.backend.Work = doTheWork
 
 	var created struct {
@@ -489,6 +492,64 @@ func TestMCPApprovalGate(t *testing.T) {
 	m.call(t, "aidev_run_task", map[string]any{"task": ref, "wait_seconds": 60}, &run)
 	if !run.Succeeded {
 		t.Errorf("the approved task did not succeed: %v", run.Result["message"])
+	}
+}
+
+// mcp.allow_approval ships off: the MCP client may be the planner that created
+// the task, and neither granting nor failing someone's task is the creator's
+// call. The refusal must send the reader to the CLI, and neither decision may
+// move the task.
+func TestMCPApprovalIsOffByDefault(t *testing.T) {
+	m := newMCPHarness(t)
+	m.backend.Work = doTheWork
+
+	var created struct {
+		Task     map[string]any `json:"task"`
+		NextStep string         `json:"next_step"`
+	}
+	m.call(t, "aidev_create_task", map[string]any{
+		"repo_path":         m.repoPath,
+		"title":             "Needs a human",
+		"verification":      []string{"test -f marker.txt"},
+		"requires_approval": true,
+	}, &created)
+	ref := created.Task["ref"].(string)
+	if !strings.Contains(created.NextStep, "aidev task approve") {
+		t.Errorf("next_step = %q, want the CLI path, since the MCP tool is off", created.NextStep)
+	}
+
+	var run struct {
+		Result    map[string]any `json:"result"`
+		Succeeded bool           `json:"succeeded"`
+	}
+	m.call(t, "aidev_run_task", map[string]any{"task": ref, "wait_seconds": 30}, &run)
+	if run.Result["task"].(map[string]any)["status"] != "WAITING_APPROVAL" {
+		t.Errorf("status = %v, want WAITING_APPROVAL", run.Result["task"])
+	}
+
+	// Both decisions are blocked: a planner must not fail someone's task
+	// either, not only wave its own through.
+	for _, approve := range []bool{true, false} {
+		msg := m.callExpectingError(t, "aidev_approve_task", map[string]any{
+			"task": ref, "approve": approve, "decided_by": "planner",
+		})
+		if !strings.Contains(msg, "mcp.allow_approval") {
+			t.Errorf("approve=%v refused without naming the setting: %s", approve, msg)
+		}
+		if !strings.Contains(msg, "aidev task approve") {
+			t.Errorf("approve=%v refused without the CLI path: %s", approve, msg)
+		}
+	}
+
+	var got struct {
+		Task map[string]any `json:"task"`
+	}
+	m.call(t, "aidev_get_task", map[string]any{"task": ref}, &got)
+	if got.Task["status"] != "WAITING_APPROVAL" {
+		t.Errorf("status after refused decisions = %v, want WAITING_APPROVAL", got.Task["status"])
+	}
+	if len(m.backend.Calls()) != 0 {
+		t.Error("the agent ran despite the approval gate")
 	}
 }
 

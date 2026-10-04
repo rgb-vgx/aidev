@@ -194,6 +194,7 @@ Mọi thiết lập đều tùy chọn, trừ `database.url`. Các giá trị m�
 | `agent.codex.sandbox` | `workspace-write` | được truyền thành `--sandbox` khi có đặt |
 | `agent.routing` | *(none)* | một đối tượng ánh xạ độ khó của task (`TRIVIAL`, `STANDARD`, `HARD`) tới mô hình xứng đáng với độ khó đó; độ khó nào không có mục sẽ để backend tự chọn |
 | `log_level` | `info` | `debug`, `info`, `warn` hoặc `error` |
+| `mcp.allow_approval` | `false` | liệu công cụ `aidev_approve_task` qua MCP có được phép quyết định phê duyệt hay không; khi tắt, việc quyết định thuộc về CLI (`aidev task approve`) |
 | `tracing.endpoint` | *(none)* | URL HTTP OTLP cơ sở; không bật tracing khi chưa đặt gì |
 | `tracing.traces_endpoint` | *(none)* | URL đầy đủ mà bộ xuất traces gửi tới, được ưu tiên hơn `tracing.endpoint` |
 | `tracing.headers` | *(none)* | một đối tượng chứa các header OTLP bổ sung, chẳng hạn `Authorization` |
@@ -300,6 +301,9 @@ aidev task result <task> [--logs] [--json]
 aidev task events <task> [--payload] [--after SEQ] [--json]
 aidev task cancel <task> [--reason R] [--json]
 aidev task approve <task> [--deny] [--by WHO] [--reason R] [--json]
+
+aidev project list  [--json]                      # các repository mà aidev đã chạy task
+aidev project approval [on|off] [--repo .]        # chặn mọi task của repo chờ người duyệt (chỉ ở CLI)
 ```
 
 `<task>` là mã tham chiếu (`TASK-000001`, không phân biệt chữ hoa chữ thường) hoặc UUID.
@@ -308,7 +312,10 @@ mặc định. Nhật ký luôn ghi ra stderr, nên `aidev task get TASK-000001 
 vẫn chạy được trong khi các chẩn đoán hiển thị bình thường.
 
 Các task bị đánh dấu `--requires-approval` sẽ dừng lại trước khi làm bất cứ việc gì — không worktree, không
-lần thử nào — cho tới khi `aidev task approve` cho phép chúng tiếp tục.
+lần thử nào — cho tới khi `aidev task approve` cho phép chúng tiếp tục. Tương tự với mọi task thuộc dự án
+đang bật chính sách (`aidev project approval on`), bất kể task đó có tự yêu cầu hay không; chính sách thuộc
+về người vận hành và chỉ có ở CLI, nên một planner tạo task không thể tự quyết định công việc của chính
+mình có được phép chạy hay không.
 
 ## Chuyện gì xảy ra bên trong
 
@@ -407,7 +414,7 @@ khởi động đã có sẵn cấu hình. Tám công cụ sau đây sẽ khả 
 | `aidev_get_task_events` | lịch sử, và tiến độ khi task đang chạy |
 | `aidev_list_tasks` / `aidev_get_task` | tìm công việc |
 | `aidev_cancel_task` | dừng task; worktree của nó được giữ lại |
-| `aidev_approve_task` | con người cho phép task bị chặn chạy tiếp |
+| `aidev_approve_task` | con người cho phép task bị chặn chạy tiếp; bị tắt trừ khi đặt `mcp.allow_approval` |
 
 Một lần chạy mất vài phút, nên `aidev_run_task` chờ một khoảng thời gian giới hạn rồi trả về với
 `still_running: true` trong khi task vẫn tiếp tục; planner thăm dò

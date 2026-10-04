@@ -110,7 +110,7 @@ Creates a task. Does **not** run it.
 | `acceptance_criteria` | string | no | what done looks like, in prose |
 | `agent` | string | no | agent to use; defaults to `build` |
 | `priority` | integer | no | higher runs first; default 0 |
-| `requires_approval` | boolean | no | gate the task behind a human decision |
+| `requires_approval` | boolean | no | gate the task behind a human decision; the project's own policy can gate a task the same way without this |
 | `base_ref` | string | no | git ref to branch from; defaults to the repository's current branch |
 | `timeout_seconds` | integer | no | bound this task's agent run |
 | `hardness` | string | no | how hard the task is: TRIVIAL, STANDARD or HARD; picks the model from `agent.routing` unless `model` is given |
@@ -174,8 +174,10 @@ from git, then runs the verification commands and records the outcome.
 - `wait_seconds` negative
 
 An approval gate is **not** an error: the result comes back with status
-`WAITING_APPROVAL` and a `next_step` saying a human must decide. Nor is a run that
-has not finished.
+`WAITING_APPROVAL` and a `next_step` saying a human must decide. When
+`mcp.allow_approval` is off — the default — that `next_step` names the CLI
+(`aidev task approve … --by <name>`) instead of this server's own tool, which
+would only refuse. Nor is a run that has not finished.
 
 ### Side effects
 
@@ -335,18 +337,26 @@ Moves the task to `CANCELLED`, closes any open attempt, marks any active worktre
 happen because a field was omitted. **This is a human decision.** A planner should
 not call it on its own initiative; the tool description says so.
 
+The tool is **off unless `mcp.allow_approval` is set** (default `false`). The MCP
+client may be the planner that created the task, and a party must not wave through
+— or fail — its own work, so both directions are refused until the operator turns
+the setting on. The refusal names the setting and points to the CLI:
+`aidev task approve <task> --by <name>`.
+
 ### Output
 
 `task`, the recorded `approval`, and a `message`.
 
 ### Errors
 
-No such task; the task is not in `WAITING_APPROVAL`; there is no pending request.
+- no such task; the task is not in `WAITING_APPROVAL`; there is no pending request
+- `mcp.allow_approval` is off (the default): the error gives the CLI command instead
 
 ### Side effects
 
 Records the decision and moves the task to `READY` (granted) or `FAILED` (denied),
-appending `task.approval_granted` or `task.approval_denied`.
+appending `task.approval_granted` or `task.approval_denied` with `decided_by`,
+`reason` and `via` (`cli` or `mcp`) in the payload.
 
 ---
 

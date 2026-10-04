@@ -9,7 +9,7 @@ import (
 	"aidev/internal/task"
 )
 
-const projectColumns = `id, name, repo_path, default_branch, submodules, created_at, updated_at`
+const projectColumns = `id, name, repo_path, default_branch, submodules, requires_approval, created_at, updated_at`
 
 // EnsureProject registers repoPath as a project, or returns the existing
 // project for that path unchanged.
@@ -102,6 +102,26 @@ func (s *Store) SetProjectSubmodules(ctx context.Context, id uuid.UUID, mode tas
 	return p, nil
 }
 
+// SetProjectRequiresApproval switches the project's approval policy and
+// returns the project as it now stands.
+//
+// It exists as its own call, and has no MCP counterpart on purpose: the
+// policy answers "who may turn the gate off", and the answer is the operator
+// at the CLI. The party creating tasks — including a planner through MCP —
+// must not be able to reach it.
+func (s *Store) SetProjectRequiresApproval(ctx context.Context, id uuid.UUID, required bool) (task.Project, error) {
+	row := s.db.QueryRow(ctx, `
+		UPDATE projects SET requires_approval = $2, updated_at = now()
+		WHERE id = $1
+		RETURNING `+projectColumns, id, required)
+
+	p, err := scanProject(row)
+	if err != nil {
+		return task.Project{}, fmt.Errorf("set approval policy for project %s: %w", id, err)
+	}
+	return p, nil
+}
+
 // scanner is satisfied by both pgx.Row and pgx.Rows.
 type scanner interface {
 	Scan(dest ...any) error
@@ -109,7 +129,7 @@ type scanner interface {
 
 func scanProject(row scanner) (task.Project, error) {
 	var p task.Project
-	err := row.Scan(&p.ID, &p.Name, &p.RepoPath, &p.DefaultBranch, &p.Submodules, &p.CreatedAt, &p.UpdatedAt)
+	err := row.Scan(&p.ID, &p.Name, &p.RepoPath, &p.DefaultBranch, &p.Submodules, &p.RequiresApproval, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return task.Project{}, classify(err)
 	}

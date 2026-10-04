@@ -554,7 +554,7 @@ func taskApprove(ctx context.Context, env *Env, args []string) error {
 	}
 	defer app.close()
 
-	outcome, err := app.orchestrator.Approve(ctx, identifier, !*deny, decidedBy, *reason)
+	outcome, err := app.orchestrator.Approve(ctx, identifier, !*deny, decidedBy, *reason, "cli")
 	if err != nil {
 		return err
 	}

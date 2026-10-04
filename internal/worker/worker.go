@@ -204,7 +204,15 @@ func (o *Orchestrator) RunTask(ctx context.Context, idOrRef string) (Outcome, er
 
 // Approve records a human decision and, when granted, returns the task to READY
 // so that it can be run.
-func (o *Orchestrator) Approve(ctx context.Context, idOrRef string, granted bool, decidedBy, reason string) (Outcome, error) {
+//
+// via says which surface the decision came through ("cli" or "mcp") and is
+// written into the approval event: the two have different trust levels — the
+// CLI is the operator, MCP may be the planner that created the task — so the
+// history has to keep them apart.
+func (o *Orchestrator) Approve(ctx context.Context, idOrRef string, granted bool, decidedBy, reason, via string) (Outcome, error) {
+	if via == "" {
+		return Outcome{}, fmt.Errorf("approval decision needs a via (cli or mcp), because the history must say which surface decided")
+	}
 	t, err := o.Store.ResolveTask(ctx, idOrRef)
 	if err != nil {
 		return Outcome{}, err
@@ -241,6 +249,7 @@ func (o *Orchestrator) Approve(ctx context.Context, idOrRef string, granted bool
 		return appendEvent(ctx, tx, t.ID, nil, evType, map[string]any{
 			"decided_by": decidedBy,
 			"reason":     reason,
+			"via":        via,
 		})
 	})
 	if err != nil {
@@ -499,10 +508,52 @@ func usageAttributes(tokens []byte) []attribute.KeyValue {
 	return attrs
 }
 
+// requiredBy reports why this task must be approved before it runs: "task",
+// "project", "task+project", or "" when neither gate applies. The two flags
+// are OR'd here at run time and deliberately never merged into one stored
+// flag, so "explicitly requested by the creator" stays distinguishable from
+// "inherited from project policy" and switching the policy off does not
+// rewrite any task (migration 0008).
+//
+// A project lookup failure blocks the task: a gate that cannot read its own
+// policy must not let the task through.
+func (r *run) requiredBy(ctx context.Context) (string, error) {
+	p, err := r.o.Store.GetProject(ctx, r.task.ProjectID)
+	if err != nil {
+		return "", fmt.Errorf("read project approval policy: %w", err)
+	}
+	switch {
+	case r.task.RequiresApproval && p.RequiresApproval:
+		return "task+project", nil
+	case r.task.RequiresApproval:
+		return "task", nil
+	case p.RequiresApproval:
+		return "project", nil
+	}
+	return "", nil
+}
+
+// approvalReason renders requiredBy as the sentence recorded on the approval
+// request, so an operator reading the request knows which gate produced it.
+func approvalReason(requiredBy string) string {
+	switch requiredBy {
+	case "task":
+		return "task is marked as requiring approval"
+	case "project":
+		return "project policy requires approval"
+	default:
+		return "task and project policy require approval"
+	}
+}
+
 // enforceApproval applies the approval policy. It is checked before anything is
 // claimed or created, so a gated task leaves no worktree and no attempt behind.
 func (r *run) enforceApproval(ctx context.Context) (Outcome, bool, error) {
-	if !r.task.RequiresApproval {
+	requiredBy, err := r.requiredBy(ctx)
+	if err != nil {
+		return Outcome{}, true, err
+	}
+	if requiredBy == "" {
 		return Outcome{}, false, nil
 	}
 
@@ -525,7 +576,7 @@ func (r *run) enforceApproval(ctx context.Context) (Outcome, bool, error) {
 				return err
 			}
 		}
-		a, reqErr := tx.RequestApproval(ctx, r.task.ID, "task is marked as requiring approval")
+		a, reqErr := tx.RequestApproval(ctx, r.task.ID, approvalReason(requiredBy))
 		switch {
 		case reqErr == nil:
 			approval = a
@@ -540,6 +591,7 @@ func (r *run) enforceApproval(ctx context.Context) (Outcome, bool, error) {
 		}
 		return appendEvent(ctx, tx, r.task.ID, nil, event.TypeApprovalRequired, map[string]any{
 			"approval_id": approval.ID.String(),
+			"required_by": requiredBy,
 		})
 	})
 	if err != nil {
@@ -547,13 +599,14 @@ func (r *run) enforceApproval(ctx context.Context) (Outcome, bool, error) {
 	}
 
 	r.task.Status = task.StatusWaitingApproval
-	r.log.InfoContext(ctx, "task gated pending approval", "approval_id", approval.ID.String())
+	r.log.InfoContext(ctx, "task gated pending approval",
+		"approval_id", approval.ID.String(), "required_by", requiredBy)
 
 	return Outcome{
 		Task:     r.task,
 		Approval: &approval,
-		Message: fmt.Sprintf("%s requires approval and was not run; approve it to continue",
-			r.task.Identifier()),
+		Message: fmt.Sprintf("%s requires approval (%s) and was not run; approve it to continue",
+			r.task.Identifier(), requiredBy),
 	}, true, fmt.Errorf("%s: %w", r.task.Identifier(), ErrApprovalRequired)
 }
 
