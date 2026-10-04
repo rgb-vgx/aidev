@@ -7,7 +7,12 @@ with:
 curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh
 ```
 
-## Unreleased
+## v0.2.0
+
+Upgrading from v0.1.0: install the new binary, then run `aidev migrate` (twelve
+migrations; the CLI refuses to run against a schema with pending ones) and
+`claude plugin update aidev@aidev`, and restart Claude Code. Repositories you
+have only used through MCP need `aidev project add <path>` once.
 
 - **Automatic retry.** `--max-retries N` (MCP: `max_retries`, 0 to 10) lets a
   task try again, within the same run, when its checks fail or its agent stops
@@ -48,6 +53,31 @@ curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh
 - Plugin 0.4.0: the delegate skill suggests `max_retries 1` and pages long logs;
   the review skill reviews the branch the result names; the doctor skill explains
   an unregistered repository.
+
+- **The judge is harder to fool.** `--protect <glob>` (MCP: `protected_paths`)
+  refuses, before any check runs, an attempt that changed a ring-fenced path; an
+  attempt that edits files that look like the tests judging it is reported
+  (`task.verification_tests_modified`). `--verify-mode clean` runs the checks in
+  a fresh checkout of the agent's result, so a file git ignores cannot make them
+  pass; `--setup` adds preparation commands. `--expect-fail-on-base` runs the
+  checks on the base commit first and fails a bug-fix task whose checks already
+  pass there.
+
+- **Containment.** An attempt that writes git state shared with the main
+  repository — config, hooks, attributes, other refs — fails with kind
+  `CONTAINMENT`; every git command aidev runs neutralises those vectors, and child
+  processes no longer inherit `AIDEV_*` variables. Task status changes are
+  guarded by a database trigger as well as in Go.
+
+- **Approval policy per repository.** `aidev project approval on` gates every
+  task of a repository; the MCP approve tool is off unless `mcp.allow_approval`
+  is set, so a planner cannot approve its own tasks.
+
+- **Sturdier runs.** The verification pass has a total time bound; truncated
+  output keeps its tail; the process group is reaped on every run; a cancel that
+  loses a race is retried; closing the terminal records a cancellation; the
+  agent list is cached; events are ordered per task so a reader following a
+  cursor cannot miss one.
 
 - **Submodules**: a project whose repository keeps its sources in git submodules
   can now be delegated to. `aidev project submodules read_only` (per repository,
