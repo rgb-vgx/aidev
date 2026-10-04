@@ -97,7 +97,10 @@ tasks of this size take.
 ## 7. When it fails
 
 Read `aidev_get_task_result` (with `include_logs` if the summary is not enough) and
-find which it was:
+find which it was. Logs come back cut to 64 KiB per section; when a
+`*_total_bytes` field says there is more, ask for just that section with
+`sections` and page on with `offset` set to the returned `next_offset`, rather
+than raising `max_bytes`:
 
 - **The agent stopped early** (few or no files changed, a final message announcing
   more work): create a new task with the same spec, a smaller scope, and the

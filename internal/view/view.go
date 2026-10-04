@@ -156,6 +156,12 @@ type Verification struct {
 	DurationMS int64  `json:"duration_ms" jsonschema:"how long the command took"`
 	Stdout     string `json:"stdout,omitempty" jsonschema:"captured output; included for failures, or in full on request"`
 	Stderr     string `json:"stderr,omitempty" jsonschema:"captured error output"`
+
+	// The full sizes, set only where the output was cut to a window (the MCP
+	// result with include_logs), so a reader can tell a short output from a
+	// page of a long one and ask for the next page.
+	StdoutTotalBytes int `json:"stdout_total_bytes,omitempty" jsonschema:"size of the whole captured output, when only a window of it was returned"`
+	StderrTotalBytes int `json:"stderr_total_bytes,omitempty" jsonschema:"size of the whole captured error output, when only a window of it was returned"`
 }
 
 // OutputLimit bounds how much of a failing step's output is included when the

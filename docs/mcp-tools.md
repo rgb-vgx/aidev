@@ -233,7 +233,10 @@ Reads the outcome of a task's most recent attempt.
 | Field | Type | Required | Meaning |
 |---|---|---|---|
 | `task` | string | **yes** | reference or UUID |
-| `include_logs` | boolean | no | also return the agent transcript, the diff, and full verification output |
+| `include_logs` | boolean | no | also return the logs named by `sections`, each cut to `max_bytes` |
+| `sections` | string[] | no | which logs: `transcript` (the agent's events as plain text), `stdout` (its raw event stream), `stderr`, `diff`, `verification` (each step's full output). Defaults to all but `stdout`; naming any implies `include_logs` |
+| `max_bytes` | integer | no | the most bytes per section, and per step for verification output. Default 65536, at most 1048576 |
+| `offset` | integer | no | byte offset every section starts at; pass back `next_offset` to read the next page |
 
 ### Output
 
@@ -247,7 +250,18 @@ Reads the outcome of a task's most recent attempt.
 | `result.approval` | the most recent approval record |
 | `result.tests_modified` | changed paths that look like the tests judging this attempt — a report so a reviewer can see that what passed was also written in the same attempt; absent when the attempt left the tests alone |
 | `still_running` | the task is currently executing |
-| `agent_stdout`, `agent_stderr`, `diff` | only with `include_logs` |
+| `agent_transcript`, `agent_stderr`, `diff` | only with `include_logs`, each a window of at most `max_bytes` |
+| `agent_stdout` | the raw event stream, only when `sections` names `stdout` |
+| `*_total_bytes` | the whole size of each returned section (`agent_transcript_total_bytes`, `diff_total_bytes`, …; `stdout_total_bytes`/`stderr_total_bytes` on each verification step), so a cut section is distinguishable from a short one |
+| `next_offset` | present when some section has more past this page |
+
+Logs are bounded because one call used to return every captured byte — several
+megabytes into the caller's context. The transcript is the agent's NDJSON stream
+rendered as one line per message, tool call (with the path it was aimed at) or
+error, without ids, timestamps or token counts; a backend whose stream aidev does
+not recognise is passed through unchanged. Windows never split a UTF-8
+character: both ends move back to a character boundary, so pages read with
+`next_offset` fit together exactly.
 
 A failing step's output is included even without `include_logs`, trimmed to the last
 2000 bytes, because it is the first thing anyone needs. A passing step's is not.
@@ -257,7 +271,7 @@ distinguishable from "ran and produced nothing".
 
 ### Errors
 
-No such task. A task that has never run is not an error.
+No such task; an unknown section, a negative `offset` or `max_bytes`, or `max_bytes` over the cap. A task that has never run is not an error.
 
 ### Side effects
 

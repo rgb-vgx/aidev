@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"aidev/internal/agent"
 	"aidev/internal/config"
 	"aidev/internal/store"
 	"aidev/internal/task"
@@ -382,17 +383,29 @@ func (s *Server) finishedRunOutput(ctx context.Context, orchestrator *worker.Orc
 
 // GetResultInput is the input of aidev_get_task_result.
 type GetResultInput struct {
-	Task        string `json:"task" jsonschema:"task reference such as TASK-000001, or the task's UUID"`
-	IncludeLogs bool   `json:"include_logs,omitempty" jsonschema:"include the agent's full transcript, the collected diff, and the complete verification output. These can be large; ask for them when diagnosing a failure"`
+	Task        string   `json:"task" jsonschema:"task reference such as TASK-000001, or the task's UUID"`
+	IncludeLogs bool     `json:"include_logs,omitempty" jsonschema:"include the agent's transcript, its error output, the collected diff and the complete verification output, each cut to max_bytes. Ask for them when diagnosing a failure"`
+	Sections    []string `json:"sections,omitempty" jsonschema:"which logs to return: transcript (the agent's events as plain text), stdout (its raw event stream), stderr, diff, verification. Defaults to all but stdout; naming any implies include_logs"`
+	MaxBytes    int      `json:"max_bytes,omitempty" jsonschema:"the most bytes returned per section (per step for verification output); defaults to 65536, at most 1048576"`
+	Offset      int      `json:"offset,omitempty" jsonschema:"byte offset each section starts at; pass next_offset from a previous call to read the next page"`
 }
 
 // GetResultOutput is the output of aidev_get_task_result.
 type GetResultOutput struct {
 	Result view.Result `json:"result" jsonschema:"everything known about the task's latest attempt"`
 
-	AgentStdout string `json:"agent_stdout,omitempty" jsonschema:"the agent's raw event stream, only when include_logs is set"`
-	AgentStderr string `json:"agent_stderr,omitempty" jsonschema:"the agent's error output, only when include_logs is set"`
-	Diff        string `json:"diff,omitempty" jsonschema:"the change aidev collected from git, only when include_logs is set"`
+	AgentTranscript string `json:"agent_transcript,omitempty" jsonschema:"the agent's events as plain text, one line per message, tool call or error; only with include_logs"`
+	AgentStdout     string `json:"agent_stdout,omitempty" jsonschema:"the agent's raw event stream; only when the stdout section is asked for"`
+	AgentStderr     string `json:"agent_stderr,omitempty" jsonschema:"the agent's error output; only with include_logs"`
+	Diff            string `json:"diff,omitempty" jsonschema:"the change aidev collected from git; only with include_logs"`
+
+	// The whole size of each returned section, so a cut section is
+	// distinguishable from a short one (research D1).
+	AgentTranscriptTotalBytes int `json:"agent_transcript_total_bytes,omitempty" jsonschema:"size of the whole transcript"`
+	AgentStdoutTotalBytes     int `json:"agent_stdout_total_bytes,omitempty" jsonschema:"size of the whole raw event stream"`
+	AgentStderrTotalBytes     int `json:"agent_stderr_total_bytes,omitempty" jsonschema:"size of the whole error output"`
+	DiffTotalBytes            int `json:"diff_total_bytes,omitempty" jsonschema:"size of the whole diff"`
+	NextOffset                int `json:"next_offset,omitempty" jsonschema:"set when some section has more past this page: pass it back as offset to read on"`
 
 	StillRunning bool `json:"still_running" jsonschema:"true if the task is currently executing"`
 }
@@ -407,22 +420,47 @@ func (s *Server) getResult(ctx context.Context, _ *sdk.CallToolRequest, in GetRe
 		return nil, GetResultOutput{}, err
 	}
 
-	result, err := s.buildResult(ctx, st, t.ID, in.IncludeLogs)
+	req, logs, err := parseLogRequest(in.IncludeLogs, in.Sections, in.Offset, in.MaxBytes)
+	if err != nil {
+		return nil, GetResultOutput{}, err
+	}
+
+	result, err := s.buildResult(ctx, st, t.ID, logs && req.wants(sectionVerification))
 	if err != nil {
 		return nil, GetResultOutput{}, err
 	}
 	out := GetResultOutput{Result: result, StillRunning: t.Status.Active()}
+	if !logs {
+		return nil, out, nil
+	}
 
-	if in.IncludeLogs {
-		if attempt, err := st.LatestAttempt(ctx, t.ID); err == nil {
-			if runs, err := st.ListWorkerRuns(ctx, attempt.ID); err == nil && len(runs) > 0 {
-				latest := runs[len(runs)-1]
-				out.AgentStdout = latest.Stdout
-				out.AgentStderr = latest.Stderr
-				out.Diff = latest.Diff
+	p := &pager{req: req}
+	if req.wants(sectionVerification) {
+		for i := range out.Result.Verification {
+			v := &out.Result.Verification[i]
+			v.Stdout, v.StdoutTotalBytes = p.page(v.Stdout)
+			v.Stderr, v.StderrTotalBytes = p.page(v.Stderr)
+		}
+	}
+	if attempt, err := st.LatestAttempt(ctx, t.ID); err == nil {
+		if runs, err := st.ListWorkerRuns(ctx, attempt.ID); err == nil && len(runs) > 0 {
+			latest := runs[len(runs)-1]
+			if req.wants(sectionTranscript) {
+				transcript, _ := agent.CondenseTranscript(latest.Backend, latest.Stdout)
+				out.AgentTranscript, out.AgentTranscriptTotalBytes = p.page(transcript)
+			}
+			if req.wants(sectionStdout) {
+				out.AgentStdout, out.AgentStdoutTotalBytes = p.page(latest.Stdout)
+			}
+			if req.wants(sectionStderr) {
+				out.AgentStderr, out.AgentStderrTotalBytes = p.page(latest.Stderr)
+			}
+			if req.wants(sectionDiff) {
+				out.Diff, out.DiffTotalBytes = p.page(latest.Diff)
 			}
 		}
 	}
+	out.NextOffset = p.nextOffset()
 	return nil, out, nil
 }
 
