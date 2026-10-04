@@ -808,10 +808,7 @@ func (r *run) prepareWorktree(ctx context.Context) error {
 		return err
 	}
 
-	baseRef := r.task.BaseRef
-	if baseRef == "" {
-		baseRef = project.DefaultBranch
-	}
+	baseRef := effectiveBaseRef(r.task.BaseRef, project.DefaultBranch)
 
 	wt, err := r.o.Git.Create(ctx, git.CreateRequest{
 		Repository: repo,
@@ -866,6 +863,20 @@ func (r *run) prepareWorktree(ctx context.Context) error {
 		return appendEvent(writeCtx, tx, r.task.ID, &r.attempt.ID, event.TypeWorktreeCreated, payload)
 	}); err != nil {
 		return err
+	}
+
+	// The base ref is resolved now, not when the task was created (research
+	// D2). A ref that moved in between is not an error — rebasing work onto
+	// the latest code is often exactly what was wanted — but the agent is
+	// starting from code the task's author never saw, so the reviewer is told.
+	if at := r.task.BaseCommitAtCreate; at != "" && at != wt.BaseCommit {
+		r.log.WarnContext(ctx, "the base ref moved since the task was created",
+			"base_ref", baseRef, "at_create", at, "at_run", wt.BaseCommit)
+		r.emit(ctx, event.TypeBaseMoved, map[string]any{
+			"base_ref":  baseRef,
+			"at_create": at,
+			"at_run":    wt.BaseCommit,
+		})
 	}
 
 	// Baseline for the containment check: taken now, after the worktree exists

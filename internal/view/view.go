@@ -39,6 +39,7 @@ type Task struct {
 	ExpectFailOnBase   bool     `json:"expect_fail_on_base" jsonschema:"whether the verification commands must already fail on the base commit: they run there before the agent starts, and a pass means they cannot distinguish before from after, so the attempt fails without calling the agent"`
 	MaxRetries         int      `json:"max_retries" jsonschema:"recorded for a future retry feature; aidev does not retry"`
 	BaseRef            string   `json:"base_ref,omitempty" jsonschema:"git ref the task's branch starts from"`
+	BaseCommitAtCreate string   `json:"base_commit_at_create,omitempty" jsonschema:"the commit the base ref pointed at when the task was created"`
 	TimeoutSeconds     int      `json:"timeout_seconds,omitempty" jsonschema:"per-task agent timeout; 0 means the configured default"`
 	ProjectID          string   `json:"project_id" jsonschema:"the repository this task belongs to"`
 	CreatedAt          string   `json:"created_at" jsonschema:"RFC3339 timestamp"`
@@ -77,6 +78,7 @@ func NewTask(t task.Task) Task {
 		ExpectFailOnBase:   t.ExpectFailOnBase,
 		MaxRetries:         t.MaxRetries,
 		BaseRef:            t.BaseRef,
+		BaseCommitAtCreate: t.BaseCommitAtCreate,
 		TimeoutSeconds:     int(t.Timeout.Seconds()),
 		ProjectID:          t.ProjectID.String(),
 		CreatedAt:          t.CreatedAt.UTC().Format(time.RFC3339),
@@ -244,7 +246,12 @@ type Result struct {
 	// the run, but a reviewer must be able to see that what passed was also
 	// written in the same attempt (research §7b tier 1).
 	TestsModified []string `json:"tests_modified,omitempty" jsonschema:"changed paths that look like the tests judging this attempt; a report so a reviewer can see that what passed was also written in the same attempt"`
-	Message       string   `json:"message,omitempty" jsonschema:"one-line human summary of the outcome"`
+	// BaseMoved is a warning, like TestsModified: the attempt ran, but from a
+	// different commit than the base ref named when the task was created
+	// (research D2), so the reviewer is reading work on code the task's
+	// author may never have seen.
+	BaseMoved bool   `json:"base_moved,omitempty" jsonschema:"true when the base ref pointed at a different commit when the attempt started than when the task was created; compare task.base_commit_at_create with worktree.base_commit"`
+	Message   string `json:"message,omitempty" jsonschema:"one-line human summary of the outcome"`
 }
 
 // Event is one entry of a task's history.
@@ -336,6 +343,8 @@ func NewResult(
 	}
 	if worktree != nil {
 		result.Worktree = NewWorktree(*worktree)
+		result.BaseMoved = t.BaseCommitAtCreate != "" && worktree.BaseCommit != "" &&
+			worktree.BaseCommit != t.BaseCommitAtCreate
 	}
 	if approval != nil {
 		result.Approval = NewApproval(*approval)

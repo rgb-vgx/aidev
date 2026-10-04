@@ -248,6 +248,7 @@ Reads the outcome of a task's most recent attempt.
 | `result.verification` | one entry per step: command, status, exit code. **This is the evidence** |
 | `result.worktree` | path, branch, and whether it was `REMOVED` or `RETAINED` |
 | `result.approval` | the most recent approval record |
+| `result.base_moved` | true when the base ref pointed at a different commit when the attempt started than when the task was created (`result.task.base_commit_at_create` vs `result.worktree.base_commit`) — the work was done on code the task's author may not have seen; absent otherwise |
 | `result.tests_modified` | changed paths that look like the tests judging this attempt — a report so a reviewer can see that what passed was also written in the same attempt; absent when the attempt left the tests alone |
 | `still_running` | the task is currently executing |
 | `agent_transcript`, `agent_stderr`, `diff` | only with `include_logs`, each a window of at most `max_bytes` |

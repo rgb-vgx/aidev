@@ -228,3 +228,38 @@ func TestTail(t *testing.T) {
 		t.Errorf("Tail should leave short input alone, got %q", got)
 	}
 }
+
+// base_moved is a warning computed from two recorded commits (research D2).
+// A task with nothing recorded at creation predates the field and must never
+// be reported as moved: there is nothing to compare against.
+func TestResultBaseMoved(t *testing.T) {
+	cases := []struct {
+		name        string
+		atCreate    string
+		worktreeAt  string
+		hasWorktree bool
+		want        bool
+	}{
+		{"same commit", "aaa", "aaa", true, false},
+		{"ref moved", "aaa", "bbb", true, true},
+		{"created before the field existed", "", "bbb", true, false},
+		{"never ran", "aaa", "", false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var wt *task.Worktree
+			if tc.hasWorktree {
+				wt = &task.Worktree{BaseCommit: tc.worktreeAt, Status: task.WorktreeActive}
+			}
+			result := NewResult(task.Task{Ref: "TASK-000001", BaseCommitAtCreate: tc.atCreate},
+				nil, nil, nil, wt, nil, nil, "", false)
+			if result.BaseMoved != tc.want {
+				t.Errorf("BaseMoved = %v, want %v", result.BaseMoved, tc.want)
+			}
+			encoded, _ := json.Marshal(result)
+			if present := strings.Contains(string(encoded), `"base_moved"`); present != tc.want {
+				t.Errorf("base_moved key present = %v, want %v: %s", present, tc.want, encoded)
+			}
+		})
+	}
+}

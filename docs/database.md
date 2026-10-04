@@ -71,6 +71,7 @@ The unit of delegated work.
 | `max_retries` | recorded for a future retry feature; the MVP never retries |
 | `requires_approval` | the task's own gate (the creator's ask); OR'd at run time with the project's policy, never overwritten by it |
 | `expect_fail_on_base` | when true the verification commands run on the base commit before the agent starts, and a pass there fails the attempt with kind VERIFICATION without ever calling the agent (migration 0012) |
+| `base_commit_at_create` | the commit the base ref (`base_ref`, else the project's default branch) pointed at when the task was created. The run resolves the ref again; when the worktree starts from a different commit it records `task.base_moved` and the result reports `base_moved`, but goes ahead on the current commit. `''` for tasks created before the column existed, never reported as moved (migration 0015) |
 | `base_ref` | git ref to branch from; empty means the project default |
 | `timeout_seconds` | 0 means "use the configured default" |
 

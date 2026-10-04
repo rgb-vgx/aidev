@@ -122,6 +122,13 @@ type Task struct {
 	// project's default branch.
 	BaseRef string
 
+	// BaseCommitAtCreate is the commit the base ref pointed at when the task
+	// was created (research D2). The ref is resolved again when the task
+	// runs; if it has moved in between, the work starts from code the task's
+	// author never saw, and the run says so. Empty for tasks created before
+	// the field existed.
+	BaseCommitAtCreate string
+
 	// Timeout bounds the agent run. Zero means "use the configured default".
 	Timeout time.Duration
 
@@ -151,7 +158,10 @@ type NewTaskInput struct {
 	RequiresApproval bool
 	ExpectFailOnBase bool
 	BaseRef          string
-	Timeout          time.Duration
+	// BaseCommitAtCreate is resolved by the caller, which has the repository;
+	// this package does not touch git.
+	BaseCommitAtCreate string
+	Timeout            time.Duration
 }
 
 // ValidationError reports one or more rejected fields.
@@ -309,6 +319,7 @@ func New(input NewTaskInput, defaultAgent string) (Task, error) {
 		RequiresApproval:   input.RequiresApproval,
 		ExpectFailOnBase:   input.ExpectFailOnBase,
 		BaseRef:            strings.TrimSpace(input.BaseRef),
+		BaseCommitAtCreate: strings.TrimSpace(input.BaseCommitAtCreate),
 		Timeout:            input.Timeout,
 		CreatedAt:          now,
 		UpdatedAt:          now,

@@ -107,6 +107,15 @@ func (o *Orchestrator) CreateTask(ctx context.Context, in CreateTaskInput) (task
 		return task.Task{}, err
 	}
 
+	// Record what the base ref points at now (research D2), resolved by the
+	// same rule the run uses — the task's ref, else the project's default
+	// branch — so the two commits are comparable and a ref that moved in
+	// between is a real move, not two different rules disagreeing.
+	baseAtCreate, err := o.Git.ResolveCommit(ctx, repo, effectiveBaseRef(in.BaseRef, project.DefaultBranch))
+	if err != nil {
+		return task.Task{}, err
+	}
+
 	// Resolve the mode now and freeze it into the task: an explicit choice
 	// wins, otherwise the project's default applies as of this moment.
 	// Later changes to the project row affect only tasks created after
@@ -129,10 +138,7 @@ func (o *Orchestrator) CreateTask(ctx context.Context, in CreateTaskInput) (task
 	// rather than letting such a task fail, or silently stop protecting,
 	// with a result nobody can explain.
 	if mode == task.VerificationClean || in.ExpectFailOnBase {
-		base, err := o.Git.ResolveCommit(ctx, repo, in.BaseRef)
-		if err != nil {
-			return task.Task{}, err
-		}
+		base := baseAtCreate
 		if found, path, err := o.Git.HasGitlinks(ctx, repo, base); err != nil {
 			return task.Task{}, err
 		} else if found {
@@ -167,6 +173,7 @@ func (o *Orchestrator) CreateTask(ctx context.Context, in CreateTaskInput) (task
 		RequiresApproval:   in.RequiresApproval,
 		ExpectFailOnBase:   in.ExpectFailOnBase,
 		BaseRef:            in.BaseRef,
+		BaseCommitAtCreate: baseAtCreate,
 		Timeout:            in.Timeout,
 	}, o.Config.OpenCodeAgent)
 	if err != nil {
@@ -194,6 +201,7 @@ func (o *Orchestrator) CreateTask(ctx context.Context, in CreateTaskInput) (task
 			"verification":        commands,
 			"verification_mode":   string(stored.VerificationMode),
 			"repo_path":           repo.Path,
+			"base_commit":         stored.BaseCommitAtCreate,
 		})
 	})
 	if err != nil {
@@ -208,4 +216,15 @@ func (o *Orchestrator) CreateTask(ctx context.Context, in CreateTaskInput) (task
 		"verification_steps", len(created.Verification))
 
 	return created, nil
+}
+
+// effectiveBaseRef is the ref a task's worktree branches from: the task's own
+// base_ref, or the project's default branch when it names none. CreateTask
+// and the run both use it, so the commit recorded at creation and the one
+// the worktree starts from are resolved the same way.
+func effectiveBaseRef(taskRef, defaultBranch string) string {
+	if strings.TrimSpace(taskRef) != "" {
+		return taskRef
+	}
+	return defaultBranch
 }

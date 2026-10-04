@@ -157,6 +157,7 @@ aidev worktree remove TASK-000001 --force</code></pre>
 <tr><td><code>task.worktree_created</code></td><td>The isolated worktree was created for the attempt.</td></tr>
 <tr><td><code>task.worktree_removed</code></td><td>The worktree was removed, on success or by an operator with <code>aidev worktree remove</code>.</td></tr>
 <tr><td><code>task.worktree_retained</code></td><td>The worktree was kept for inspection after failure or cancellation.</td></tr>
+<tr><td><code>task.base_moved</code></td><td>The base ref pointed at a different commit when the run began than when the task was created: someone moved it in between. The run goes ahead on the current commit; the payload records <code>base_ref</code>, <code>at_create</code> and <code>at_run</code>, and the result carries <code>base_moved</code>.</td></tr>
 <tr><td><code>task.worker_started</code></td><td>The agent subprocess started in the worktree.</td></tr>
 <tr><td><code>task.worker_completed</code></td><td>The agent subprocess finished, with its exit classification in the payload.</td></tr>
 <tr><td><code>task.base_check_completed</code></td><td>The pre-agent base check of an <code>expect_fail_on_base</code> task finished; the payload's <code>passed</code> says whether the commands already pass on the base commit. When they do, the attempt fails with kind VERIFICATION and the agent is never called.</td></tr>

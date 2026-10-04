@@ -31,6 +31,11 @@ const (
 	TypeWorktreeCreated  Type = "task.worktree_created"
 	TypeWorktreeRemoved  Type = "task.worktree_removed"
 	TypeWorktreeRetained Type = "task.worktree_retained"
+	// TypeBaseMoved warns that the base ref resolved to a different commit
+	// when the run began than when the task was created (research D2): the
+	// agent works from code the task's author may never have seen. The run
+	// continues from the current commit; the event is for the reviewer.
+	TypeBaseMoved Type = "task.base_moved"
 
 	// Agent execution.
 	TypeWorkerStarted   Type = "task.worker_started"
@@ -80,6 +85,7 @@ func AllTypes() []Type {
 		TypeTaskCreated, TypeTaskReady, TypeTaskStarted, TypeTaskSucceeded,
 		TypeTaskFailed, TypeTaskCancelled,
 		TypeWorktreeCreated, TypeWorktreeRemoved, TypeWorktreeRetained,
+		TypeBaseMoved,
 		TypeWorkerStarted, TypeWorkerCompleted,
 		TypeBaseCheckCompleted,
 		TypeVerificationStarted, TypeVerificationStepRan, TypeVerificationCompleted,
