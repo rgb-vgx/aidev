@@ -37,6 +37,12 @@ const (
 	TypeWorkerCompleted Type = "task.worker_completed"
 
 	// Independent verification.
+	// TypeBaseCheckCompleted reports the pre-agent pass of an
+	// expect_fail_on_base task (research B3): the same commands, run on the
+	// base commit before the agent touched anything. When its payload says
+	// passed, the attempt fails — the commands cannot tell before from after
+	// — and the agent is never called.
+	TypeBaseCheckCompleted      Type = "task.base_check_completed"
 	TypeVerificationStarted     Type = "task.verification_started"
 	TypeVerificationStepRan     Type = "task.verification_step_completed"
 	TypeVerificationCompleted   Type = "task.verification_completed"
@@ -69,6 +75,7 @@ func AllTypes() []Type {
 		TypeTaskFailed, TypeTaskCancelled,
 		TypeWorktreeCreated, TypeWorktreeRemoved, TypeWorktreeRetained,
 		TypeWorkerStarted, TypeWorkerCompleted,
+		TypeBaseCheckCompleted,
 		TypeVerificationStarted, TypeVerificationStepRan, TypeVerificationCompleted,
 		TypeVerificationIntercepted, TypeVerificationTestsModified,
 		TypeApprovalRequired, TypeApprovalGranted, TypeApprovalDenied,

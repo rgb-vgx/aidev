@@ -158,6 +158,7 @@ func TestTaskRoundTrip(t *testing.T) {
 		in.Priority = 50
 		in.MaxRetries = 2
 		in.RequiresApproval = true
+		in.ExpectFailOnBase = true
 		in.BaseRef = "main"
 		in.Timeout = 15 * time.Minute
 		in.Verification = []task.VerificationStep{
@@ -183,7 +184,7 @@ func TestTaskRoundTrip(t *testing.T) {
 	if got.Title != created.Title || got.AcceptanceCriteria != created.AcceptanceCriteria {
 		t.Errorf("text fields did not survive the round trip: %+v", got)
 	}
-	if got.Priority != 50 || got.MaxRetries != 2 || !got.RequiresApproval || got.BaseRef != "main" {
+	if got.Priority != 50 || got.MaxRetries != 2 || !got.RequiresApproval || !got.ExpectFailOnBase || got.BaseRef != "main" {
 		t.Errorf("scalar fields did not survive: %+v", got)
 	}
 	if got.Timeout != 15*time.Minute {

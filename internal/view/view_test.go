@@ -25,6 +25,7 @@ func TestTaskJSONShape(t *testing.T) {
 		Agent:            "build",
 		Priority:         10,
 		RequiresApproval: true,
+		ExpectFailOnBase: true,
 		Timeout:          90 * time.Second,
 		Verification: []task.VerificationStep{
 			{Command: "go", Args: []string{"test", "./..."}},
@@ -45,7 +46,8 @@ func TestTaskJSONShape(t *testing.T) {
 
 	for _, key := range []string{
 		"ref", "id", "status", "title", "agent", "priority",
-		"verification", "protected_paths", "requires_approval", "project_id", "created_at", "updated_at",
+		"verification", "protected_paths", "requires_approval", "expect_fail_on_base",
+		"project_id", "created_at", "updated_at",
 	} {
 		if _, ok := decoded[key]; !ok {
 			t.Errorf("JSON is missing %q: %s", key, encoded)
@@ -62,6 +64,9 @@ func TestTaskJSONShape(t *testing.T) {
 	}
 	if decoded["timeout_seconds"].(float64) != 90 {
 		t.Errorf("timeout_seconds = %v, want 90", decoded["timeout_seconds"])
+	}
+	if decoded["expect_fail_on_base"] != true {
+		t.Errorf("expect_fail_on_base = %v, want true visible to a reviewer", decoded["expect_fail_on_base"])
 	}
 }
 

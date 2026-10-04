@@ -36,6 +36,7 @@ type Task struct {
 	SetupSteps         []string `json:"setup_steps,omitempty" jsonschema:"commands that run before verification to prepare the checkout; absent when the task needs no preparation"`
 	VerificationMode   string   `json:"verification_mode" jsonschema:"where verification runs: in_place (in the agent's worktree) or clean (a fresh checkout of the result), frozen at creation"`
 	RequiresApproval   bool     `json:"requires_approval" jsonschema:"whether a human decision is required before the task may run"`
+	ExpectFailOnBase   bool     `json:"expect_fail_on_base" jsonschema:"whether the verification commands must already fail on the base commit: they run there before the agent starts, and a pass means they cannot distinguish before from after, so the attempt fails without calling the agent"`
 	MaxRetries         int      `json:"max_retries" jsonschema:"recorded for a future retry feature; aidev does not retry"`
 	BaseRef            string   `json:"base_ref,omitempty" jsonschema:"git ref the task's branch starts from"`
 	TimeoutSeconds     int      `json:"timeout_seconds,omitempty" jsonschema:"per-task agent timeout; 0 means the configured default"`
@@ -73,6 +74,7 @@ func NewTask(t task.Task) Task {
 		SetupSteps:         setup,
 		VerificationMode:   t.VerificationMode.String(),
 		RequiresApproval:   t.RequiresApproval,
+		ExpectFailOnBase:   t.ExpectFailOnBase,
 		MaxRetries:         t.MaxRetries,
 		BaseRef:            t.BaseRef,
 		TimeoutSeconds:     int(t.Timeout.Seconds()),

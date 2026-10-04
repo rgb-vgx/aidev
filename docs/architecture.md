@@ -141,6 +141,12 @@ something failed* without the domain knowing anything about OpenCode.
               (+ submodules, if the
                project asks for them)
                      │
+        base check, when the task asks for it:
+        commands already pass on the base
+        commit ─────────────────────── FAILED (VERIFICATION)
+        (agent never called; emits
+         task.base_check_completed)
+                     │
               run agent in it ──────── failure ──▶ FAILED (agent's own kind)
                      │                             worktree RETAINED
               collect diff from git

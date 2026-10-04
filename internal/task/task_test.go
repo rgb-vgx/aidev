@@ -130,6 +130,22 @@ func TestProtectedPathsAreCarriedThrough(t *testing.T) {
 	}
 }
 
+// The red-before-green flag travels with the task the same way: the worker
+// reads it off the run's task to decide whether to check the base commit
+// before calling the agent, so a flag dropped here would silently skip the
+// gate (research B3).
+func TestExpectFailOnBaseIsCarriedThrough(t *testing.T) {
+	in := validInput()
+	in.ExpectFailOnBase = true
+	tk, err := New(in, "build")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if !tk.ExpectFailOnBase {
+		t.Error("ExpectFailOnBase = false, want the input preserved")
+	}
+}
+
 func TestNewTaskReportsEveryProblemAtOnce(t *testing.T) {
 	in := NewTaskInput{} // no project, no title, no verification
 	_, err := New(in, "")

@@ -70,6 +70,7 @@ The unit of delegated work.
 | `verification_mode` | where this task's verification runs: `in_place` or `clean`, frozen at creation from the caller's choice or the project's default (migration 0011) |
 | `max_retries` | recorded for a future retry feature; the MVP never retries |
 | `requires_approval` | the task's own gate (the creator's ask); OR'd at run time with the project's policy, never overwritten by it |
+| `expect_fail_on_base` | when true the verification commands run on the base commit before the agent starts, and a pass there fails the attempt with kind VERIFICATION without ever calling the agent (migration 0012) |
 | `base_ref` | git ref to branch from; empty means the project default |
 | `timeout_seconds` | 0 means "use the configured default" |
 
@@ -168,6 +169,11 @@ which half a row belongs to, so paging on the index needs no special case
 `SKIPPED` is an explicit status for a step that never ran because an earlier one
 failed. Without it, a missing row would be ambiguous between "skipped" and
 "passed but not recorded".
+
+The pre-agent base check of an `expect_fail_on_base` task writes **no** rows
+here: `step_index` is unique per attempt and belongs to the post-agent verdict,
+so that earlier pass is recorded as the `task.base_check_completed` event
+instead (migration 0012).
 
 ### `approvals`
 Human decisions gating a task.

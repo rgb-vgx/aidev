@@ -197,8 +197,8 @@ func TestCreateTaskSchemaRequiresVerification(t *testing.T) {
 			t.Errorf("%q is not required by the schema; required = %v", want, decoded.Required)
 		}
 	}
-	for _, optional := range []string{"description", "requires_approval", "base_ref", "protected_paths",
-		"setup_steps", "verification_mode"} {
+	for _, optional := range []string{"description", "requires_approval", "expect_fail_on_base",
+		"base_ref", "protected_paths", "setup_steps", "verification_mode"} {
 		if _, ok := decoded.Properties[optional]; !ok {
 			t.Errorf("schema has no %q property", optional)
 		}

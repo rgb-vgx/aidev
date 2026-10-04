@@ -114,6 +114,7 @@ Creates a task. Does **not** run it.
 | `agent` | string | no | agent to use; defaults to `build` |
 | `priority` | integer | no | higher runs first; default 0 |
 | `requires_approval` | boolean | no | gate the task behind a human decision; the project's own policy can gate a task the same way without this |
+| `expect_fail_on_base` | boolean | no | run the verification commands on the base commit before the agent starts; if they already pass there they cannot distinguish before from after, so the attempt fails with kind VERIFICATION and the agent is never called (for bug-fix tasks) |
 | `base_ref` | string | no | git ref to branch from; defaults to the repository's current branch |
 | `timeout_seconds` | integer | no | bound this task's agent run |
 | `hardness` | string | no | how hard the task is: TRIVIAL, STANDARD or HARD; picks the model from `agent.routing` unless `model` is given |
@@ -140,6 +141,10 @@ through as literal arguments.
 - a `verification_mode` other than `in_place` or `clean`, or a `setup_steps`
   entry that is empty or not argv — the mode decides where the checks run, so
   a typo must not pick a place nobody chose
+- the repository pins a submodule (a gitlink) while `verification_mode` is
+  `clean` or `expect_fail_on_base` is set — both run in detached checkouts,
+  which cannot hold submodule content, so the checks would go red for the
+  wrong reason
 - `base_ref` does not resolve — caught now rather than at worktree creation
 - the agent name is unknown to the backend. This check exists because OpenCode
   accepts an unknown name, warns, silently uses its default and exits 0

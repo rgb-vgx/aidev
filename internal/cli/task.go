@@ -116,6 +116,7 @@ func taskCreate(ctx context.Context, env *Env, args []string) error {
 	priority := fs.Int("priority", 0, "higher runs first")
 	maxRetries := fs.Int("max-retries", 0, "recorded for a future retry feature; the MVP never retries")
 	requiresApproval := fs.Bool("requires-approval", false, "do not run until a human approves")
+	expectFailOnBase := fs.Bool("expect-fail-on-base", false, "run the verification commands on the base commit before the agent starts; fail immediately if they already pass, because commands that pass on the base cannot distinguish before from after (for bug-fix tasks)")
 	baseRef := fs.String("base-ref", "", "git ref to branch from (default: the project's default branch)")
 	timeout := fs.Duration("timeout", 0, "bound this task's agent run (default: tasks.timeout in conf.json)")
 	asJSON := fs.Bool("json", false, "print the created task as JSON")
@@ -185,6 +186,7 @@ flags:
 		VerificationMode:   *verifyMode,
 		MaxRetries:         *maxRetries,
 		RequiresApproval:   *requiresApproval,
+		ExpectFailOnBase:   *expectFailOnBase,
 		BaseRef:            *baseRef,
 		Timeout:            *timeout,
 	})

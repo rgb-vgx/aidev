@@ -426,6 +426,17 @@ func (r *run) execute(ctx context.Context) (outcome Outcome, retErr error) {
 		outcome, retErr = r.fail(ctx, task.FailureWorktree, err)
 		return outcome, retErr
 	}
+	// The red-before-green gate (research B3): on a task that asked for it,
+	// the verification commands run on the base commit first, while the
+	// worktree still is the base commit. A pass there means the commands
+	// cannot distinguish before from after, so the run stops without ever
+	// calling the agent.
+	if r.task.ExpectFailOnBase {
+		if out, stopped, err := r.baseCheck(ctx); stopped || err != nil {
+			outcome, retErr = out, err
+			return outcome, retErr
+		}
+	}
 	if err := r.runAgent(ctx); err != nil {
 		outcome, retErr = r.fail(ctx, r.workerFailureKind(), err)
 		return outcome, retErr
@@ -1032,6 +1043,93 @@ func (r *run) checkContainment(ctx context.Context) error {
 	r.emit(ctx, event.TypeContainmentBreach, payload)
 
 	return fmt.Errorf("the agent modified state shared with the main repository: %s", strings.Join(reasons, "; "))
+}
+
+// baseCheck runs the task's verification on the base commit before the agent
+// touches anything (research B3, the red-before-green gate). Commands that
+// already pass on the base cannot tell the before state from the after state:
+// such a task would report success while nothing changed, so the attempt stops
+// here — FAILED (VERIFICATION), agent never called. Returns stopped=false when
+// the base is red and the run may proceed to the agent.
+//
+// The pass runs in a detached checkout of the base commit, not in the agent's
+// worktree: setup steps leave artefacts (npm ci, a touched fixture), and an
+// artefact present before the agent ran would later read as a change the agent
+// made — tripping interception or the protected paths on evidence aidev itself
+// produced. The checkout is removed on every path; it is scaffolding, like
+// clean verification's.
+//
+// Plumbing failures fail closed: a base check that could not run has not
+// established that the base is red, and silently skipping the gate would be
+// the exact bug this gate exists to prevent.
+func (r *run) baseCheck(ctx context.Context) (Outcome, bool, error) {
+	ctx, span := otel.Tracer("aidev").Start(ctx, "aidev.base_check")
+	defer span.End()
+
+	wt, err := r.o.Git.CreateDetached(ctx, r.worktree.Repository(),
+		"basecheck-"+r.attempt.ID.String(), r.worktree.BaseCommit)
+	if err != nil {
+		span.SetAttributes(attribute.Bool("aidev.base_check.passed", false))
+		out, failErr := r.fail(ctx, task.FailureWorktree, fmt.Errorf("base check not run: %w", err))
+		return out, true, failErr
+	}
+	defer func() {
+		// Always removed — success, failure and cancellation alike. Not the
+		// caller's context either: a cancelled task must still lose its
+		// scaffolding, or every cancelled run leaks a worktree. Force is
+		// right — running the checks left build artefacts in it.
+		writeCtx, cancel := writeContext(ctx)
+		defer cancel()
+		if err := r.o.Git.Remove(writeCtx, wt, true); err != nil {
+			r.log.ErrorContext(ctx, "could not remove the temporary base-check worktree",
+				"path", wt.Path, "error", err.Error())
+		}
+	}()
+
+	report, err := r.o.Verifier.Run(ctx, verification.Request{
+		AttemptID:  r.attempt.ID,
+		WorkingDir: wt.Path,
+		SetupSteps: r.task.SetupSteps,
+		Steps:      r.task.Verification,
+	})
+	if err != nil {
+		// The pass never ran, so it did not prove the base is red.
+		span.SetAttributes(attribute.Bool("aidev.base_check.passed", false))
+		out, failErr := r.fail(ctx, task.FailureInternal, fmt.Errorf("base check not run: %w", err))
+		return out, true, failErr
+	}
+	span.SetAttributes(attribute.Bool("aidev.base_check.passed", report.Passed))
+	r.traceVerificationSteps(ctx, report)
+
+	// One event for the whole pass, on both paths: a reviewer must be able to
+	// see that the gate ran and what it found, not only that it fired. The
+	// steps are deliberately not persisted as verification_runs rows — the
+	// UNIQUE (attempt_id, step_index) sequence belongs to the post-agent
+	// verdict, and on the firing path the attempt ends before that verdict
+	// ever exists, so the payload's summary is the record.
+	r.emit(ctx, event.TypeBaseCheckCompleted, map[string]any{
+		"passed":       report.Passed,
+		"failure_kind": string(report.FailureKind),
+		"summary":      report.Summary(),
+		"duration_ms":  report.Duration.Milliseconds(),
+	})
+	r.log.InfoContext(ctx, "base check finished",
+		"passed", report.Passed,
+		logging.FieldFailureKind, string(report.FailureKind),
+		logging.FieldDurationMS, report.Duration.Milliseconds())
+
+	if report.Passed {
+		// Carried into the failed payload and the outcome, so a reader sees
+		// what "already passes on the base" meant without re-running it.
+		r.report = &report
+		out, failErr := r.fail(ctx, task.FailureVerification, fmt.Errorf(
+			"verification already passes on the base commit: the commands do not distinguish "+
+				"before from after (%s)", report.Summary()))
+		return out, true, failErr
+	}
+	r.log.InfoContext(ctx, "base is red as required; the commands can tell before from after",
+		"summary", report.Summary())
+	return Outcome{}, false, nil
 }
 
 // verify runs the task's own commands and decides the outcome.

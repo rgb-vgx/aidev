@@ -118,6 +118,7 @@ type CreateTaskInput struct {
 	Agent              string `json:"agent,omitempty" jsonschema:"agent to use; defaults to the configured one (build)"`
 	Priority           int    `json:"priority,omitempty" jsonschema:"higher runs first; defaults to 0"`
 	RequiresApproval   bool   `json:"requires_approval,omitempty" jsonschema:"when true the task will not run until a human approves it"`
+	ExpectFailOnBase   bool   `json:"expect_fail_on_base,omitempty" jsonschema:"when true the verification commands run on the base commit before the agent starts; if they already pass there they cannot distinguish before from after, so the attempt fails with kind VERIFICATION and the agent is never called (for bug-fix tasks)"`
 	BaseRef            string `json:"base_ref,omitempty" jsonschema:"git ref the task's branch starts from; defaults to the repository's current branch"`
 	TimeoutSeconds     int    `json:"timeout_seconds,omitempty" jsonschema:"bound this task's agent run; defaults to the configured timeout"`
 	Hardness           string `json:"hardness,omitempty" jsonschema:"how hard the task is: TRIVIAL, STANDARD or HARD, case-insensitive; picks the model from agent.routing in conf.json unless model is given"`
@@ -163,6 +164,7 @@ func (s *Server) createTask(ctx context.Context, _ *sdk.CallToolRequest, in Crea
 		SetupSteps:         setupSteps,
 		VerificationMode:   in.VerificationMode,
 		RequiresApproval:   in.RequiresApproval,
+		ExpectFailOnBase:   in.ExpectFailOnBase,
 		BaseRef:            in.BaseRef,
 		Hardness:           in.Hardness,
 		Model:              in.Model,

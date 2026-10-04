@@ -30,6 +30,12 @@ func writeTaskDetail(w io.Writer, t task.Task) {
 	if t.RequiresApproval {
 		fmt.Fprintf(w, "  approval     required\n")
 	}
+	// Shown only when set, like approval: it changes what a run of this task
+	// means — the checks must already fail on the base commit, or the agent
+	// is never called.
+	if t.ExpectFailOnBase {
+		fmt.Fprintf(w, "  base check   must fail before the agent runs\n")
+	}
 	if t.BaseRef != "" {
 		fmt.Fprintf(w, "  base ref     %s\n", t.BaseRef)
 	}

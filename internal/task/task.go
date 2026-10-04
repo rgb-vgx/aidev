@@ -111,6 +111,13 @@ type Task struct {
 
 	RequiresApproval bool
 
+	// ExpectFailOnBase makes the run execute Verification on the base commit
+	// before the agent starts (research B3). Commands that already pass there
+	// cannot tell the before state from the after state — the task would
+	// report success while nothing changed — so the attempt fails immediately
+	// and the agent is never called. For tasks whose point is to fix a bug.
+	ExpectFailOnBase bool
+
 	// BaseRef is the git ref the task's worktree branches from. Empty means the
 	// project's default branch.
 	BaseRef string
@@ -142,6 +149,7 @@ type NewTaskInput struct {
 	VerificationMode VerificationMode
 	MaxRetries       int
 	RequiresApproval bool
+	ExpectFailOnBase bool
 	BaseRef          string
 	Timeout          time.Duration
 }
@@ -299,6 +307,7 @@ func New(input NewTaskInput, defaultAgent string) (Task, error) {
 		VerificationMode:   verificationMode,
 		MaxRetries:         input.MaxRetries,
 		RequiresApproval:   input.RequiresApproval,
+		ExpectFailOnBase:   input.ExpectFailOnBase,
 		BaseRef:            strings.TrimSpace(input.BaseRef),
 		Timeout:            input.Timeout,
 		CreatedAt:          now,

@@ -44,6 +44,10 @@ type CreateTaskInput struct {
 	VerificationMode string
 	MaxRetries       int
 	RequiresApproval bool
+	// ExpectFailOnBase runs the verification commands on the base commit
+	// before the agent is called, and fails the task when they already pass
+	// there: such commands cannot tell before from after (research B3).
+	ExpectFailOnBase bool
 	BaseRef          string
 	Timeout          time.Duration
 }
@@ -117,10 +121,14 @@ func (o *Orchestrator) CreateTask(ctx context.Context, in CreateTaskInput) (task
 
 	// Clean verification cannot honour submodules: the detached checkout of
 	// the snapshot would contain empty directories, and the checks would run
-	// against sources that are not there. Refuse now — with the offending
-	// path — rather than letting every such task fail at verification time
+	// against sources that are not there. The base check of an
+	// expect_fail_on_base task runs in the same kind of detached checkout —
+	// the base commit before the agent ran — so a repository pinning
+	// submodules would make its base pass read red for the wrong reason and
+	// the gate would never fire. Refuse now — with the offending path —
+	// rather than letting such a task fail, or silently stop protecting,
 	// with a result nobody can explain.
-	if mode == task.VerificationClean {
+	if mode == task.VerificationClean || in.ExpectFailOnBase {
 		base, err := o.Git.ResolveCommit(ctx, repo, in.BaseRef)
 		if err != nil {
 			return task.Task{}, err
@@ -128,9 +136,17 @@ func (o *Orchestrator) CreateTask(ctx context.Context, in CreateTaskInput) (task
 		if found, path, err := o.Git.HasGitlinks(ctx, repo, base); err != nil {
 			return task.Task{}, err
 		} else if found {
+			var refused []string
+			if mode == task.VerificationClean {
+				refused = append(refused, "verification mode clean")
+			}
+			if in.ExpectFailOnBase {
+				refused = append(refused, "expect_fail_on_base")
+			}
 			return task.Task{}, fmt.Errorf(
-				"verification mode clean does not support submodules: %s is a gitlink at %s; "+
-					"use in_place verification for this repository", path, base)
+				"%s does not support submodules: %s is a gitlink at %s; "+
+					"the detached checkouts those runs use cannot hold submodule content",
+				strings.Join(refused, " and "), path, base)
 		}
 	}
 
@@ -149,6 +165,7 @@ func (o *Orchestrator) CreateTask(ctx context.Context, in CreateTaskInput) (task
 		VerificationMode:   mode,
 		MaxRetries:         in.MaxRetries,
 		RequiresApproval:   in.RequiresApproval,
+		ExpectFailOnBase:   in.ExpectFailOnBase,
 		BaseRef:            in.BaseRef,
 		Timeout:            in.Timeout,
 	}, o.Config.OpenCodeAgent)
@@ -169,13 +186,14 @@ func (o *Orchestrator) CreateTask(ctx context.Context, in CreateTaskInput) (task
 			commands = append(commands, step.String())
 		}
 		return appendEvent(ctx, tx, stored.ID, nil, event.TypeTaskCreated, map[string]any{
-			"title":             stored.Title,
-			"agent":             stored.Agent,
-			"priority":          stored.Priority,
-			"requires_approval": stored.RequiresApproval,
-			"verification":      commands,
-			"verification_mode": string(stored.VerificationMode),
-			"repo_path":         repo.Path,
+			"title":               stored.Title,
+			"agent":               stored.Agent,
+			"priority":            stored.Priority,
+			"requires_approval":   stored.RequiresApproval,
+			"expect_fail_on_base": stored.ExpectFailOnBase,
+			"verification":        commands,
+			"verification_mode":   string(stored.VerificationMode),
+			"repo_path":           repo.Path,
 		})
 	})
 	if err != nil {
