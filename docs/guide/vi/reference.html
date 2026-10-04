@@ -70,7 +70,7 @@ aidev migrate --json</code></pre>
 <tr><th>Lệnh</th><th>Cờ</th><th>Làm gì</th></tr>
 <tr><td><code>aidev task list</code></td><td><code>--status S,S</code>: các trạng thái muốn lấy, cách nhau bằng phẩy; <code>--repo PATH</code>: chỉ task của kho này; <code>--limit N</code>: số task tối đa; <code>--json</code></td><td>Liệt kê task, mới nhất trước. Trạng thái lạ bị từ chối kèm nêu tên. Kho chưa có task thì kết quả rỗng, không phải lỗi.</td></tr>
 <tr><td><code>aidev task get &lt;task&gt;</code></td><td><code>--json</code></td><td>Xem một task. Nhận mã tham chiếu hoặc UUID.</td></tr>
-<tr><td><code>aidev task run &lt;task&gt;</code></td><td><code>--json</code></td><td>Chạy task tới cùng: tạo worktree git tách biệt, chạy agent trong đó, rồi chạy các lệnh verification và ghi kết quả. Thoát mã khác 0 khi task không thành công. Cửa kiểm duyệt không phải thất bại: nó báo cần con người quyết định rồi thoát 0.</td></tr>
+<tr><td><code>aidev task run &lt;task&gt;</code></td><td><code>--json</code></td><td>Chạy task tới cùng: tạo worktree git tách biệt, chạy agent trong đó, rồi chạy các lệnh verification và ghi kết quả. Thoát mã khác 0 khi task không thành công. Cửa kiểm duyệt không phải thất bại: nó báo cần con người quyết định rồi thoát 0. Mọi lần chạy còn có hạn tổng — timeout của task cộng ngân sách verification cộng biên dự phòng — nên lần chạy treo không thể tồn tại vĩnh viễn. Khi MCP server khởi động lần chạy thì lệnh này chạy như một tiến trình riêng, stderr của nó ghi vào <code>workspace_root/run-logs/</code>.</td></tr>
 </table>
 
 <h3><code>aidev task result</code>, <code>events</code>, <code>cancel</code>, <code>approve</code>, <code>recover</code></h3>

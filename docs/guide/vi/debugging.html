@@ -26,6 +26,7 @@
 <tr><td>Task hỏng và bạn muốn biết vì sao</td><td>Kết quả kèm output đầy đủ</td><td><code>aidev task result TASK-000001 --logs</code></td></tr>
 <tr><td>Task có vẻ kẹt hoặc chậm</td><td>Lịch sử event</td><td><code>aidev task events TASK-000001</code></td></tr>
 <tr><td>Chính aidev in lỗi</td><td>Log trên stderr</td><td>Chạy lại và đọc stderr; đặt <code>log_level</code> thành <code>debug</code> trong <code>conf.json</code></td></tr>
+<tr><td>Công cụ MCP báo lần chạy dừng đột ngột</td><td>Log stderr của chính tiến trình chạy</td><td>Lỗi đã kèm phần cuối log; toàn bộ nằm ở <code>workspace_root/run-logs/TASK-000001-*.log</code></td></tr>
 <tr><td>Bạn muốn lấy các tập tin agent làm dở</td><td>Worktree được giữ lại</td><td><code>aidev worktree list</code></td></tr>
 <tr><td>Task kẹt ở RUNNING sau sự cố</td><td>Khôi phục theo lease</td><td><code>aidev task recover --dry-run</code> rồi <code>aidev task recover</code></td></tr>
 <tr><td>Bạn cần thời gian từng chặng của cả lần chạy</td><td>Tracing</td><td>Đặt <code>tracing.endpoint</code> trong <code>conf.json</code> rồi xem trace</td></tr>
@@ -57,6 +58,8 @@
 grep 'TASK-000001' aidev.log | head -20</code></pre>
 
 <p>Đoạn <code>2&gt;</code> chuyển hướng stderr vào tập tin. Phải làm vậy vì log đi ra stderr chứ không phải stdout. Các trường cần tìm là <code>task_id</code>, <code>attempt_id</code> và <code>worktree_path</code>. Chúng gắn với một logger nằm trong context của chương trình, nên code ở sâu bên trong tự kế thừa mà không cần truyền logger qua từng hàm. Muốn theo một task thì lọc theo mã tham chiếu hoặc id của nó. Muốn theo một lần chạy thì lọc theo id attempt.</p>
+
+<p>Lần chạy khởi động từ MCP server là một tiến trình riêng, và stderr của nó không bao giờ tới terminal của bạn. Nó ghi vào một tập tin log riêng trong <code>workspace_root/run-logs/</code>, mỗi lần chạy một tập tin, đặt tên theo mã task và thời điểm bắt đầu. Khi lần chạy đó chết mà chưa ghi được kết thúc nào thì phần cuối tập tin đó nằm ngay trong thông báo lỗi; mở chính tập tin để đọc phần còn lại.</p>
 
 <p><code>log_level</code> điều khiển lượng log in ra. Các giá trị cho phép là <code>debug</code>, <code>info</code>, <code>warn</code> và <code>error</code>. Mặc định là <code>info</code>. Đặt <code>log_level</code> thành <code>debug</code> trong <code>conf.json</code> khi cần bức tranh đầy đủ, ví dụ task hỏng theo cách mà kết quả không giải thích được. Giá trị lạ làm khởi động thất bại kèm thông báo nêu các giá trị cho phép. aidev không bao giờ ghi bí mật vào log: chuỗi kết nối được che trước khi in hoặc ghi, và môi trường đưa cho tiến trình con không bao giờ bị ghi lại.</p>
 

@@ -445,7 +445,8 @@ server starts configured. Eight tools become available:
 | `aidev_approve_task` | a human releases a gated task; off unless `mcp.allow_approval` is set |
 
 A run takes minutes, so `aidev_run_task` waits a bounded time and then returns with
-`still_running: true` while the task continues; the planner polls
+`still_running: true` while the task continues — as a separate `aidev task run`
+process, it survives even this server exiting; the planner polls
 `aidev_get_task_result`. The field to read is `succeeded`, which is true only when
 aidev's own verification passed.
 

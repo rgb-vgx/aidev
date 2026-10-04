@@ -8,6 +8,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"aidev/internal/config"
 	"aidev/internal/store"
@@ -311,6 +312,24 @@ func taskGet(ctx context.Context, env *Env, args []string) error {
 	return nil
 }
 
+// runBudgetMargin is the slack in the total deadline a run puts on itself, on
+// top of the task's timeout and the verification budget. Those bounds cover the
+// agent and the checks; the work around them — creating the worktree, the git
+// operations, waiting on a pool — has no bound of its own, and a run that hangs
+// between phases must still not outlive invariant 6.
+const runBudgetMargin = 10 * time.Minute
+
+// runTotalBudget is the deadline a run imposes on itself. A task that expects
+// its verification to fail on the base spends a whole second pass there, so it
+// gets the verification budget twice.
+func runTotalBudget(cfg config.Config, t task.Task) time.Duration {
+	budget := t.EffectiveTimeout(cfg.DefaultTaskTimeout) + cfg.VerificationTotalTimeout + runBudgetMargin
+	if t.ExpectFailOnBase {
+		budget += cfg.VerificationTotalTimeout
+	}
+	return budget
+}
+
 func taskRun(ctx context.Context, env *Env, args []string) error {
 	fs := flag.NewFlagSet("task run", flag.ContinueOnError)
 	fs.SetOutput(env.Stderr)
@@ -323,7 +342,9 @@ it, then runs the task's own verification commands and records the outcome.
 
 This can take several minutes. The first run against a repository OpenCode has
 not seen before can take longer still. Ctrl-C cancels it and records the
-cancellation; the worktree is kept.
+cancellation; the worktree is kept. A total deadline also applies — the task's
+timeout plus the verification budget plus a margin — so a run that hangs cannot
+last forever.
 `)
 		fs.PrintDefaults()
 	}
@@ -342,6 +363,19 @@ cancellation; the worktree is kept.
 	}
 	defer app.close()
 
+	// The run bounds itself, because nothing else will: the agent has its
+	// timeout and verification has its budget, but nothing bounded the two
+	// together, and this command — which the MCP server spawns as a detached
+	// child (research C2) — must return either way. Resolving here costs one
+	// query; RunTask resolves the task again itself.
+	t, err := app.store.ResolveTask(ctx, identifier)
+	if err != nil {
+		return err
+	}
+	budget := runTotalBudget(app.cfg, t)
+	ctx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+
 	outcome, runErr := app.orchestrator.RunTask(ctx, identifier)
 
 	// An approval gate is not a failure: report it and exit 0 so that a script
@@ -355,6 +389,9 @@ cancellation; the worktree is kept.
 		return nil
 	}
 	if runErr != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("the run for %s exceeded its total budget of %s: %w", t.Identifier(), budget, runErr)
+		}
 		return runErr
 	}
 
@@ -372,8 +409,13 @@ cancellation; the worktree is kept.
 	}
 
 	// A task that did not succeed exits non-zero, so `aidev task run X && deploy`
-	// behaves the way a shell user expects.
+	// behaves the way a shell user expects. When the deadline is what stopped
+	// it, say so: the outcome above is recorded, but the reason deserves to be
+	// on stderr too, and it must not look like a plain verification failure.
 	if outcome.Task.Status != task.StatusSucceeded {
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("the run for %s exceeded its total budget of %s (task timeout + verification budget + margin)", t.Identifier(), budget)
+		}
 		return &exitError{code: 1}
 	}
 	return nil

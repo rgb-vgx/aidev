@@ -57,9 +57,11 @@ files back (docs/research.md §3.2); neither was copied from documentation.
 
 **Which settings affect the tools.** The server is the same aidev binary, so all of
 conf.json applies, but the ones that shape the tools are `database.url` (every call
-reads or writes PostgreSQL), `workspace_root` (where a run isolates its worktree),
+reads or writes PostgreSQL), `workspace_root` (where a run isolates its worktree,
+and where a run's stderr log is written under `run-logs/`),
 `tasks.timeout` and `tasks.verification_timeout` (bound a run and its verification;
-`timeout_seconds` on `aidev_run_task` overrides them for one task),
+together they form the total deadline the run process imposes on itself, plus a
+margin; `timeout_seconds` on `aidev_run_task` overrides them for one task),
 `tasks.max_output_bytes` (caps the streams a result can return), `agent.backend`
 (opencode or codex), `agent.routing` (which model a task's hardness deserves), and
 `tasks.worktree_cleanup` (whether a finished worktree stays).
@@ -95,7 +97,8 @@ Two things about `aidev_run_task` shape how it is used.
 does — measured between 9 and 656 seconds (docs/research.md §7c) — and an MCP client
 will not wait indefinitely. The tool waits `wait_seconds` (120 by default) and then
 returns with `still_running: true`. The run continues regardless, unaffected by the
-call returning or by the client abandoning it. Poll `aidev_get_task_result`.
+call returning or by the client abandoning it — it is a separate `aidev task run`
+process, so even this server exiting does not stop it. Poll `aidev_get_task_result`.
 
 **`succeeded` is the field to read, not the status string.** It is true only when
 the task reached `SUCCEEDED`, which requires aidev's own verification to have
@@ -201,6 +204,14 @@ An approval gate is **not** an error: the result comes back with status
 would only refuse. Nor is a run that has not finished.
 
 ### Side effects
+
+Starts the run as its own `aidev task run <task>` process, detached from this
+server: its stdout goes to the null device (in this mode stdout is the JSON-RPC
+channel), its stderr to a log file per run under `workspace_root/run-logs/`, and
+it carries its own total deadline — the task's timeout plus the verification
+budget plus a margin — so a run cannot outlive its bounds even though no one
+waits on it. If that process dies before recording an ending, the tool reports
+the crash with the tail of its log.
 
 Creates a git worktree under `workspace_root` and a branch `aidev/<ref>`; runs the
 agent, which writes files there; moves the task through `RUNNING`, `VERIFYING` and a

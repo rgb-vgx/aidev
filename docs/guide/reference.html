@@ -70,7 +70,7 @@ aidev migrate --json</code></pre>
 <tr><th>Command</th><th>Flags</th><th>What it does</th></tr>
 <tr><td><code>aidev task list</code></td><td><code>--status S,S</code>: comma-separated statuses to include; <code>--repo PATH</code>: only tasks for this repository; <code>--limit N</code>: maximum tasks to return; <code>--json</code></td><td>Lists tasks, newest first. An unknown status is rejected and named. A repository with no tasks is an empty result, not an error.</td></tr>
 <tr><td><code>aidev task get &lt;task&gt;</code></td><td><code>--json</code></td><td>Shows one task. Accepts a reference or a UUID.</td></tr>
-<tr><td><code>aidev task run &lt;task&gt;</code></td><td><code>--json</code></td><td>Runs a task to completion: creates an isolated git worktree, runs the agent in it, then runs the verification commands and records the outcome. Exits non-zero when the task does not succeed. An approval gate is not a failure: it reports that a human must decide and exits zero.</td></tr>
+<tr><td><code>aidev task run &lt;task&gt;</code></td><td><code>--json</code></td><td>Runs a task to completion: creates an isolated git worktree, runs the agent in it, then runs the verification commands and records the outcome. Exits non-zero when the task does not succeed. An approval gate is not a failure: it reports that a human must decide and exits zero. A total deadline also applies — the task's timeout plus the verification budget plus a margin — so a hung run cannot last forever. When the MCP server starts a run, this command runs as a separate process whose stderr goes to <code>workspace_root/run-logs/</code>.</td></tr>
 </table>
 
 <h3><code>aidev task result</code>, <code>events</code>, <code>cancel</code>, <code>approve</code>, <code>recover</code></h3>

@@ -26,6 +26,7 @@
 <tr><td>A task failed and you want to know why</td><td>The result with full output</td><td><code>aidev task result TASK-000001 --logs</code></td></tr>
 <tr><td>A task seems stuck or slow</td><td>The event history</td><td><code>aidev task events TASK-000001</code></td></tr>
 <tr><td>aidev itself printed an error</td><td>The logs on stderr</td><td>Re-run and read stderr; set <code>log_level</code> to <code>debug</code> in <code>conf.json</code></td></tr>
+<tr><td>The MCP tool reported that a run stopped unexpectedly</td><td>The run process's own stderr log</td><td>The error carries the tail; the full file is <code>workspace_root/run-logs/TASK-000001-*.log</code></td></tr>
 <tr><td>You want the agent's half-finished files</td><td>The retained worktree</td><td><code>aidev worktree list</code></td></tr>
 <tr><td>A task is stuck in RUNNING after a crash</td><td>Recovery by lease</td><td><code>aidev task recover --dry-run</code> then <code>aidev task recover</code></td></tr>
 <tr><td>You need timings across a whole run</td><td>Tracing</td><td>Set <code>tracing.endpoint</code> in <code>conf.json</code> and view the trace</td></tr>
@@ -57,6 +58,8 @@
 grep 'TASK-000001' aidev.log | head -20</code></pre>
 
 <p>The <code>2&gt;</code> part redirects stderr into a file. That is needed because logs go to stderr, not stdout. The fields to look for are <code>task_id</code>, <code>attempt_id</code>, and <code>worktree_path</code>. They are attached to a logger carried in the program's context, so deep code paths inherit them without passing a logger through every function. To follow one task, filter by its reference or id. To follow one execution, filter by the attempt id.</p>
+
+<p>A run started from the MCP server is a separate process, and its stderr never reaches your terminal. It goes to a log file of its own under <code>workspace_root/run-logs/</code>, one per run, named after the task reference and the time it started. When such a run dies without recording an ending, the tool's error carries the last bytes of that file; open the file itself for the rest.</p>
 
 <p><code>log_level</code> controls how much is emitted. The allowed values are <code>debug</code>, <code>info</code>, <code>warn</code>, and <code>error</code>. The default is <code>info</code>. Set <code>log_level</code> to <code>debug</code> in <code>conf.json</code> when you need the full picture, for example when a task fails in a way the result does not explain. An unknown value fails at startup with a message naming the allowed values. aidev never logs secrets: connection strings are redacted before they are printed or logged, and the environment handed to a subprocess is never recorded.</p>
 

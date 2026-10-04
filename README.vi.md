@@ -419,7 +419,8 @@ khởi động đã có sẵn cấu hình. Tám công cụ sau đây sẽ khả 
 | `aidev_approve_task` | con người cho phép task bị chặn chạy tiếp; bị tắt trừ khi đặt `mcp.allow_approval` |
 
 Một lần chạy mất vài phút, nên `aidev_run_task` chờ một khoảng thời gian giới hạn rồi trả về với
-`still_running: true` trong khi task vẫn tiếp tục; planner thăm dò
+`still_running: true` trong khi task vẫn tiếp tục — nó chạy như một tiến trình
+`aidev task run` riêng nên tồn tại cả khi server này thoát; planner thăm dò
 `aidev_get_task_result`. Trường cần đọc là `succeeded`, chỉ đúng khi
 verification của chính aidev đã qua.
 

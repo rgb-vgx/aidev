@@ -566,6 +566,14 @@ If aidev is killed mid-run — `kill -9`, a closed laptop, a container stopped �
 task is left `RUNNING` with an open attempt and a worktree on disk. Nothing will
 pick it up again: a running task is not runnable.
 
+A run started from the MCP server is a separate `aidev task run` process in its
+own session, so the cases are not symmetric: the server exiting — the client
+disconnecting, a session ending — stops only the watching, never the run, which
+keeps going with its own total deadline (task timeout + verification budget +
+margin) and writes its stderr to a log under `workspace_root/run-logs/`. What
+leaves a task `RUNNING` behind is the run process itself dying — and that is
+exactly the case the lease below covers.
+
 Every attempt therefore carries a lease: an owner (`hostname:pid:uuid`) and an
 expiry, written when the attempt starts and pushed forward by the run's own
 cancel poll (every 2 seconds by default, expiry 30 seconds ahead). A process that

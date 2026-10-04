@@ -22,6 +22,10 @@ import (
 type mcpHarness struct {
 	*harness
 	session *sdk.ClientSession
+	// stopServe ends the server the way a client disconnect does, without
+	// ending the test's context. A test that needs the shutdown mid-run calls
+	// it directly; cleanup calls it again, harmlessly.
+	stopServe context.CancelFunc
 }
 
 func newMCPHarness(t *testing.T) *mcpHarness {
@@ -30,11 +34,15 @@ func newMCPHarness(t *testing.T) *mcpHarness {
 }
 
 // newMCPHarnessWith is newMCPHarness over a configuration the test adjusts.
-func newMCPHarnessWith(t *testing.T, mutate func(*config.Config)) *mcpHarness {
+// Extra options override the harness defaults, which run tasks in-process
+// because this harness holds the orchestrator and has no binary to spawn;
+// a test that wants a different launcher passes it here.
+func newMCPHarnessWith(t *testing.T, mutate func(*config.Config), opts ...aidevmcp.Option) *mcpHarness {
 	t.Helper()
 
 	h := newHarness(t, mutate)
-	server := aidevmcp.New(h.orchestrator, h.store, "test", logging.Discard())
+	opts = append([]aidevmcp.Option{aidevmcp.WithInProcessRuns()}, opts...)
+	server := aidevmcp.New(h.orchestrator, h.store, "test", logging.Discard(), opts...)
 
 	serverTransport, clientTransport := sdk.NewInMemoryTransports()
 
@@ -59,7 +67,7 @@ func newMCPHarnessWith(t *testing.T, mutate func(*config.Config)) *mcpHarness {
 		}
 	})
 
-	return &mcpHarness{harness: h, session: session}
+	return &mcpHarness{harness: h, session: session, stopServe: cancelServe}
 }
 
 // call invokes a tool and decodes its structured result.

@@ -305,7 +305,10 @@ func (s *Server) runTask(ctx context.Context, _ *sdk.CallToolRequest, in RunTask
 		return nil, RunTaskOutput{}, err
 	}
 
-	run, started := s.startRun(orchestrator, t.ID)
+	run, started, err := s.startRun(orchestrator, st, t)
+	if err != nil {
+		return nil, RunTaskOutput{}, err
+	}
 	if started {
 		s.logger.InfoContext(ctx, "task run started from mcp",
 			"task_ref", t.Ref, "wait_seconds", wait)
@@ -331,8 +334,9 @@ func (s *Server) runTask(ctx context.Context, _ *sdk.CallToolRequest, in RunTask
 		}, nil
 
 	case <-ctx.Done():
-		// The client gave up on this call. The run itself is unaffected, because
-		// it is bound to the server's context rather than this one.
+		// The client gave up on this call. The run is unaffected: it is a
+		// separate process that outlives this server (research C2), or, in
+		// tests, bound to the server's context rather than this one.
 		return nil, RunTaskOutput{}, ctx.Err()
 	}
 }
@@ -340,24 +344,23 @@ func (s *Server) runTask(ctx context.Context, _ *sdk.CallToolRequest, in RunTask
 // finishedRunOutput builds the output for a run that has completed.
 func (s *Server) finishedRunOutput(ctx context.Context, orchestrator *worker.Orchestrator, st *store.Store, taskID uuid.UUID, run *backgroundRun) (*sdk.CallToolResult, RunTaskOutput, error) {
 	if run.err != nil {
-		// An approval gate is reported as a result, not an error: the planner
-		// needs to know a human is required, which is not a malfunction.
-		if errors.Is(run.err, worker.ErrApprovalRequired) {
-			result, err := s.buildResult(ctx, st, taskID, false)
-			if err != nil {
-				return nil, RunTaskOutput{}, err
-			}
-			return nil, RunTaskOutput{
-				Result:   result,
-				NextStep: approvalNextStep(orchestrator.Config, result.Task.Ref),
-			}, nil
-		}
 		return nil, RunTaskOutput{}, run.err
 	}
 
 	result, err := s.buildResult(ctx, st, taskID, false)
 	if err != nil {
 		return nil, RunTaskOutput{}, err
+	}
+
+	// An approval gate is reported as a result, not an error: the planner
+	// needs to know a human is required, which is not a malfunction. The
+	// recorded status decides, because the run that hit the gate exited
+	// cleanly — both as a child process and as an orchestrator call.
+	if result.Task.Status == task.StatusWaitingApproval.String() {
+		return nil, RunTaskOutput{
+			Result:   result,
+			NextStep: approvalNextStep(orchestrator.Config, result.Task.Ref),
+		}, nil
 	}
 
 	succeeded := result.Task.Status == task.StatusSucceeded.String()
@@ -608,35 +611,48 @@ func (s *Server) buildResult(ctx context.Context, st *store.Store, taskID uuid.U
 // Joining rather than starting a second is what makes a repeated aidev_run_task
 // call harmless: the orchestrator would reject the second anyway, but reporting
 // the progress of the first is more useful than an error.
-func (s *Server) startRun(orchestrator *worker.Orchestrator, taskID uuid.UUID) (*backgroundRun, bool) {
+//
+// A task that is already terminal or already being driven somewhere else is
+// refused here, with the orchestrator's own message, before any process is
+// spawned for it — spawning one just to watch it refuse would be wasteful, and
+// the refusal is the answer either way.
+func (s *Server) startRun(orchestrator *worker.Orchestrator, st *store.Store, t task.Task) (*backgroundRun, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if existing, ok := s.runs[taskID]; ok {
+	if existing, ok := s.runs[t.ID]; ok {
 		select {
 		case <-existing.done:
 			// Finished; a new call may start a fresh run.
-			delete(s.runs, taskID)
+			delete(s.runs, t.ID)
 		default:
-			return existing, false
+			return existing, false, nil
 		}
+	}
+	if t.Status.Terminal() || t.Status.Active() {
+		return nil, false, fmt.Errorf("%s is already %s: %w", t.Identifier(), t.Status, worker.ErrNotRunnable)
+	}
+
+	// Started under the lock so two concurrent calls for the same task cannot
+	// both get past the checks above and race to claim it.
+	wait, logPath, err := s.launch(s.baseCtx, orchestrator, t)
+	if err != nil {
+		return nil, false, err
 	}
 
 	run := &backgroundRun{done: make(chan struct{})}
-	s.runs[taskID] = run
+	s.runs[t.ID] = run
 
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
 		defer close(run.done)
 
-		// Bound to the server's context, not a tool call's: the run must outlive
-		// the call that started it, and must stop when the server stops. The
-		// kept orchestrator is used so a run started after a deferred connect
-		// records against the same connection.
-		outcome, err := orchestrator.RunTask(s.baseCtx, taskID.String())
-		run.outcome = outcome
-		run.err = err
+		// The watcher is bound to the server's context, not a tool call's: the
+		// call may return with still_running, or its client go away, long
+		// before the run ends. The kept orchestrator is used so a run started
+		// after a deferred connect records against the same connection.
+		run.err = s.awaitOutcome(s.baseCtx, st, t.ID, wait, logPath)
 	}()
-	return run, true
+	return run, true, nil
 }
