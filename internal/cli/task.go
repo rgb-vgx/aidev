@@ -104,6 +104,7 @@ func taskCreate(ctx context.Context, env *Env, args []string) error {
 	fs.SetOutput(env.Stderr)
 
 	var verify repeatable
+	var protect repeatable
 	repo := fs.String("repo", "", "path to the git repository (default: the current directory)")
 	title := fs.String("title", "", "short statement of what to do (required)")
 	description := fs.String("description", "", "the full instruction for the agent")
@@ -118,6 +119,7 @@ func taskCreate(ctx context.Context, env *Env, args []string) error {
 	timeout := fs.Duration("timeout", 0, "bound this task's agent run (default: tasks.timeout in conf.json)")
 	asJSON := fs.Bool("json", false, "print the created task as JSON")
 	fs.Var(&verify, "verify", "command aidev will run to verify the task; repeat for more than one (required)")
+	fs.Var(&protect, "protect", "glob path or directory the agent must not change (.env*, migrations/*, docs); an attempt that touches a match fails verification before any check runs; repeat for more than one")
 
 	fs.Usage = func() {
 		fmt.Fprintf(env.Stderr, `usage: aidev task create --title <title> --verify <command> [flags]
@@ -171,6 +173,7 @@ flags:
 		Hardness:           *hardness,
 		Priority:           *priority,
 		Verification:       steps,
+		ProtectedPaths:     protect,
 		MaxRetries:         *maxRetries,
 		RequiresApproval:   *requiresApproval,
 		BaseRef:            *baseRef,

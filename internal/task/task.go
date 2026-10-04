@@ -23,6 +23,7 @@ const (
 	MaxPriority                 = 1000
 	MinPriority                 = -1000
 	MaxRetriesLimit             = 10
+	MaxProtectedPaths           = 50
 )
 
 // Project is a git repository aidev can run tasks against.
@@ -72,6 +73,17 @@ type Task struct {
 	// independently establish.
 	Verification []VerificationStep
 
+	// ProtectedPaths are glob patterns the task's creator ring-fenced: an
+	// attempt that changes a path matching any of them fails verification
+	// without a single check running (research §7b tier 2). Unlike the
+	// heuristic TestPaths report, these are declared up front, so acting on
+	// them cannot punish work nobody singled out. Empty means nothing is
+	// protected and the check is skipped. Pattern syntax is validated by the
+	// caller that normalizes them (worker.CreateTask, via
+	// verification.NormalizeProtected), keeping this package free of a glob
+	// dependency.
+	ProtectedPaths []string
+
 	// MaxRetries is recorded for the future retry feature. The MVP never
 	// retries automatically.
 	MaxRetries int
@@ -102,6 +114,7 @@ type NewTaskInput struct {
 	Priority           int
 	AcceptanceCriteria string
 	Verification       []VerificationStep
+	ProtectedPaths     []string
 	MaxRetries         int
 	RequiresApproval   bool
 	BaseRef            string
@@ -190,6 +203,18 @@ func New(input NewTaskInput, defaultAgent string) (Task, error) {
 		}
 	}
 
+	if len(input.ProtectedPaths) > MaxProtectedPaths {
+		add("%d protected paths exceed the limit of %d", len(input.ProtectedPaths), MaxProtectedPaths)
+	}
+	for i, p := range input.ProtectedPaths {
+		// Syntax is the caller's to check (it owns the glob library); an empty
+		// pattern here would guard nothing while claiming to, so it is refused
+		// at the domain boundary as well.
+		if strings.TrimSpace(p) == "" || strings.TrimSpace(p) == "/" {
+			add("protected path %d must not be empty", i+1)
+		}
+	}
+
 	if input.Priority < MinPriority || input.Priority > MaxPriority {
 		add("priority %d is outside %d..%d", input.Priority, MinPriority, MaxPriority)
 	}
@@ -220,6 +245,7 @@ func New(input NewTaskInput, defaultAgent string) (Task, error) {
 		Status:             StatusPending,
 		AcceptanceCriteria: input.AcceptanceCriteria,
 		Verification:       input.Verification,
+		ProtectedPaths:     input.ProtectedPaths,
 		MaxRetries:         input.MaxRetries,
 		RequiresApproval:   input.RequiresApproval,
 		BaseRef:            strings.TrimSpace(input.BaseRef),

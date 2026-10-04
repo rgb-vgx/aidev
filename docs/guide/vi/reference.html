@@ -47,6 +47,7 @@ aidev migrate --json</code></pre>
 <tr><th>Cờ</th><th>Làm gì</th></tr>
 <tr><td><code>--title T</code> (bắt buộc)</td><td>Một dòng ngắn nói cần làm gì. Không được rỗng và dài nhất 200 ký tự.</td></tr>
 <tr><td><code>--verify CMD</code> (bắt buộc, lặp được)</td><td>Một lệnh aidev tự chạy để kiểm chứng task. Muốn nhiều lệnh thì lặp lại. Lệnh chạy không qua shell: pipe, chuyển hướng và các toán tử như <code>|</code>, <code>&gt;</code>, <code>&amp;&amp;</code> bị từ chối ngay khi phân tích kèm giải thích.</td></tr>
+<tr><td><code>--protect GLOB</code> (lặp được)</td><td>Khoanh vùng đường dẫn agent không được sửa (<code>.env*</code>, <code>migrations/*</code>, <code>docs</code>). Lần chạy đụng vào đường dẫn khớp sẽ FAILED với loại VERIFICATION trước khi bất kỳ lệnh kiểm tra nào chạy. Lặp lại để bảo vệ nhiều đường dẫn.</td></tr>
 <tr><td><code>--repo PATH</code></td><td>Đường dẫn tới kho git. Mặc định: thư mục hiện tại. Kho chưa biết được tự đăng ký thành project.</td></tr>
 <tr><td><code>--description D</code></td><td>Hướng dẫn đầy đủ cho agent.</td></tr>
 <tr><td><code>--acceptance A</code></td><td>Xong trông ra sao, viết bằng văn xuôi.</td></tr>
@@ -156,7 +157,7 @@ aidev worktree remove TASK-000001 --force</code></pre>
 <tr><td><code>task.verification_started</code></td><td>aidev bắt đầu chạy các lệnh verification của task.</td></tr>
 <tr><td><code>task.verification_step_completed</code></td><td>Một bước verification xong, với lệnh và mã thoát của nó.</td></tr>
 <tr><td><code>task.verification_completed</code></td><td>Lượt verification xong, với số bước qua.</td></tr>
-<tr><td><code>task.verification_intercepted</code></td><td>Agent đã sửa runner verification, nên verification không chạy lần nào; lần chạy FAILED với loại VERIFICATION.</td></tr>
+<tr><td><code>task.verification_intercepted</code></td><td>Agent đã sửa runner verification, hoặc đụng vào đường dẫn được task bảo vệ (<code>protected_paths</code>), nên verification không chạy lần nào; lần chạy FAILED với loại VERIFICATION. Payload cho biết lý do nào đã kích hoạt.</td></tr>
 <tr><td><code>task.verification_tests_modified</code></td><td>Lần chạy đã sửa các file giống test đang chấm nó. Đây là báo cáo cho người review, không phải kết luận: sửa test không làm run thất bại.</td></tr>
 <tr><td><code>task.approval_required</code></td><td>Task bị giữ sau quyết định của con người.</td></tr>
 <tr><td><code>task.approval_granted</code></td><td>Con người duyệt task; nó sang READY.</td></tr>

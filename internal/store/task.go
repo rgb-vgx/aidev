@@ -14,7 +14,7 @@ import (
 )
 
 const taskColumns = `id, ref, project_id, title, description, agent, model, hardness, priority, status,
-	acceptance_criteria, verification, max_retries, requires_approval, base_ref,
+	acceptance_criteria, verification, protected_paths, max_retries, requires_approval, base_ref,
 	timeout_seconds, created_at, updated_at`
 
 // CreateTask persists a new task and returns it with the database-assigned
@@ -24,16 +24,26 @@ func (s *Store) CreateTask(ctx context.Context, t task.Task) (task.Task, error) 
 	if err != nil {
 		return task.Task{}, fmt.Errorf("encode verification steps: %w", err)
 	}
+	// A nil slice marshals to null, which the column's array CHECK rejects; a
+	// task that protects nothing stores an empty array instead.
+	protectedList := t.ProtectedPaths
+	if protectedList == nil {
+		protectedList = []string{}
+	}
+	protected, err := json.Marshal(protectedList)
+	if err != nil {
+		return task.Task{}, fmt.Errorf("encode protected paths: %w", err)
+	}
 
 	row := s.db.QueryRow(ctx, `
 		INSERT INTO tasks (
 			id, project_id, title, description, agent, model, hardness, priority, status,
-			acceptance_criteria, verification, max_retries, requires_approval,
+			acceptance_criteria, verification, protected_paths, max_retries, requires_approval,
 			base_ref, timeout_seconds
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
 		RETURNING `+taskColumns,
 		t.ID, t.ProjectID, t.Title, t.Description, t.Agent, t.Model, string(t.Hardness), t.Priority, string(t.Status),
-		t.AcceptanceCriteria, verification, t.MaxRetries, t.RequiresApproval,
+		t.AcceptanceCriteria, verification, protected, t.MaxRetries, t.RequiresApproval,
 		t.BaseRef, int(t.Timeout.Seconds()))
 
 	created, err := scanTask(row)
@@ -183,11 +193,12 @@ func scanTask(row scanner) (task.Task, error) {
 		status         string
 		hardness       string
 		verification   []byte
+		protectedPaths []byte
 		timeoutSeconds int
 	)
 	err := row.Scan(
 		&t.ID, &t.Ref, &t.ProjectID, &t.Title, &t.Description, &t.Agent, &t.Model, &hardness, &t.Priority,
-		&status, &t.AcceptanceCriteria, &verification, &t.MaxRetries, &t.RequiresApproval,
+		&status, &t.AcceptanceCriteria, &verification, &protectedPaths, &t.MaxRetries, &t.RequiresApproval,
 		&t.BaseRef, &timeoutSeconds, &t.CreatedAt, &t.UpdatedAt)
 	if err != nil {
 		return task.Task{}, classify(err)
@@ -214,6 +225,13 @@ func scanTask(row scanner) (task.Task, error) {
 	if len(verification) > 0 {
 		if err := json.Unmarshal(verification, &t.Verification); err != nil {
 			return task.Task{}, fmt.Errorf("task %s has unreadable verification steps: %w", t.ID, err)
+		}
+	}
+	// The column defaults to '[]', so this is empty rather than absent for
+	// every task that protects nothing; only an unreadable array is an error.
+	if len(protectedPaths) > 0 {
+		if err := json.Unmarshal(protectedPaths, &t.ProtectedPaths); err != nil {
+			return task.Task{}, fmt.Errorf("task %s has unreadable protected paths: %w", t.ID, err)
 		}
 	}
 	t.Timeout = time.Duration(timeoutSeconds) * time.Second

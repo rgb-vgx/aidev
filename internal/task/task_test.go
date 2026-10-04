@@ -90,6 +90,14 @@ func TestNewTaskRejectsInvalidInput(t *testing.T) {
 		{"too many retries", func(i *NewTaskInput) { i.MaxRetries = MaxRetriesLimit + 1 }, "max retries"},
 		{"negative timeout", func(i *NewTaskInput) { i.Timeout = -time.Second }, "timeout"},
 		{"base ref with spaces", func(i *NewTaskInput) { i.BaseRef = "my branch" }, "base ref"},
+		{"empty protected path", func(i *NewTaskInput) { i.ProtectedPaths = []string{"  "} }, "protected path"},
+		{"slash-only protected path", func(i *NewTaskInput) { i.ProtectedPaths = []string{"/"} }, "protected path"},
+		{"too many protected paths", func(i *NewTaskInput) {
+			i.ProtectedPaths = make([]string, MaxProtectedPaths+1)
+			for j := range i.ProtectedPaths {
+				i.ProtectedPaths[j] = "docs/*"
+			}
+		}, "exceed the limit"},
 	}
 
 	for _, tc := range cases {
@@ -104,6 +112,21 @@ func TestNewTaskRejectsInvalidInput(t *testing.T) {
 				t.Errorf("error = %v, want it to mention %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// The ring-fence travels with the task from input to stored struct: verification
+// reads it off the task the run loaded, so a pattern dropped here would guard
+// nothing while the creator believed it was set.
+func TestProtectedPathsAreCarriedThrough(t *testing.T) {
+	in := validInput()
+	in.ProtectedPaths = []string{".env*", "migrations/*"}
+	tk, err := New(in, "build")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if strings.Join(tk.ProtectedPaths, ",") != ".env*,migrations/*" {
+		t.Errorf("ProtectedPaths = %v, want the input preserved in order", tk.ProtectedPaths)
 	}
 }
 

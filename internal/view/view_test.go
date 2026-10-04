@@ -29,8 +29,9 @@ func TestTaskJSONShape(t *testing.T) {
 		Verification: []task.VerificationStep{
 			{Command: "go", Args: []string{"test", "./..."}},
 		},
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		ProtectedPaths: []string{".env*", "migrations/*"},
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
 	}
 
 	encoded, err := json.Marshal(NewTask(tk))
@@ -44,7 +45,7 @@ func TestTaskJSONShape(t *testing.T) {
 
 	for _, key := range []string{
 		"ref", "id", "status", "title", "agent", "priority",
-		"verification", "requires_approval", "project_id", "created_at", "updated_at",
+		"verification", "protected_paths", "requires_approval", "project_id", "created_at", "updated_at",
 	} {
 		if _, ok := decoded[key]; !ok {
 			t.Errorf("JSON is missing %q: %s", key, encoded)
@@ -55,6 +56,9 @@ func TestTaskJSONShape(t *testing.T) {
 	}
 	if got := decoded["verification"].([]any); len(got) != 1 || got[0] != "go test ./..." {
 		t.Errorf("verification = %v, want the rendered command", got)
+	}
+	if got := decoded["protected_paths"].([]any); len(got) != 2 || got[0] != ".env*" || got[1] != "migrations/*" {
+		t.Errorf("protected_paths = %v, want the ring-fence visible to a reviewer", decoded["protected_paths"])
 	}
 	if decoded["timeout_seconds"].(float64) != 90 {
 		t.Errorf("timeout_seconds = %v, want 90", decoded["timeout_seconds"])

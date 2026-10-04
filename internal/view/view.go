@@ -32,6 +32,7 @@ type Task struct {
 	Hardness           string   `json:"hardness,omitempty" jsonschema:"how hard the task stated it was: TRIVIAL, STANDARD or HARD; empty means none was stated"`
 	Priority           int      `json:"priority" jsonschema:"higher runs first"`
 	Verification       []string `json:"verification" jsonschema:"the commands aidev runs itself to decide whether the task succeeded"`
+	ProtectedPaths     []string `json:"protected_paths,omitempty" jsonschema:"glob patterns the creator ring-fenced; an attempt that changes a matching path fails verification without running any check"`
 	RequiresApproval   bool     `json:"requires_approval" jsonschema:"whether a human decision is required before the task may run"`
 	MaxRetries         int      `json:"max_retries" jsonschema:"recorded for a future retry feature; aidev does not retry"`
 	BaseRef            string   `json:"base_ref,omitempty" jsonschema:"git ref the task's branch starts from"`
@@ -59,6 +60,7 @@ func NewTask(t task.Task) Task {
 		Hardness:           t.Hardness.String(),
 		Priority:           t.Priority,
 		Verification:       commands,
+		ProtectedPaths:     t.ProtectedPaths,
 		RequiresApproval:   t.RequiresApproval,
 		MaxRetries:         t.MaxRetries,
 		BaseRef:            t.BaseRef,

@@ -1068,12 +1068,29 @@ func (r *run) verify(ctx context.Context) (Outcome, error) {
 		r.emit(ctx, event.TypeVerificationTestsModified, map[string]any{"paths": paths})
 	}
 
-	if intercepted := verification.Interceptions(r.task.Verification, changed); len(intercepted) > 0 {
+	intercepted := verification.Interceptions(r.task.Verification, changed)
+	violated, err := verification.Violations(r.task.ProtectedPaths, changed)
+	if err != nil {
+		// A stored pattern that cannot be evaluated means the guard the task's
+		// creator asked for is gone: fail closed rather than run checks that
+		// were supposed to be protected (research §7b tier 2).
 		span.SetAttributes(attribute.Bool("aidev.verification.passed", false))
-		r.emit(ctx, event.TypeVerificationIntercepted, map[string]any{
-			"interceptions": interceptionPayload(intercepted),
-		})
-		return r.fail(ctx, task.FailureVerification, interceptionError(intercepted))
+		return r.fail(ctx, task.FailureInternal, fmt.Errorf("verification not run: %w", err))
+	}
+	if len(intercepted) > 0 || len(violated) > 0 {
+		span.SetAttributes(attribute.Bool("aidev.verification.passed", false))
+		// One event type for both refusals — a reviewer reads
+		// task.verification_intercepted as "this run was not trusted"; the
+		// payload says which reason fired, and only the reasons that did.
+		payload := map[string]any{}
+		if len(intercepted) > 0 {
+			payload["interceptions"] = interceptionPayload(intercepted)
+		}
+		if len(violated) > 0 {
+			payload["protected_paths"] = protectedPayload(violated)
+		}
+		r.emit(ctx, event.TypeVerificationIntercepted, payload)
+		return r.fail(ctx, task.FailureVerification, refusalError(intercepted, violated))
 	}
 
 	report, err := r.o.Verifier.Run(ctx, verification.Request{
@@ -1121,6 +1138,38 @@ func interceptionPayload(ins []verification.Interception) []map[string]any {
 		})
 	}
 	return out
+}
+
+// protectedPayload quotes both sides of a ring-fence refusal — the pattern the
+// creator declared and the path the attempt touched — so a reviewer can judge
+// the refusal from the audit log alone.
+func protectedPayload(vs []verification.Violation) []map[string]any {
+	out := make([]map[string]any, 0, len(vs))
+	for _, v := range vs {
+		out = append(out, map[string]any{
+			"pattern": v.Pattern,
+			"path":    v.Path,
+		})
+	}
+	return out
+}
+
+// refusalError names every reason verification refused to run, so the failure
+// reason tells a reviewer what happened without opening the audit log.
+func refusalError(ins []verification.Interception, vs []verification.Violation) error {
+	if len(vs) == 0 {
+		return interceptionError(ins)
+	}
+	parts := make([]string, 0, len(ins)+len(vs))
+	for _, in := range ins {
+		parts = append(parts, fmt.Sprintf("step %d `%s` would run %s, which changed during this attempt",
+			in.StepIndex+1, in.Step, in.Path))
+	}
+	for _, v := range vs {
+		parts = append(parts, fmt.Sprintf("%s changed during this attempt but is protected by %q",
+			v.Path, v.Pattern))
+	}
+	return fmt.Errorf("verification not run: %s", strings.Join(parts, "; "))
 }
 
 // interceptionError names every step and path, so the failure reason tells a

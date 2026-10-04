@@ -107,6 +107,8 @@ type CreateTaskInput struct {
 
 	Verification []string `json:"verification" jsonschema:"commands aidev will run itself to decide whether the task succeeded, for example [\"go test ./...\", \"go vet ./...\"]. At least one is required. They run in the task's worktree, without a shell, so pipes and redirection are not available"`
 
+	ProtectedPaths []string `json:"protected_paths,omitempty" jsonschema:"glob paths the agent must not change, for example [\".env*\", \"migrations/*\", \"ci\"]; an attempt that changes a matching path fails verification without running any check"`
+
 	Description        string `json:"description,omitempty" jsonschema:"the full instruction for the agent: what to build and where. Be specific about file names and signatures"`
 	AcceptanceCriteria string `json:"acceptance_criteria,omitempty" jsonschema:"what done looks like, in prose"`
 	Agent              string `json:"agent,omitempty" jsonschema:"agent to use; defaults to the configured one (build)"`
@@ -149,6 +151,7 @@ func (s *Server) createTask(ctx context.Context, _ *sdk.CallToolRequest, in Crea
 		Agent:              in.Agent,
 		Priority:           in.Priority,
 		Verification:       steps,
+		ProtectedPaths:     in.ProtectedPaths,
 		RequiresApproval:   in.RequiresApproval,
 		BaseRef:            in.BaseRef,
 		Hardness:           in.Hardness,

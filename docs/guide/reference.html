@@ -47,6 +47,7 @@ aidev migrate --json</code></pre>
 <tr><th>Flag</th><th>What it does</th></tr>
 <tr><td><code>--title T</code> (required)</td><td>One short line stating what to do. Must be non-blank and at most 200 characters.</td></tr>
 <tr><td><code>--verify CMD</code> (required, repeatable)</td><td>One command aidev will run itself to verify the task. Repeat for more than one. Commands run without a shell: pipes, redirects, and operators like <code>|</code>, <code>&gt;</code>, and <code>&amp;&amp;</code> are rejected at parse time with an explanation.</td></tr>
+<tr><td><code>--protect GLOB</code> (repeatable)</td><td>Ring-fence a path the agent must not change (<code>.env*</code>, <code>migrations/*</code>, <code>docs</code>). An attempt that changes a matching path fails with kind VERIFICATION before any check runs. Repeat for more than one.</td></tr>
 <tr><td><code>--repo PATH</code></td><td>Path to the git repository. Default: the current directory. An unknown repository is registered as a project automatically.</td></tr>
 <tr><td><code>--description D</code></td><td>The full instruction for the agent.</td></tr>
 <tr><td><code>--acceptance A</code></td><td>What done looks like, in prose.</td></tr>
@@ -156,7 +157,7 @@ aidev worktree remove TASK-000001 --force</code></pre>
 <tr><td><code>task.verification_started</code></td><td>aidev began running the task's verification commands.</td></tr>
 <tr><td><code>task.verification_step_completed</code></td><td>One verification step finished, with its command and exit code.</td></tr>
 <tr><td><code>task.verification_completed</code></td><td>The verification pass finished, with the count of passed steps.</td></tr>
-<tr><td><code>task.verification_intercepted</code></td><td>The agent had changed a verification runner, so verification did not run at all; the attempt fails with kind VERIFICATION.</td></tr>
+<tr><td><code>task.verification_intercepted</code></td><td>The agent had changed a verification runner, or touched a path the task protects (<code>protected_paths</code>), so verification did not run at all; the attempt fails with kind VERIFICATION. The payload says which reason fired.</td></tr>
 <tr><td><code>task.verification_tests_modified</code></td><td>The attempt changed files that look like the tests judging it. A report for the reviewer, not a verdict: editing a test does not fail the run.</td></tr>
 <tr><td><code>task.approval_required</code></td><td>The task was gated behind a human decision.</td></tr>
 <tr><td><code>task.approval_granted</code></td><td>A human approved the task; it becomes READY.</td></tr>

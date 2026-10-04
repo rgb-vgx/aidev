@@ -106,6 +106,7 @@ Creates a task. Does **not** run it.
 | `repo_path` | string | **yes** | absolute path to the git repository |
 | `title` | string | **yes** | one short line stating what to do |
 | `verification` | string[] | **yes** | commands aidev runs itself to decide the outcome |
+| `protected_paths` | string[] | no | glob paths the agent must not change (`.env*`, `migrations/*`, `ci`); an attempt that changes a matching path fails verification before any check runs |
 | `description` | string | no | the full instruction for the agent |
 | `acceptance_criteria` | string | no | what done looks like, in prose |
 | `agent` | string | no | agent to use; defaults to `build` |
@@ -132,6 +133,8 @@ through as literal arguments.
 
 - the path is not a git repository
 - `verification` is empty, or a command contains a shell operator
+- a `protected_paths` entry is empty or not a valid glob — rejected now so the
+  task cannot be created with a protection that would silently match nothing
 - `base_ref` does not resolve — caught now rather than at worktree creation
 - the agent name is unknown to the backend. This check exists because OpenCode
   accepts an unknown name, warns, silently uses its default and exits 0

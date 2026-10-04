@@ -12,6 +12,7 @@ import (
 	"aidev/internal/logging"
 	"aidev/internal/store"
 	"aidev/internal/task"
+	"aidev/internal/verification"
 )
 
 // CreateTaskInput is what a caller supplies to create a task. It names the
@@ -24,11 +25,15 @@ type CreateTaskInput struct {
 	Description        string
 	AcceptanceCriteria string
 
-	Agent            string
-	Model            string
-	Hardness         string
-	Priority         int
-	Verification     []task.VerificationStep
+	Agent        string
+	Model        string
+	Hardness     string
+	Priority     int
+	Verification []task.VerificationStep
+	// ProtectedPaths are glob patterns the creator ring-fences; they are
+	// normalized and validated here, at the one entry point every caller uses,
+	// so the database only ever holds patterns verification can evaluate.
+	ProtectedPaths   []string
 	MaxRetries       int
 	RequiresApproval bool
 	BaseRef          string
@@ -76,6 +81,15 @@ func (o *Orchestrator) CreateTask(ctx context.Context, in CreateTaskInput) (task
 		}
 	}
 
+	// Reject an unusable protection list before anything is written: a pattern
+	// that cannot match would guard nothing while claiming to, and discovering
+	// it at verification time would fail a task the agent never had a chance
+	// on.
+	protected, err := verification.NormalizeProtected(in.ProtectedPaths)
+	if err != nil {
+		return task.Task{}, err
+	}
+
 	project, err := o.Store.EnsureProject(ctx, filepath.Base(repo.Path), repo.Path, o.Git.CurrentBranch(ctx, repo))
 	if err != nil {
 		return task.Task{}, err
@@ -91,6 +105,7 @@ func (o *Orchestrator) CreateTask(ctx context.Context, in CreateTaskInput) (task
 		Priority:           in.Priority,
 		AcceptanceCriteria: in.AcceptanceCriteria,
 		Verification:       in.Verification,
+		ProtectedPaths:     protected,
 		MaxRetries:         in.MaxRetries,
 		RequiresApproval:   in.RequiresApproval,
 		BaseRef:            in.BaseRef,
