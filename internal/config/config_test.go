@@ -189,7 +189,7 @@ func TestEverySettingIsRead(t *testing.T) {
     "codex": {"command": "/opt/codex", "profile": "web9router", "model": "gpt-5", "sandbox": "read-only"}
   },
   "log_level": "debug",
-  "mcp": {"allow_approval": true},
+  "mcp": {"allow_approval": true, "auto_register_projects": true},
   "tracing": {
     "endpoint": "http://127.0.0.1:4318",
     "traces_endpoint": "http://127.0.0.1:4318/v1/traces",
@@ -219,6 +219,7 @@ func TestEverySettingIsRead(t *testing.T) {
 		{"codex sandbox", cfg.CodexSandbox, "read-only"},
 		{"log level", cfg.LogLevel, slog.LevelDebug},
 		{"mcp allow approval", cfg.MCPAllowApproval, true},
+		{"mcp auto register projects", cfg.MCPAutoRegisterProjects, true},
 		{"tracing endpoint", cfg.Tracing.Endpoint, "http://127.0.0.1:4318"},
 		{"tracing traces endpoint", cfg.Tracing.TracesEndpoint, "http://127.0.0.1:4318/v1/traces"},
 		{"tracing service name", cfg.Tracing.ServiceName, "aidev-test"},
@@ -464,6 +465,7 @@ var wantKeys = []string{
 	"database.url",
 	"log_level",
 	"mcp.allow_approval",
+	"mcp.auto_register_projects",
 	"tasks.max_output_bytes", "tasks.timeout", "tasks.verification_timeout", "tasks.verification_total_timeout", "tasks.worktree_cleanup",
 	"tracing.endpoint", "tracing.headers", "tracing.sample_ratio", "tracing.service_name", "tracing.traces_endpoint",
 	"workspace_root",

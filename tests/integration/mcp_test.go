@@ -41,6 +41,10 @@ func newMCPHarnessWith(t *testing.T, mutate func(*config.Config), opts ...aidevm
 	t.Helper()
 
 	h := newHarness(t, mutate)
+	// The MCP server only creates tasks for repositories already registered
+	// (research D3), so the harness does what an operator does once with
+	// `aidev project add`. A test of the refusal uses a different repository.
+	h.registerProject(h.repoPath)
 	opts = append([]aidevmcp.Option{aidevmcp.WithInProcessRuns()}, opts...)
 	server := aidevmcp.New(h.orchestrator, h.store, "test", logging.Discard(), opts...)
 

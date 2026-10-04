@@ -72,7 +72,11 @@ spec branch, and run them one after another, each based on the previous result.
 
 Call `aidev_create_task` with:
 
-- `repo_path`: absolute path of the repository.
+- `repo_path`: absolute path of the repository. aidev refuses a repository that
+  is not registered with it, so nothing runs in a path you guessed wrong. If the
+  error says so, do not retry with another path: tell the user, and ask them to
+  run `aidev project add <path>` themselves — registering a repository is their
+  decision.
 - `title`: one line.
 - `description`: exactly what to change and where (files, functions), which tests
   specify it (name the spec commit), and the constraints. Always include:

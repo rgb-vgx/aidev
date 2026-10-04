@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -17,9 +18,16 @@ import (
 
 // CreateTaskInput is what a caller supplies to create a task. It names the
 // repository by path rather than by project id, because that is what a person or
-// a planner actually has; the project is registered on demand.
+// a planner actually has; the project is registered on demand unless
+// RequireRegisteredProject says otherwise.
 type CreateTaskInput struct {
 	RepoPath string
+	// RequireRegisteredProject refuses a repository aidev has never seen
+	// instead of registering it (research D3). The MCP server sets it unless
+	// mcp.auto_register_projects is on: there the path comes from a planner,
+	// and a wrong guess must not become an agent running in the wrong
+	// repository. The CLI leaves it off — a person typed that path.
+	RequireRegisteredProject bool
 
 	Title              string
 	Description        string
@@ -102,7 +110,17 @@ func (o *Orchestrator) CreateTask(ctx context.Context, in CreateTaskInput) (task
 		return task.Task{}, err
 	}
 
-	project, err := o.Store.EnsureProject(ctx, filepath.Base(repo.Path), repo.Path, o.Git.CurrentBranch(ctx, repo))
+	var project task.Project
+	if in.RequireRegisteredProject {
+		project, err = o.Store.GetProjectByPath(ctx, repo.Path)
+		if errors.Is(err, store.ErrNotFound) {
+			return task.Task{}, fmt.Errorf("%w: %s; a person registers it with `aidev project add %s`, "+
+				"or mcp.auto_register_projects lets the MCP server register repositories on demand",
+				ErrProjectNotRegistered, repo.Path, repo.Path)
+		}
+	} else {
+		project, err = o.Store.EnsureProject(ctx, filepath.Base(repo.Path), repo.Path, o.Git.CurrentBranch(ctx, repo))
+	}
 	if err != nil {
 		return task.Task{}, err
 	}

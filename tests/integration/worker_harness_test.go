@@ -213,3 +213,12 @@ func indexOf(haystack []string, needle string) int {
 	}
 	return -1
 }
+
+// registerProject records a repository as a project, as `aidev project add`
+// does, so the MCP server will accept tasks for it.
+func (h *harness) registerProject(path string) {
+	h.t.Helper()
+	if _, err := h.store.EnsureProject(h.ctx, filepath.Base(path), path, "main"); err != nil {
+		h.t.Fatalf("register project %s: %v", path, err)
+	}
+}

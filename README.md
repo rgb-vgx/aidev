@@ -209,6 +209,7 @@ binary uses when a key is absent; conf/conf.example.json shows them all in one f
 | `agent.routing` | *(none)* | an object mapping a task hardness (`TRIVIAL`, `STANDARD`, `HARD`) to the model that hardness deserves; a hardness with no entry leaves the choice to the backend |
 | `log_level` | `info` | `debug`, `info`, `warn` or `error` |
 | `mcp.allow_approval` | `false` | whether the MCP `aidev_approve_task` tool may grant or deny approvals; when off, decisions are the CLI's (`aidev task approve`) |
+| `mcp.auto_register_projects` | `false` | whether `aidev_create_task` may register a repository aidev has never seen; when off, MCP tasks are refused for any repository not added with `aidev project add` |
 | `tracing.endpoint` | *(none)* | base OTLP HTTP URL; tracing is off when nothing is set |
 | `tracing.traces_endpoint` | *(none)* | the full URL the traces exporter posts to, taking precedence over `tracing.endpoint` |
 | `tracing.headers` | *(none)* | an object of extra OTLP headers, such as `Authorization` |
@@ -329,7 +330,8 @@ aidev task cancel <task> [--reason R] [--json]
 aidev task approve <task> [--deny] [--by WHO] [--reason R] [--json]
 aidev task recover [--dry-run] [--json]   # cancel tasks whose lease expired
 
-aidev project list  [--json]                      # repositories aidev has run against
+aidev project add   [path]                        # register a repository for MCP tasks
+aidev project list  [--json]                      # repositories aidev knows
 aidev project approval [on|off] [--repo .]        # gate every task of the repo (operator only)
 aidev project verify-mode [in_place|clean] [--repo .]  # where new tasks verify (operator only)
 ```
@@ -432,7 +434,15 @@ project` writes a shareable `.mcp.json` that each person must approve once.
 No credentials go on the registration: `AIDEV_CONFIG` names the conf.json, and
 aidev reads the database password out of it, so `~/.claude.json` holds no
 connection string. Use the same file and path that `aidev config` reports, so the
-server starts configured. Eight tools become available:
+server starts configured.
+
+The server creates tasks only for repositories aidev already knows, so a planner
+that guesses a path cannot send an agent into the wrong one. Register each
+repository once with `aidev project add <path>` (a repository you have created a
+task for with the CLI is already registered), or set
+`mcp.auto_register_projects` to let the server register them on demand.
+
+Eight tools become available:
 
 | Tool | Purpose |
 |---|---|

@@ -192,6 +192,15 @@ type Config struct {
 	// hands that power to the MCP client deliberately.
 	MCPAllowApproval bool
 
+	// MCPAutoRegisterProjects decides whether aidev_create_task may register
+	// a repository aidev has never seen (research D3). Default false: the
+	// path comes from the MCP client, usually a planner, and a mistyped or
+	// guessed path would otherwise run an agent in the wrong repository.
+	// Repositories are added by a person with `aidev project add`, or on
+	// their first `aidev task create`; setting this true restores
+	// registration on demand for MCP too.
+	MCPAutoRegisterProjects bool
+
 	// ConfigFile is the path of the configuration file that was read, so
 	// `aidev config` can report which file is in effect.
 	ConfigFile string
@@ -252,7 +261,8 @@ var configSchema = map[string]any{
 	},
 	"log_level": kindString,
 	"mcp": map[string]any{
-		"allow_approval": kindBoolean,
+		"allow_approval":         kindBoolean,
+		"auto_register_projects": kindBoolean,
 	},
 	"tracing": map[string]any{
 		"endpoint":        kindString,
@@ -353,7 +363,8 @@ type fileConfig struct {
 	} `json:"agent"`
 	LogLevel *string `json:"log_level"`
 	MCP      *struct {
-		AllowApproval *bool `json:"allow_approval"`
+		AllowApproval        *bool `json:"allow_approval"`
+		AutoRegisterProjects *bool `json:"auto_register_projects"`
 	} `json:"mcp"`
 	Tracing *struct {
 		Endpoint       *string           `json:"endpoint"`
@@ -530,6 +541,11 @@ func LoadFile(path string) (Config, error) {
 	// before this setting existed keeps the safe behaviour.
 	if file.MCP != nil && file.MCP.AllowApproval != nil {
 		cfg.MCPAllowApproval = *file.MCP.AllowApproval
+	}
+	// Absent means false for the same reason: a file written before this
+	// setting existed gets the guarded behaviour, not registration on demand.
+	if file.MCP != nil && file.MCP.AutoRegisterProjects != nil {
+		cfg.MCPAutoRegisterProjects = *file.MCP.AutoRegisterProjects
 	}
 
 	if file.Agent != nil {

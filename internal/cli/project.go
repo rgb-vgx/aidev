@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"path/filepath"
 	"sort"
 
 	"aidev/internal/store"
@@ -13,16 +14,19 @@ import (
 
 // runProject dispatches `aidev project ...`.
 //
-// A project is registered on demand when its first task is created, so there is
-// nothing here to create one. What there is, is the handful of settings that
-// belong to the repository rather than to any one task — at present, what a task
-// worktree does about git submodules.
+// A project is registered by `project add`, or on demand by its first
+// `aidev task create`. The MCP server does not register repositories unless
+// mcp.auto_register_projects says it may (research D3): the list of projects
+// is then the list of repositories a planner is allowed to send an agent
+// into. The other subcommands are the handful of settings that belong to the
+// repository rather than to any one task.
 func runProject(ctx context.Context, env *Env, args []string) error {
 	subcommands := map[string]struct {
 		summary string
 		run     func(context.Context, *Env, []string) error
 	}{
-		"list":        {"list the repositories aidev has run tasks against", projectList},
+		"add":         {"register a repository, so tasks for it may be created through MCP", projectAdd},
+		"list":        {"list the repositories aidev knows", projectList},
 		"submodules":  {"show or set how task worktrees treat this repository's submodules", projectSubmodules},
 		"approval":    {"show or set whether every task of this repository needs approval first", projectApproval},
 		"verify-mode": {"show or set where new tasks verify: in the agent's worktree or a clean checkout", projectVerifyMode},
@@ -79,13 +83,60 @@ func projectList(ctx context.Context, env *Env, args []string) error {
 		return writeJSON(env.Stdout, projects)
 	}
 	if len(projects) == 0 {
-		fmt.Fprintln(env.Stdout, "no projects yet; one is registered when you create its first task")
+		fmt.Fprintln(env.Stdout, "no projects yet; register one with aidev project add <path>")
 		return nil
 	}
 	for _, p := range projects {
 		fmt.Fprintf(env.Stdout, "%s\n  branch %s  submodules %s  approval %s  verify %s\n",
 			p.RepoPath, p.DefaultBranch, p.Submodules, onOff(p.RequiresApproval), p.VerificationMode)
 	}
+	return nil
+}
+
+// projectAdd registers a repository. It is how a person tells aidev that a
+// planner may send agents into this repository through MCP (research D3);
+// registering one that is already known changes nothing and says so.
+func projectAdd(ctx context.Context, env *Env, args []string) error {
+	fs := flag.NewFlagSet("project add", flag.ContinueOnError)
+	fs.SetOutput(env.Stderr)
+	positionals, err := parseInterspersed(fs, args)
+	if err != nil {
+		return usagef("aidev project add: %v", err)
+	}
+	if len(positionals) > 1 {
+		return usagef("aidev project add: expected at most one repository path, got %d", len(positionals))
+	}
+	path := "."
+	if len(positionals) == 1 {
+		path = positionals[0]
+	}
+
+	app, err := openApp(ctx)
+	if err != nil {
+		return err
+	}
+	defer app.close()
+
+	// Resolved through git, so a path inside the repository registers the
+	// repository itself, under the same key every later lookup uses.
+	repository, err := app.orchestrator.Git.OpenRepository(ctx, path)
+	if err != nil {
+		return err
+	}
+	if existing, err := app.store.GetProjectByPath(ctx, repository.Path); err == nil {
+		fmt.Fprintf(env.Stdout, "%s is already registered (branch %s)\n", existing.RepoPath, existing.DefaultBranch)
+		return nil
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+
+	project, err := app.store.EnsureProject(ctx, filepath.Base(repository.Path), repository.Path,
+		app.orchestrator.Git.CurrentBranch(ctx, repository))
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(env.Stdout, "registered %s (branch %s)\n", project.RepoPath, project.DefaultBranch)
+	fmt.Fprintf(env.Stdout, "Tasks for it may now be created through MCP as well as the CLI.\n")
 	return nil
 }
 
@@ -129,8 +180,8 @@ func projectApproval(ctx context.Context, env *Env, args []string) error {
 	project, err := app.store.GetProjectByPath(ctx, repository.Path)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return fmt.Errorf("aidev does not know %s yet; it is registered when you create its first task",
-				repository.Path)
+			return fmt.Errorf("aidev does not know %s yet; register it with aidev project add %s",
+				repository.Path, repository.Path)
 		}
 		return err
 	}
@@ -194,8 +245,8 @@ func projectSubmodules(ctx context.Context, env *Env, args []string) error {
 	project, err := app.store.GetProjectByPath(ctx, repository.Path)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return fmt.Errorf("aidev does not know %s yet; it is registered when you create its first task",
-				repository.Path)
+			return fmt.Errorf("aidev does not know %s yet; register it with aidev project add %s",
+				repository.Path, repository.Path)
 		}
 		return err
 	}
@@ -256,8 +307,8 @@ func projectVerifyMode(ctx context.Context, env *Env, args []string) error {
 	project, err := app.store.GetProjectByPath(ctx, repository.Path)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return fmt.Errorf("aidev does not know %s yet; it is registered when you create its first task",
-				repository.Path)
+			return fmt.Errorf("aidev does not know %s yet; register it with aidev project add %s",
+				repository.Path, repository.Path)
 		}
 		return err
 	}

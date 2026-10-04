@@ -157,6 +157,10 @@ through as literal arguments.
   which cannot hold submodule content, so the checks would go red for the
   wrong reason
 - `base_ref` does not resolve — caught now rather than at worktree creation
+- the repository is not registered with aidev and `mcp.auto_register_projects` is
+  off (the default). The path comes from the planner; a guessed or mistyped one
+  must not become an agent running in the wrong repository. The error names the
+  command a person runs once: `aidev project add <path>`
 - the agent name is unknown to the backend. This check exists because OpenCode
   accepts an unknown name, warns, silently uses its default and exits 0
   (docs/research.md §2.5), which would leave a record claiming an agent that never
@@ -165,8 +169,9 @@ through as literal arguments.
 
 ### Side effects
 
-Registers the repository as a project if it is not known yet, inserts the task, and
-appends a `task.created` event — all in one transaction.
+Inserts the task and appends a `task.created` event in one transaction. The
+repository must already be a project; only with `mcp.auto_register_projects` set
+does the tool register an unknown one first.
 
 ---
 
@@ -419,8 +424,10 @@ appending `task.approval_granted` or `task.approval_denied` with `decided_by`,
   what happens to that branch is a human's call.
 - **No configuration surface.** A planner cannot change `workspace_root`, the model,
   the agent command, or a timeout default.
-- **No project or event writes.** Projects are registered as a side effect of
-  creating a task, and the event log is append-only by construction.
+- **No project or event writes.** Projects are added by a person (`aidev project
+  add`, or a first `aidev task create`); the MCP server registers one only when
+  `mcp.auto_register_projects` allows it. The event log is append-only by
+  construction.
 
 ## Testing it
 

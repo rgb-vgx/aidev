@@ -103,7 +103,7 @@ func (s *Server) register(server *sdk.Server) {
 
 // CreateTaskInput is the input of aidev_create_task.
 type CreateTaskInput struct {
-	RepoPath string `json:"repo_path" jsonschema:"absolute path to the git repository the task applies to"`
+	RepoPath string `json:"repo_path" jsonschema:"absolute path to the git repository the task applies to. It must already be registered with aidev (aidev project add) unless the server allows registration on demand"`
 	Title    string `json:"title" jsonschema:"one short line stating what to do"`
 
 	Verification []string `json:"verification" jsonschema:"commands aidev will run itself to decide whether the task succeeded, for example [\"go test ./...\", \"go vet ./...\"]. At least one is required. They run in the task's worktree, without a shell, so pipes and redirection are not available"`
@@ -154,22 +154,26 @@ func (s *Server) createTask(ctx context.Context, _ *sdk.CallToolRequest, in Crea
 	}
 
 	created, err := orchestrator.CreateTask(ctx, worker.CreateTaskInput{
-		RepoPath:           in.RepoPath,
-		Title:              in.Title,
-		Description:        in.Description,
-		AcceptanceCriteria: in.AcceptanceCriteria,
-		Agent:              in.Agent,
-		Priority:           in.Priority,
-		Verification:       steps,
-		ProtectedPaths:     in.ProtectedPaths,
-		SetupSteps:         setupSteps,
-		VerificationMode:   in.VerificationMode,
-		RequiresApproval:   in.RequiresApproval,
-		ExpectFailOnBase:   in.ExpectFailOnBase,
-		BaseRef:            in.BaseRef,
-		Hardness:           in.Hardness,
-		Model:              in.Model,
-		Timeout:            time.Duration(in.TimeoutSeconds) * time.Second,
+		RepoPath: in.RepoPath,
+		// The path comes from the MCP client — usually a planner — so a
+		// repository aidev has never seen is refused unless the operator
+		// opted into registration on demand (research D3).
+		RequireRegisteredProject: !orchestrator.Config.MCPAutoRegisterProjects,
+		Title:                    in.Title,
+		Description:              in.Description,
+		AcceptanceCriteria:       in.AcceptanceCriteria,
+		Agent:                    in.Agent,
+		Priority:                 in.Priority,
+		Verification:             steps,
+		ProtectedPaths:           in.ProtectedPaths,
+		SetupSteps:               setupSteps,
+		VerificationMode:         in.VerificationMode,
+		RequiresApproval:         in.RequiresApproval,
+		ExpectFailOnBase:         in.ExpectFailOnBase,
+		BaseRef:                  in.BaseRef,
+		Hardness:                 in.Hardness,
+		Model:                    in.Model,
+		Timeout:                  time.Duration(in.TimeoutSeconds) * time.Second,
 	})
 	if err != nil {
 		return nil, CreateTaskOutput{}, err

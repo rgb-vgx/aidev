@@ -183,6 +183,11 @@ var (
 	// ErrApprovalRequired means the run stopped because policy requires a human
 	// decision. The task is left in WAITING_APPROVAL; it is not a failure.
 	ErrApprovalRequired = errors.New("task requires approval before it can run")
+
+	// ErrProjectNotRegistered means the caller may only create tasks for
+	// repositories aidev already knows, and this one is not among them
+	// (research D3). Nothing was written.
+	ErrProjectNotRegistered = errors.New("repository is not registered with aidev")
 )
 
 // RunTask takes a task from its current state to a terminal one.

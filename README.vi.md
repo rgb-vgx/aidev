@@ -195,6 +195,7 @@ Mọi thiết lập đều tùy chọn, trừ `database.url`. Các giá trị m�
 | `agent.routing` | *(none)* | một đối tượng ánh xạ độ khó của task (`TRIVIAL`, `STANDARD`, `HARD`) tới mô hình xứng đáng với độ khó đó; độ khó nào không có mục sẽ để backend tự chọn |
 | `log_level` | `info` | `debug`, `info`, `warn` hoặc `error` |
 | `mcp.allow_approval` | `false` | liệu công cụ `aidev_approve_task` qua MCP có được phép quyết định phê duyệt hay không; khi tắt, việc quyết định thuộc về CLI (`aidev task approve`) |
+| `mcp.auto_register_projects` | `false` | liệu `aidev_create_task` có được tự đăng ký một repository mà aidev chưa từng thấy hay không; khi tắt, task qua MCP bị từ chối với mọi repository chưa được thêm bằng `aidev project add` |
 | `tracing.endpoint` | *(none)* | URL HTTP OTLP cơ sở; không bật tracing khi chưa đặt gì |
 | `tracing.traces_endpoint` | *(none)* | URL đầy đủ mà bộ xuất traces gửi tới, được ưu tiên hơn `tracing.endpoint` |
 | `tracing.headers` | *(none)* | một đối tượng chứa các header OTLP bổ sung, chẳng hạn `Authorization` |
@@ -303,7 +304,8 @@ aidev task cancel <task> [--reason R] [--json]
 aidev task approve <task> [--deny] [--by WHO] [--reason R] [--json]
 aidev task recover [--dry-run] [--json]   # cancel tasks whose lease expired
 
-aidev project list  [--json]                      # các repository mà aidev đã chạy task
+aidev project add   [path]                        # đăng ký một repository cho task qua MCP
+aidev project list  [--json]                      # các repository mà aidev biết
 aidev project approval [on|off] [--repo .]        # chặn mọi task của repo chờ người duyệt (chỉ ở CLI)
 aidev project verify-mode [in_place|clean] [--repo .]  # nơi các task mới verify (chỉ ở CLI)
 ```
@@ -406,7 +408,15 @@ ghi một tập tin `.mcp.json` dùng chung mà mỗi người phải duyệt m�
 Không có chứng thực nào nằm trên lệnh đăng ký: `AIDEV_CONFIG` chỉ tới conf.json, và
 aidev đọc mật khẩu cơ sở dữ liệu từ đó, nên `~/.claude.json` không chứa
 chuỗi kết nối nào. Hãy dùng đúng tập tin và đường dẫn mà `aidev config` báo, để máy chủ
-khởi động đã có sẵn cấu hình. Tám công cụ sau đây sẽ khả dụng:
+khởi động đã có sẵn cấu hình.
+
+Máy chủ chỉ tạo task cho các repository mà aidev đã biết, nên một planner đoán sai
+đường dẫn không thể đưa agent vào nhầm repository. Hãy đăng ký mỗi repository một
+lần bằng `aidev project add <path>` (repository nào bạn đã tạo task bằng CLI thì đã
+được đăng ký sẵn), hoặc đặt `mcp.auto_register_projects` để máy chủ tự đăng ký khi
+cần.
+
+Tám công cụ sau đây sẽ khả dụng:
 
 | Công cụ | Mục đích |
 |---|---|
