@@ -36,6 +36,14 @@ func TestEnumsMatchMigrationConstraints(t *testing.T) {
 		{"tasks_hardness_valid", append([]string{""}, strs(task.AllHardnesses())...)},
 		// No "" member: every project has a submodule mode, defaulting to NONE.
 		{"projects_submodules_valid", strs(task.AllSubmoduleModes())},
+		// No "" member: every task and every project has a verification
+		// mode, defaulting to in_place.
+		{"tasks_verification_mode_valid", strs(task.AllVerificationModes())},
+		{"projects_verification_mode_valid", strs(task.AllVerificationModes())},
+		// "" is not listed by AllVerificationPhases, but the column default
+		// is 'verify' and pre-column rows read as verify; the constraint
+		// itself allows only setup and verify.
+		{"verification_runs_phase_valid", strs(task.AllVerificationPhases())},
 	}
 
 	for _, tc := range cases {

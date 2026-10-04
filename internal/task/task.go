@@ -45,6 +45,14 @@ type Project struct {
 	// task's own flag; deliberately not copied into tasks at creation.
 	RequiresApproval bool
 
+	// VerificationMode is the default where this project's tasks verify:
+	// in_place in the agent's worktree, or clean in a fresh checkout of the
+	// result. It is a template, not policy: each task freezes its own mode
+	// at creation, so changing this later does not move the goalposts under
+	// tasks that already exist. Set only from the CLI
+	// (aidev project verify-mode), like RequiresApproval.
+	VerificationMode VerificationMode
+
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -84,6 +92,19 @@ type Task struct {
 	// dependency.
 	ProtectedPaths []string
 
+	// SetupSteps run before Verification, in the same place, to prepare the
+	// checkout (npm ci and friends). They are part of the verification
+	// pass — a setup command that fails fails the task — and they share the
+	// step_index numbering so results map back to the step that produced
+	// them. Empty means the checkout is used as the agent left it.
+	SetupSteps []VerificationStep
+
+	// VerificationMode decides where the pass runs, frozen at creation from
+	// the explicit choice or the project's default (see the Project field
+	// of the same name). Verification must not depend on settings that can
+	// change while a task is in flight.
+	VerificationMode VerificationMode
+
 	// MaxRetries is recorded for the future retry feature. The MVP never
 	// retries automatically.
 	MaxRetries int
@@ -115,10 +136,14 @@ type NewTaskInput struct {
 	AcceptanceCriteria string
 	Verification       []VerificationStep
 	ProtectedPaths     []string
-	MaxRetries         int
-	RequiresApproval   bool
-	BaseRef            string
-	Timeout            time.Duration
+	SetupSteps         []VerificationStep
+	// VerificationMode is the mode resolved by the caller (explicit choice
+	// or project default). Empty means VerificationInPlace.
+	VerificationMode VerificationMode
+	MaxRetries       int
+	RequiresApproval bool
+	BaseRef          string
+	Timeout          time.Duration
 }
 
 // ValidationError reports one or more rejected fields.
@@ -215,6 +240,30 @@ func New(input NewTaskInput, defaultAgent string) (Task, error) {
 		}
 	}
 
+	// Setup steps follow the verification rules: argv, no shell, bounded in
+	// count. Unlike verification they may be empty — most checkouts need no
+	// preparing — but one that is present runs with the same guarantees.
+	if len(input.SetupSteps) > MaxVerificationSteps {
+		add("%d setup commands exceed the limit of %d", len(input.SetupSteps), MaxVerificationSteps)
+	}
+	for i, step := range input.SetupSteps {
+		if err := step.Validate(); err != nil {
+			add("setup command %d: %v", i+1, err)
+		}
+	}
+
+	// The mode the caller resolved is stored as-is; an empty value means
+	// "the caller did not decide", which is in_place. Anything else must be
+	// a mode aidev knows — a typo here would silently change where
+	// verification runs.
+	verificationMode := input.VerificationMode
+	if strings.TrimSpace(string(verificationMode)) == "" {
+		verificationMode = VerificationInPlace
+	} else if !verificationMode.Valid() {
+		add("verification mode %q is not valid (want one of in_place, clean)", verificationMode)
+		verificationMode = VerificationInPlace
+	}
+
 	if input.Priority < MinPriority || input.Priority > MaxPriority {
 		add("priority %d is outside %d..%d", input.Priority, MinPriority, MaxPriority)
 	}
@@ -246,6 +295,8 @@ func New(input NewTaskInput, defaultAgent string) (Task, error) {
 		AcceptanceCriteria: input.AcceptanceCriteria,
 		Verification:       input.Verification,
 		ProtectedPaths:     input.ProtectedPaths,
+		SetupSteps:         input.SetupSteps,
+		VerificationMode:   verificationMode,
 		MaxRetries:         input.MaxRetries,
 		RequiresApproval:   input.RequiresApproval,
 		BaseRef:            strings.TrimSpace(input.BaseRef),

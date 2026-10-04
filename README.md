@@ -330,6 +330,7 @@ aidev task approve <task> [--deny] [--by WHO] [--reason R] [--json]
 
 aidev project list  [--json]                      # repositories aidev has run against
 aidev project approval [on|off] [--repo .]        # gate every task of the repo (operator only)
+aidev project verify-mode [in_place|clean] [--repo .]  # where new tasks verify (operator only)
 ```
 
 `<task>` is either the reference (`TASK-000001`, case-insensitive) or the UUID.

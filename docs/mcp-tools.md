@@ -107,6 +107,8 @@ Creates a task. Does **not** run it.
 | `title` | string | **yes** | one short line stating what to do |
 | `verification` | string[] | **yes** | commands aidev runs itself to decide the outcome |
 | `protected_paths` | string[] | no | glob paths the agent must not change (`.env*`, `migrations/*`, `ci`); an attempt that changes a matching path fails verification before any check runs |
+| `setup_steps` | string[] | no | commands that run before verification to prepare the checkout (`npm ci`); same argv rules as `verification`; a setup command that fails fails the task before any check runs |
+| `verification_mode` | string | no | where verification runs: `in_place` (in the agent's worktree) or `clean` (a fresh checkout of the result, so ignored or uncommitted files cannot make the checks pass); empty takes the project's default; frozen into the task at creation |
 | `description` | string | no | the full instruction for the agent |
 | `acceptance_criteria` | string | no | what done looks like, in prose |
 | `agent` | string | no | agent to use; defaults to `build` |
@@ -135,6 +137,9 @@ through as literal arguments.
 - `verification` is empty, or a command contains a shell operator
 - a `protected_paths` entry is empty or not a valid glob — rejected now so the
   task cannot be created with a protection that would silently match nothing
+- a `verification_mode` other than `in_place` or `clean`, or a `setup_steps`
+  entry that is empty or not argv — the mode decides where the checks run, so
+  a typo must not pick a place nobody chose
 - `base_ref` does not resolve — caught now rather than at worktree creation
 - the agent name is unknown to the backend. This check exists because OpenCode
   accepts an unknown name, warns, silently uses its default and exits 0

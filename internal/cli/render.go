@@ -36,6 +36,10 @@ func writeTaskDetail(w io.Writer, t task.Task) {
 	if t.Timeout > 0 {
 		fmt.Fprintf(w, "  timeout      %s\n", t.Timeout)
 	}
+	// Shown like model and hardness: where the checks run was decided when
+	// the task was created, and a reviewer comparing two results needs it as
+	// much as they need to know which model did the work.
+	fmt.Fprintf(w, "  verify mode  %s\n", t.VerificationMode)
 	fmt.Fprintf(w, "  id           %s\n", t.ID)
 	fmt.Fprintf(w, "  created      %s\n", t.CreatedAt.UTC().Format(time.RFC3339))
 
@@ -46,6 +50,12 @@ func writeTaskDetail(w io.Writer, t task.Task) {
 		fmt.Fprintf(w, "\n  acceptance criteria\n%s\n", indent(t.AcceptanceCriteria, "    "))
 	}
 
+	if len(t.SetupSteps) > 0 {
+		fmt.Fprintf(w, "\n  setup (runs before verification)\n")
+		for _, step := range t.SetupSteps {
+			fmt.Fprintf(w, "    %s\n", step.String())
+		}
+	}
 	fmt.Fprintf(w, "\n  verification (run by aidev, not by the agent)\n")
 	for _, step := range t.Verification {
 		fmt.Fprintf(w, "    %s\n", step.String())

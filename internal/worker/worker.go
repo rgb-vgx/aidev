@@ -1041,6 +1041,7 @@ func (r *run) verify(ctx context.Context) (Outcome, error) {
 
 	if err := r.transition(ctx, task.StatusVerifying, event.TypeVerificationStarted, map[string]any{
 		"steps": len(r.task.Verification),
+		"mode":  string(r.task.VerificationMode),
 	}); err != nil {
 		// A Cancel that landed after the agent finished owns the ending.
 		if out, ok := r.cancelledElsewhere(ctx, err); ok {
@@ -1068,7 +1069,16 @@ func (r *run) verify(ctx context.Context) (Outcome, error) {
 		r.emit(ctx, event.TypeVerificationTestsModified, map[string]any{"paths": paths})
 	}
 
-	intercepted := verification.Interceptions(r.task.Verification, changed)
+	// Setup commands deserve the same independence protection as the checks
+	// they prepare for: both run from the task, and both are refused before
+	// anything executes if their target changed during the attempt. The
+	// combined list shares one step_index numbering with verification_runs,
+	// so the indexes in the refusal match the rows a reader will find.
+	allSteps := make([]task.VerificationStep, 0, len(r.task.SetupSteps)+len(r.task.Verification))
+	allSteps = append(allSteps, r.task.SetupSteps...)
+	allSteps = append(allSteps, r.task.Verification...)
+
+	intercepted := verification.Interceptions(allSteps, changed)
 	violated, err := verification.Violations(r.task.ProtectedPaths, changed)
 	if err != nil {
 		// A stored pattern that cannot be evaluated means the guard the task's
@@ -1093,9 +1103,29 @@ func (r *run) verify(ctx context.Context) (Outcome, error) {
 		return r.fail(ctx, task.FailureVerification, refusalError(intercepted, violated))
 	}
 
+	// In clean mode the checks run on a detached checkout of the snapshot —
+	// the exact tree a commit would carry — so a file git ignores, or a file
+	// the agent never added, cannot make them pass. Everything from snapshot
+	// to checkout is plumbing: if any of it breaks, the failure kind says so
+	// (FailureWorktree) instead of pretending a check failed.
+	workingDir := r.worktree.Path
+	if r.task.VerificationMode == task.VerificationClean {
+		path, cleanup, err := r.cleanCheckout(ctx)
+		if err != nil {
+			span.SetAttributes(attribute.Bool("aidev.verification.passed", false))
+			return r.fail(ctx, task.FailureWorktree, fmt.Errorf("verification not run: %w", err))
+		}
+		// Always removed — on success, on failure and on cancellation
+		// alike. The detached checkout is scaffolding, not a record: the
+		// agent's worktree on the task branch is what a reviewer inspects.
+		defer cleanup()
+		workingDir = path
+	}
+
 	report, err := r.o.Verifier.Run(ctx, verification.Request{
 		AttemptID:  r.attempt.ID,
-		WorkingDir: r.worktree.Path,
+		WorkingDir: workingDir,
+		SetupSteps: r.task.SetupSteps,
 		Steps:      r.task.Verification,
 	})
 	if err != nil {
@@ -1124,6 +1154,47 @@ func (r *run) verify(ctx context.Context) (Outcome, error) {
 		return r.fail(ctx, report.FailureKind, fmt.Errorf("verification did not pass: %s", report.Summary()))
 	}
 	return r.succeed(ctx)
+}
+
+// cleanCheckout builds the detached worktree clean verification runs in:
+// the post-agent tree snapshotted to a tree object, committed without
+// touching any ref, and checked out under the workspace root. It returns the
+// path to verify in and a cleanup that removes the checkout — the caller
+// defers it, so the scaffolding disappears on success, failure and
+// cancellation alike.
+//
+// Every failure is plumbing, not a check: the caller reports them as
+// FailureWorktree so nobody mistakes "the snapshot broke" for "the tests
+// failed".
+func (r *run) cleanCheckout(ctx context.Context) (string, func(), error) {
+	tree, err := r.worktree.SnapshotTree(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	commit, err := r.worktree.CommitTree(ctx, tree,
+		fmt.Sprintf("aidev verification snapshot for %s", r.task.Identifier()))
+	if err != nil {
+		return "", nil, err
+	}
+	wt, err := r.o.Git.CreateDetached(ctx, r.worktree.Repository(),
+		"verify-"+r.attempt.ID.String(), commit)
+	if err != nil {
+		return "", nil, err
+	}
+
+	cleanup := func() {
+		// Deliberately not the caller's context: a cancelled task must
+		// still lose its scaffolding, or every cancelled clean run leaks a
+		// worktree. Force is right here — the checkout exists to be
+		// discarded, and running the checks left build artefacts in it.
+		writeCtx, cancel := writeContext(ctx)
+		defer cancel()
+		if err := r.o.Git.Remove(writeCtx, wt, true); err != nil {
+			r.log.ErrorContext(ctx, "could not remove the temporary verification worktree",
+				"path", wt.Path, "error", err.Error())
+		}
+	}
+	return wt.Path, cleanup, nil
 }
 
 // interceptionPayload lists what was replaced for the audit log, so a reviewer

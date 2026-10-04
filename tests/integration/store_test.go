@@ -602,6 +602,7 @@ func TestWorktreeWorkerAndVerificationPersistence(t *testing.T) {
 			ID:         uuid.Must(uuid.NewV7()),
 			AttemptID:  attempt.ID,
 			StepIndex:  i,
+			Phase:      task.PhaseVerify,
 			Command:    fmt.Sprintf("go test ./step%d", i),
 			Status:     step.status,
 			ExitCode:   step.exit,
@@ -628,6 +629,11 @@ func TestWorktreeWorkerAndVerificationPersistence(t *testing.T) {
 	}
 	if results[0].Duration != 1500*time.Millisecond {
 		t.Errorf("duration = %s, want 1.5s", results[0].Duration)
+	}
+	// The phase column is new with setup_steps; a row that cannot name which
+	// half of the sequence it belongs to would be unpageable.
+	if results[0].Phase != task.PhaseVerify {
+		t.Errorf("phase = %q, want %q", results[0].Phase, task.PhaseVerify)
 	}
 	if !results[0].Passed() || results[1].Passed() {
 		t.Error("Passed() does not reflect the recorded statuses")

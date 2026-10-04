@@ -105,6 +105,7 @@ func taskCreate(ctx context.Context, env *Env, args []string) error {
 
 	var verify repeatable
 	var protect repeatable
+	var setup repeatable
 	repo := fs.String("repo", "", "path to the git repository (default: the current directory)")
 	title := fs.String("title", "", "short statement of what to do (required)")
 	description := fs.String("description", "", "the full instruction for the agent")
@@ -120,6 +121,8 @@ func taskCreate(ctx context.Context, env *Env, args []string) error {
 	asJSON := fs.Bool("json", false, "print the created task as JSON")
 	fs.Var(&verify, "verify", "command aidev will run to verify the task; repeat for more than one (required)")
 	fs.Var(&protect, "protect", "glob path or directory the agent must not change (.env*, migrations/*, docs); an attempt that touches a match fails verification before any check runs; repeat for more than one")
+	fs.Var(&setup, "setup", "command run before verification to prepare the checkout (npm ci); repeat for more than one")
+	verifyMode := fs.String("verify-mode", "", "where verification runs: in_place (default, in the agent's worktree) or clean (a fresh checkout of the result, so ignored or uncommitted files cannot make the checks pass); empty takes the project default")
 
 	fs.Usage = func() {
 		fmt.Fprintf(env.Stderr, `usage: aidev task create --title <title> --verify <command> [flags]
@@ -146,6 +149,10 @@ flags:
 	steps, err := task.ParseVerificationSteps(verify)
 	if err != nil {
 		return err
+	}
+	setupSteps, err := task.ParseVerificationSteps(setup)
+	if err != nil {
+		return fmt.Errorf("--setup: %w", err)
 	}
 
 	repoPath := *repo
@@ -174,6 +181,8 @@ flags:
 		Priority:           *priority,
 		Verification:       steps,
 		ProtectedPaths:     protect,
+		SetupSteps:         setupSteps,
+		VerificationMode:   *verifyMode,
 		MaxRetries:         *maxRetries,
 		RequiresApproval:   *requiresApproval,
 		BaseRef:            *baseRef,

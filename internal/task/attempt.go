@@ -295,9 +295,15 @@ type VerificationRun struct {
 	ID        uuid.UUID
 	AttemptID uuid.UUID
 
-	// StepIndex is the position in the task's verification list, so results can
-	// be matched back to the step that produced them.
+	// StepIndex is the position in the combined pass — setup commands first,
+	// then verification commands — so results can be matched back to the
+	// step that produced them.
 	StepIndex int
+
+	// Phase says which half of the pass this run belongs to. Setup and
+	// verify share the step_index numbering, so the phase is a separate
+	// field rather than a range convention.
+	Phase VerificationPhase
 
 	Command string
 	Status  VerificationStatus

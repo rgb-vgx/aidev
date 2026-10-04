@@ -109,6 +109,10 @@ type CreateTaskInput struct {
 
 	ProtectedPaths []string `json:"protected_paths,omitempty" jsonschema:"glob paths the agent must not change, for example [\".env*\", \"migrations/*\", \"ci\"]; an attempt that changes a matching path fails verification without running any check"`
 
+	SetupSteps []string `json:"setup_steps,omitempty" jsonschema:"commands run before verification to prepare the checkout, for example [\"npm ci\"]; they run where verification runs, without a shell, and a failing setup fails the task"`
+
+	VerificationMode string `json:"verification_mode,omitempty" jsonschema:"where verification runs: in_place (default, in the agent's worktree) or clean (a fresh checkout of the result, so files git ignores or the agent never committed cannot make the checks pass); empty takes the project's default and the choice is frozen into the task"`
+
 	Description        string `json:"description,omitempty" jsonschema:"the full instruction for the agent: what to build and where. Be specific about file names and signatures"`
 	AcceptanceCriteria string `json:"acceptance_criteria,omitempty" jsonschema:"what done looks like, in prose"`
 	Agent              string `json:"agent,omitempty" jsonschema:"agent to use; defaults to the configured one (build)"`
@@ -137,6 +141,10 @@ func (s *Server) createTask(ctx context.Context, _ *sdk.CallToolRequest, in Crea
 	if len(steps) == 0 {
 		return nil, CreateTaskOutput{}, task.ErrVerificationRequired
 	}
+	setupSteps, err := task.ParseVerificationSteps(in.SetupSteps)
+	if err != nil {
+		return nil, CreateTaskOutput{}, fmt.Errorf("setup_steps: %w", err)
+	}
 
 	orchestrator, _, err := s.connected(ctx)
 	if err != nil {
@@ -152,6 +160,8 @@ func (s *Server) createTask(ctx context.Context, _ *sdk.CallToolRequest, in Crea
 		Priority:           in.Priority,
 		Verification:       steps,
 		ProtectedPaths:     in.ProtectedPaths,
+		SetupSteps:         setupSteps,
+		VerificationMode:   in.VerificationMode,
 		RequiresApproval:   in.RequiresApproval,
 		BaseRef:            in.BaseRef,
 		Hardness:           in.Hardness,

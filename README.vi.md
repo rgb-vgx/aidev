@@ -304,6 +304,7 @@ aidev task approve <task> [--deny] [--by WHO] [--reason R] [--json]
 
 aidev project list  [--json]                      # các repository mà aidev đã chạy task
 aidev project approval [on|off] [--repo .]        # chặn mọi task của repo chờ người duyệt (chỉ ở CLI)
+aidev project verify-mode [in_place|clean] [--repo .]  # nơi các task mới verify (chỉ ở CLI)
 ```
 
 `<task>` là mã tham chiếu (`TASK-000001`, không phân biệt chữ hoa chữ thường) hoặc UUID.

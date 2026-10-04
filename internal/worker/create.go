@@ -33,7 +33,15 @@ type CreateTaskInput struct {
 	// ProtectedPaths are glob patterns the creator ring-fences; they are
 	// normalized and validated here, at the one entry point every caller uses,
 	// so the database only ever holds patterns verification can evaluate.
-	ProtectedPaths   []string
+	ProtectedPaths []string
+	// SetupSteps run before verification to prepare the checkout. Parsed by
+	// the caller (argv, no shell); validated again by task.New.
+	SetupSteps []task.VerificationStep
+	// VerificationMode is the caller's choice of where verification runs —
+	// "in_place", "clean", or empty to take the project's default. It is
+	// resolved and frozen into the task row here, so later changes to the
+	// project default cannot move the goalposts under this task.
+	VerificationMode string
 	MaxRetries       int
 	RequiresApproval bool
 	BaseRef          string
@@ -95,6 +103,37 @@ func (o *Orchestrator) CreateTask(ctx context.Context, in CreateTaskInput) (task
 		return task.Task{}, err
 	}
 
+	// Resolve the mode now and freeze it into the task: an explicit choice
+	// wins, otherwise the project's default applies as of this moment.
+	// Later changes to the project row affect only tasks created after
+	// them, so verification stays a pure function of the task.
+	mode := project.VerificationMode
+	if strings.TrimSpace(in.VerificationMode) != "" {
+		mode, err = task.ParseVerificationMode(in.VerificationMode)
+		if err != nil {
+			return task.Task{}, err
+		}
+	}
+
+	// Clean verification cannot honour submodules: the detached checkout of
+	// the snapshot would contain empty directories, and the checks would run
+	// against sources that are not there. Refuse now — with the offending
+	// path — rather than letting every such task fail at verification time
+	// with a result nobody can explain.
+	if mode == task.VerificationClean {
+		base, err := o.Git.ResolveCommit(ctx, repo, in.BaseRef)
+		if err != nil {
+			return task.Task{}, err
+		}
+		if found, path, err := o.Git.HasGitlinks(ctx, repo, base); err != nil {
+			return task.Task{}, err
+		} else if found {
+			return task.Task{}, fmt.Errorf(
+				"verification mode clean does not support submodules: %s is a gitlink at %s; "+
+					"use in_place verification for this repository", path, base)
+		}
+	}
+
 	built, err := task.New(task.NewTaskInput{
 		ProjectID:          project.ID,
 		Title:              in.Title,
@@ -106,6 +145,8 @@ func (o *Orchestrator) CreateTask(ctx context.Context, in CreateTaskInput) (task
 		AcceptanceCriteria: in.AcceptanceCriteria,
 		Verification:       in.Verification,
 		ProtectedPaths:     protected,
+		SetupSteps:         in.SetupSteps,
+		VerificationMode:   mode,
 		MaxRetries:         in.MaxRetries,
 		RequiresApproval:   in.RequiresApproval,
 		BaseRef:            in.BaseRef,
@@ -133,6 +174,7 @@ func (o *Orchestrator) CreateTask(ctx context.Context, in CreateTaskInput) (task
 			"priority":          stored.Priority,
 			"requires_approval": stored.RequiresApproval,
 			"verification":      commands,
+			"verification_mode": string(stored.VerificationMode),
 			"repo_path":         repo.Path,
 		})
 	})

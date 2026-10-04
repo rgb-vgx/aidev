@@ -47,6 +47,7 @@ A git repository aidev may run tasks against.
 | `repo_path` | **unique**, must be absolute (`CHECK repo_path LIKE '/%'`) |
 | `default_branch` | base for task branches when a task does not name one |
 | `requires_approval` | project approval policy: every task stops for a human first; set only via `aidev project approval` (migration 0008) |
+| `verification_mode` | default where new tasks verify: `in_place` or `clean` (migration 0011); a template only — each task freezes its own copy at creation, set only via `aidev project verify-mode` |
 
 `repo_path` is unique so that registering the same repository twice is idempotent.
 `EnsureProject` does insert-or-select in a single statement, so two callers racing
@@ -65,6 +66,8 @@ The unit of delegated work.
 | `status` | the lifecycle state, see below |
 | `verification` | JSONB array of argv objects, **at least one required** |
 | `protected_paths` | JSONB array of glob patterns (default `[]`); an attempt changing a matching path fails verification before any check runs (migration 0010) |
+| `setup_steps` | JSONB array of argv commands (default `[]`) that run before verification to prepare the checkout; a failing one fails the task before any check runs (migration 0011) |
+| `verification_mode` | where this task's verification runs: `in_place` or `clean`, frozen at creation from the caller's choice or the project's default (migration 0011) |
 | `max_retries` | recorded for a future retry feature; the MVP never retries |
 | `requires_approval` | the task's own gate (the creator's ask); OR'd at run time with the project's policy, never overwritten by it |
 | `base_ref` | git ref to branch from; empty means the project default |
@@ -156,6 +159,11 @@ and safe to record; an environment can carry credentials.
 One row per verification step that aidev ran itself, with
 `UNIQUE (attempt_id, step_index)` so results always map back to the step that
 produced them.
+
+`step_index` numbers one sequence across both phases of a pass — setup steps
+first, then the task's own checks — and `phase` (`setup` or `verify`) says
+which half a row belongs to, so paging on the index needs no special case
+(migration 0011).
 
 `SKIPPED` is an explicit status for a step that never ran because an earlier one
 failed. Without it, a missing row would be ambiguous between "skipped" and

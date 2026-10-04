@@ -33,6 +33,8 @@ type Task struct {
 	Priority           int      `json:"priority" jsonschema:"higher runs first"`
 	Verification       []string `json:"verification" jsonschema:"the commands aidev runs itself to decide whether the task succeeded"`
 	ProtectedPaths     []string `json:"protected_paths,omitempty" jsonschema:"glob patterns the creator ring-fenced; an attempt that changes a matching path fails verification without running any check"`
+	SetupSteps         []string `json:"setup_steps,omitempty" jsonschema:"commands that run before verification to prepare the checkout; absent when the task needs no preparation"`
+	VerificationMode   string   `json:"verification_mode" jsonschema:"where verification runs: in_place (in the agent's worktree) or clean (a fresh checkout of the result), frozen at creation"`
 	RequiresApproval   bool     `json:"requires_approval" jsonschema:"whether a human decision is required before the task may run"`
 	MaxRetries         int      `json:"max_retries" jsonschema:"recorded for a future retry feature; aidev does not retry"`
 	BaseRef            string   `json:"base_ref,omitempty" jsonschema:"git ref the task's branch starts from"`
@@ -48,6 +50,13 @@ func NewTask(t task.Task) Task {
 	for _, step := range t.Verification {
 		commands = append(commands, step.String())
 	}
+	var setup []string
+	if len(t.SetupSteps) > 0 {
+		setup = make([]string, 0, len(t.SetupSteps))
+		for _, step := range t.SetupSteps {
+			setup = append(setup, step.String())
+		}
+	}
 	return Task{
 		Ref:                t.Ref,
 		ID:                 t.ID.String(),
@@ -61,6 +70,8 @@ func NewTask(t task.Task) Task {
 		Priority:           t.Priority,
 		Verification:       commands,
 		ProtectedPaths:     t.ProtectedPaths,
+		SetupSteps:         setup,
+		VerificationMode:   t.VerificationMode.String(),
 		RequiresApproval:   t.RequiresApproval,
 		MaxRetries:         t.MaxRetries,
 		BaseRef:            t.BaseRef,
