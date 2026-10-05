@@ -743,11 +743,23 @@ What a `kill -9` leaves at each boundary is tested against the real binary
 (`tests/integration/crash_test.go`): killed while the agent runs, while the checks
 run, or while waiting for the fence to record a success, the task is recoverable,
 its work retained, and the branch untouched. One window remains and is
-deliberate: the branch update happens inside the success transaction, so a
-process that dies after it and before the commit leaves a verified commit on the
-branch while the database still says `VERIFYING`; recovery then cancels the task.
-The opposite order would risk the worse failure — a `SUCCEEDED` row with no
-commit behind it.
+deliberate. It is worth naming, because everything else in recovery depends on
+it:
+
+**The durable-commit invariant.** A verified commit may exist on a task's branch
+while the database says `VERIFYING` and no ending is recorded. This happens when
+the process dies after the branch update inside the success transaction and before
+that transaction commits — the branch move is git's and survives, the database
+write is not and rolls back. Recovery then cancels the task, exactly as it would
+any other interrupted run, and never claims the commit: no `SUCCEEDED`, no
+`task.succeeded`, and `aidev task apply` refuses a task that is not SUCCEEDED, so
+the commit waits for a person to take by hand (`git merge <commit>`).
+
+The opposite ordering — writing `SUCCEEDED` first — would allow a claim with no
+commit behind it, which is the failure the whole result model exists to prevent.
+In one direction the record understates what happened and a human can see the
+commit; in the other it would overstate it, and nobody could. `TestCrashBetweenBranchUpdateAndCommitIsRecoverable`
+holds this, including the refusal to apply.
 
 Recovery is never fully automatic in the worker: a lease is evidence, and aidev
 does not read it as an instruction. A human runs `aidev task recover` (doctor
