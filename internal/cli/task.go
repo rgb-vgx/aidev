@@ -28,6 +28,7 @@ func runTask(ctx context.Context, env *Env, args []string) error {
 		"get":     {"show one task", taskGet},
 		"run":     {"run a task: isolate, delegate, verify, record", taskRun},
 		"result":  {"show the outcome of a task's latest attempt", taskResult},
+		"run-log": {"show the log a detached run wrote", taskRunLog},
 		"diff":    {"show what a task changed", taskDiff},
 		"events":  {"show a task's event history", taskEvents},
 		"cancel":  {"cancel a task that has not finished", taskCancel},

@@ -217,7 +217,7 @@ channel), its stderr to a log file per run under `workspace_root/run-logs/`, and
 it carries its own total deadline — the task's timeout plus the verification
 budget plus a margin — so a run cannot outlive its bounds even though no one
 waits on it. If that process dies before recording an ending, the tool reports
-the crash with the tail of its log.
+the crash with the tail of its log. It can be read with `aidev task run-log <task>`.
 
 Creates a git worktree under `workspace_root` and a branch `aidev/<ref>`; runs the
 agent, which writes files there; moves the task through `RUNNING`, `VERIFYING` and a
