@@ -266,6 +266,7 @@ Reads the outcome of a task's most recent attempt.
 | `result.approval` | the most recent approval record |
 | `result.base_moved` | true when the base ref pointed at a different commit when the attempt started than when the task was created (`result.task.base_commit_at_create` vs `result.worktree.base_commit`) — the work was done on code the task's author may not have seen; absent otherwise |
 | `result.tests_modified` | changed paths that look like the tests judging this attempt — a report so a reviewer can see that what passed was also written in the same attempt; absent when the attempt left the tests alone |
+| `result.apply` | whether the task's verified result has been applied: `state` (`applied` or `undone`), `into` (the branch), `commit` (the merge or revert commit), `undid` (what the revert undid, when undone) and `at`; absent when it was never applied |
 | `still_running` | the task is currently executing |
 | `agent_transcript`, `agent_stderr`, `diff` | only with `include_logs`, each a window of at most `max_bytes` |
 | `agent_stdout` | the raw event stream, only when `sections` names `stdout` |
@@ -338,10 +339,13 @@ None.
 | `repo_path` | string | no | only tasks for this repository |
 | `statuses` | string[] | no | `PENDING`, `READY`, `RUNNING`, `VERIFYING`, `SUCCEEDED`, `FAILED`, `CANCELLED`, `WAITING_APPROVAL` |
 | `limit` | integer | no | default 50, maximum 500 |
+| `needs_apply` | boolean | no | only `SUCCEEDED` tasks whose verified result has not been applied: never applied, or applied and then undone |
 
 ### Output
 
-`tasks` newest first, and `count`.
+`tasks` newest first, and `count`. Each item carries `repo_path` and, when the
+task was ever applied, `apply_state` (`applied` or `undone`) with `apply_into`
+and `apply_commit`.
 
 ### Errors
 

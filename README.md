@@ -328,7 +328,7 @@ aidev migrate [--json]                # apply pending migrations
 aidev task create --title T --verify CMD [--repo .] [--description D]
                   [--acceptance A] [--agent build] [--priority N]
                   [--requires-approval] [--base-ref REF] [--timeout 30m]
-aidev task list   [--status S,S] [--repo .] [--limit N] [--json]
+aidev task list   [--status S,S] [--repo .] [--limit N] [--unapplied] [--json]
 aidev task get    <task> [--json]
 aidev task run    <task> [--json]
 aidev task result <task> [--logs] [--json]
@@ -380,6 +380,10 @@ git diff main..aidev/TASK-000001
 ```
 
 Nothing is merged, and nothing is ever committed to your working branch.
+
+A succeeded task's listing shows whether its result has been applied
+(`aidev task list --unapplied` lists only the `SUCCEEDED` tasks still waiting
+to be applied).
 
 A task created with `--max-retries N` (MCP: `max_retries`) gets up to N more
 attempts when its checks fail or its agent stops early. Each retry continues in

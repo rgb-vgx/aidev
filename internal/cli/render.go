@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -10,13 +11,25 @@ import (
 	"aidev/internal/worker"
 )
 
-// writeTaskLine prints one task as a single line, for listings.
-func writeTaskLine(w io.Writer, t task.Task) {
-	fmt.Fprintf(w, "%-12s  %-16s  %-6s  %s\n", t.Ref, t.Status, t.Agent, truncate(t.Title, 60))
+// writeTaskLine prints one task as a single line, for listings. It names the
+// repository the task belongs to and, when the task's verified result was
+// taken, where it went.
+func writeTaskLine(w io.Writer, t task.Task, repoPath string, apply task.Apply) {
+	marker := ""
+	switch apply.State {
+	case task.ApplyApplied:
+		marker = fmt.Sprintf("  [applied → %s]", apply.Into)
+	case task.ApplyUndone:
+		marker = "  [undone]"
+	}
+	fmt.Fprintf(w, "%-12s  %-16s  %-6s  %-20s%s  %s\n",
+		t.Ref, t.Status, t.Agent, filepath.Base(repoPath), marker, truncate(t.Title, 60))
 }
 
-// writeTaskDetail prints a task for a human.
-func writeTaskDetail(w io.Writer, t task.Task) {
+// writeTaskDetail prints a task for a human, with the apply record the store
+// derived from the event log: a caller that forgot to pass it would silently
+// report less, so it is a parameter rather than an optional one.
+func writeTaskDetail(w io.Writer, t task.Task, apply task.Apply) {
 	fmt.Fprintf(w, "%s  %s\n", t.Ref, t.Title)
 	fmt.Fprintf(w, "  status       %s\n", t.Status)
 	fmt.Fprintf(w, "  agent        %s\n", t.Agent)
@@ -51,6 +64,7 @@ func writeTaskDetail(w io.Writer, t task.Task) {
 	fmt.Fprintf(w, "  verify mode  %s\n", t.VerificationMode)
 	fmt.Fprintf(w, "  id           %s\n", t.ID)
 	fmt.Fprintf(w, "  created      %s\n", t.CreatedAt.UTC().Format(time.RFC3339))
+	writeApplyLine(w, apply)
 
 	if t.Description != "" {
 		fmt.Fprintf(w, "\n  description\n%s\n", indent(t.Description, "    "))
@@ -134,12 +148,26 @@ func writeRunOutcome(env *Env, outcome worker.Outcome, runs []task.VerificationR
 	writeNextSteps(w, outcome)
 }
 
-// writeResult reports a stored outcome.
-func writeResult(env *Env, outcome worker.Outcome, runs []task.VerificationRun, earlier []task.TaskAttempt) {
+// writeApplyLine reports whether a task's verified result was taken into the
+// operator's branch. A task that was never applied says nothing: there is
+// nothing to report, and the line must not contain the word "applied".
+func writeApplyLine(w io.Writer, apply task.Apply) {
+	switch apply.State {
+	case task.ApplyApplied:
+		fmt.Fprintf(w, "  apply        applied to %s (%s)\n", apply.Into, shortCommit(apply.Commit))
+	case task.ApplyUndone:
+		fmt.Fprintf(w, "  apply        undone (reverted on %s as %s)\n", apply.Into, shortCommit(apply.Commit))
+	}
+}
+
+// writeResult reports a stored outcome, with the apply record the store derived
+// from the event log.
+func writeResult(env *Env, outcome worker.Outcome, runs []task.VerificationRun, earlier []task.TaskAttempt, apply task.Apply) {
 	w := env.Stdout
 	t := outcome.Task
 	fmt.Fprintf(w, "%s  %s\n", t.Ref, t.Title)
 	fmt.Fprintf(w, "  status  %s\n", t.Status)
+	writeApplyLine(w, apply)
 
 	if outcome.Attempt == nil {
 		fmt.Fprintf(w, "\nThis task has not run yet. Run it with: aidev task run %s\n", t.Identifier())

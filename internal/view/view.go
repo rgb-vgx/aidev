@@ -42,6 +42,10 @@ type Task struct {
 	BaseCommitAtCreate string   `json:"base_commit_at_create,omitempty" jsonschema:"the commit the base ref pointed at when the task was created"`
 	TimeoutSeconds     int      `json:"timeout_seconds,omitempty" jsonschema:"per-task agent timeout; 0 means the configured default"`
 	ProjectID          string   `json:"project_id" jsonschema:"the repository this task belongs to"`
+	RepoPath           string   `json:"repo_path,omitempty" jsonschema:"absolute path of the repository this task belongs to"`
+	ApplyState         string   `json:"apply_state,omitempty" jsonschema:"whether the task's verified result has been applied: applied or undone; absent when it was never applied"`
+	ApplyInto          string   `json:"apply_into,omitempty" jsonschema:"branch the result was applied to or reverted from; absent when it was never applied"`
+	ApplyCommit        string   `json:"apply_commit,omitempty" jsonschema:"merge commit that applied the result, or the revert commit that undid it; absent when it was never applied"`
 	CreatedAt          string   `json:"created_at" jsonschema:"RFC3339 timestamp"`
 	UpdatedAt          string   `json:"updated_at" jsonschema:"RFC3339 timestamp"`
 }
@@ -258,6 +262,37 @@ type Result struct {
 	// author may never have seen.
 	BaseMoved bool   `json:"base_moved,omitempty" jsonschema:"true when the base ref pointed at a different commit when the attempt started than when the task was created; compare task.base_commit_at_create with worktree.base_commit"`
 	Message   string `json:"message,omitempty" jsonschema:"one-line human summary of the outcome"`
+	// Apply is whether the task's verified result has been applied to the
+	// operator's branch, derived from the event log rather than stored.
+	Apply *Apply `json:"apply,omitempty" jsonschema:"whether the task's verified result has been applied; absent when it was never applied"`
+}
+
+// Apply is a task's derived apply state: where its verified result went, or
+// came back from.
+type Apply struct {
+	State  string `json:"state" jsonschema:"applied or undone"`
+	Into   string `json:"into" jsonschema:"branch the result was applied to or reverted from"`
+	Commit string `json:"commit" jsonschema:"merge commit that applied the result, or the revert commit that undid it"`
+	Undid  string `json:"undid,omitempty" jsonschema:"the commit the revert undid, when the state is undone"`
+	At     string `json:"at,omitempty" jsonschema:"RFC3339 timestamp of when the newest apply event was recorded"`
+}
+
+// NewApply converts a domain apply record. A task that was never applied has
+// no record, so it converts to nil and the field is omitted.
+func NewApply(a task.Apply) *Apply {
+	if a.State == task.ApplyNever {
+		return nil
+	}
+	v := &Apply{
+		State:  a.State.String(),
+		Into:   a.Into,
+		Commit: a.Commit,
+		Undid:  a.Undid,
+	}
+	if !a.At.IsZero() {
+		v.At = a.At.UTC().Format(time.RFC3339)
+	}
+	return v
 }
 
 // Event is one entry of a task's history.

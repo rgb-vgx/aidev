@@ -303,7 +303,7 @@ aidev migrate [--json]                # apply pending migrations
 aidev task create --title T --verify CMD [--repo .] [--description D]
                   [--acceptance A] [--agent build] [--priority N]
                   [--requires-approval] [--base-ref REF] [--timeout 30m]
-aidev task list   [--status S,S] [--repo .] [--limit N] [--json]
+aidev task list   [--status S,S] [--repo .] [--limit N] [--unapplied] [--json]
 aidev task get    <task> [--json]
 aidev task run    <task> [--json]
 aidev task result <task> [--logs] [--json]
@@ -355,6 +355,10 @@ git diff main..aidev/TASK-000001
 ```
 
 Không có gì được hợp nhất, và không có gì bao giờ được commit lên nhánh làm việc của bạn.
+
+Listing của một task đã thành công cho biết kết quả của nó đã được áp dụng hay
+chưa (`aidev task list --unapplied` chỉ liệt kê các task `SUCCEEDED` còn đang
+chờ được áp dụng).
 
 Một task được tạo với `--max-retries N` (MCP: `max_retries`) có thêm tối đa N lần
 thử khi các lệnh kiểm tra thất bại hoặc agent dừng sớm. Mỗi lần thử lại tiếp tục
