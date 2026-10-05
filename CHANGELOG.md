@@ -7,6 +7,30 @@ with:
 curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh
 ```
 
+## Unreleased
+
+- **Apply and undo.** `aidev task apply <task>` merges a succeeded task's branch
+  into the branch you have checked out, with a merge commit, and records it;
+  `aidev task undo <task>` reverts it with a new commit, safe after a push. Both
+  refuse a checkout with uncommitted changes, and a conflict is aborted with the
+  files named and nothing changed. Applying again after an undo works.
+
+- **A stale run can no longer write.** Every write of a run checks, under the
+  task's row lock, that its attempt is still its own; a run that was paused past
+  its lease or cancelled from another process stops publishing — no commit on
+  the branch, no events after the ending. Crashes at each boundary of a run are
+  now tested against the real binary.
+
+- `aidev doctor` warns when the disk holding the worktrees is nearly full, and
+  tells a stopped Docker daemon, a permission problem and a stopped database
+  container apart.
+
+- The documentation says plainly what the agent can reach — it runs as you,
+  without a sandbox — and how to back up and restore the database.
+
+- Plugin 0.5.0: the review skill offers apply and undo; the doctor skill covers
+  every check, including stuck tasks and the disk.
+
 ## v0.2.0
 
 Upgrading from v0.1.0: install the new binary, then run `aidev migrate` (twelve
