@@ -13,11 +13,12 @@ about whether it succeeded is not an input to that decision.
 Everything is persisted in PostgreSQL: the task, each attempt, the captured
 output, the diff, the verification results, and the full event history.
 
-> **Status: Phase 4 of 5.** Usable from the terminal and from Claude Code. The
-> pipeline has been driven end to end against the real OpenCode, and the MCP server
-> is registered and connected to the installed Claude Code. Phase 5 is hardening
-> and the remaining documentation. See
-> [docs/architecture.md](docs/architecture.md#status).
+> **Status: every phase is done.** Environment research, the domain and
+> persistence, git worktrees and the agent backends, the task CLI, the MCP server,
+> and the hardening, end-to-end test and documentation. aidev works from the
+> terminal and from Claude Code, which has created and run tasks through the MCP
+> server. What aidev deliberately does not do is listed in
+> [docs/architecture.md](docs/architecture.md#what-the-mvp-does-not-do).
 
 ## Why it exists
 

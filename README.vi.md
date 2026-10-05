@@ -13,11 +13,11 @@ về việc nó có thành công hay không không phải là đầu vào của 
 Mọi thứ đều được lưu trong PostgreSQL: task, từng lần thử, output đã thu lại,
 diff, kết quả verification, và toàn bộ lịch sử event.
 
-> **Trạng thái: Giai đoạn 4 trên 5.** Dùng được từ terminal và từ Claude Code.
-> Toàn bộ luồng đã được chạy đầu cuối với OpenCode thật, và máy chủ MCP
-> đã được đăng ký và kết nối tới Claude Code đã cài. Giai đoạn 5 là củng cố
-> và hoàn thiện tài liệu còn lại. Xem
-> [docs/architecture.md](docs/architecture.md#status).
+> **Trạng thái: mọi giai đoạn đã xong.** Nghiên cứu môi trường, miền nghiệp vụ và
+> lưu trữ, worktree git và các backend agent, CLI cho task, máy chủ MCP, cùng phần
+> củng cố, test đầu cuối và tài liệu. aidev dùng được từ terminal và từ Claude Code,
+> và Claude Code đã tạo rồi chạy task qua máy chủ MCP. Những gì aidev cố ý không làm
+> thì được liệt kê trong [docs/architecture.md](docs/architecture.md#what-the-mvp-does-not-do).
 
 ## Vì sao aidev tồn tại
 
