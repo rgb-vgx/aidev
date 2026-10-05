@@ -332,6 +332,7 @@ aidev task list   [--status S,S] [--repo .] [--limit N] [--json]
 aidev task get    <task> [--json]
 aidev task run    <task> [--json]
 aidev task result <task> [--logs] [--json]
+aidev task diff <task>                    # what a task changed
 aidev task events <task> [--payload] [--after SEQ] [--json]
 aidev task cancel <task> [--reason R] [--json]
 aidev task approve <task> [--deny] [--by WHO] [--reason R] [--json]
