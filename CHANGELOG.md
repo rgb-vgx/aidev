@@ -7,7 +7,13 @@ with:
 curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh
 ```
 
-## Unreleased
+## v0.7.0
+
+Upgrading from v0.6.0: install the new binary and restart Claude Code. There is no
+migration and no plugin change in this release.
+
+A task listing now answers two questions it could not before: which repository a
+task is for, and whether its verified result has been taken.
 
 - **A task listing says which repository the task is for, and whether its result
   has been taken.** `aidev task list` now shows the repository and an apply
