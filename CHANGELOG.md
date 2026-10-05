@@ -7,7 +7,10 @@ with:
 curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh
 ```
 
-## Unreleased
+## v0.4.0
+
+Upgrading from v0.3.0: install the new binary, run `claude plugin update
+aidev@aidev` and restart Claude Code. There is no migration in this release.
 
 - **Tasks can run side by side.** Each task now gets its own OpenCode database
   (`workspace_root/opencode-db/<ref>.sqlite`, kept for its retries): on OpenCode's
