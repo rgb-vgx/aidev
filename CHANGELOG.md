@@ -7,7 +7,13 @@ with:
 curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh
 ```
 
-## Unreleased
+## v0.6.0
+
+Upgrading from v0.5.0: install the new binary and restart Claude Code. There is no
+migration and no plugin change in this release.
+
+Both features were specified test-first and implemented by aidev itself, two tasks
+running side by side.
 
 - `aidev task run-log <task>` reads the log a detached run wrote under
   `workspace_root/run-logs/` — the file that holds the reason when a run dies
