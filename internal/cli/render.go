@@ -26,10 +26,10 @@ func writeTaskLine(w io.Writer, t task.Task, repoPath string, apply task.Apply) 
 		t.Ref, t.Status, t.Agent, filepath.Base(repoPath), marker, truncate(t.Title, 60))
 }
 
-// writeTaskDetail prints a task for a human. The apply record is variadic so
-// that existing callers without one keep compiling; task get passes what the
-// store derived from the event log.
-func writeTaskDetail(w io.Writer, t task.Task, apply ...task.Apply) {
+// writeTaskDetail prints a task for a human, with the apply record the store
+// derived from the event log: a caller that forgot to pass it would silently
+// report less, so it is a parameter rather than an optional one.
+func writeTaskDetail(w io.Writer, t task.Task, apply task.Apply) {
 	fmt.Fprintf(w, "%s  %s\n", t.Ref, t.Title)
 	fmt.Fprintf(w, "  status       %s\n", t.Status)
 	fmt.Fprintf(w, "  agent        %s\n", t.Agent)
@@ -64,9 +64,7 @@ func writeTaskDetail(w io.Writer, t task.Task, apply ...task.Apply) {
 	fmt.Fprintf(w, "  verify mode  %s\n", t.VerificationMode)
 	fmt.Fprintf(w, "  id           %s\n", t.ID)
 	fmt.Fprintf(w, "  created      %s\n", t.CreatedAt.UTC().Format(time.RFC3339))
-	if len(apply) > 0 {
-		writeApplyLine(w, apply[0])
-	}
+	writeApplyLine(w, apply)
 
 	if t.Description != "" {
 		fmt.Fprintf(w, "\n  description\n%s\n", indent(t.Description, "    "))
@@ -162,16 +160,14 @@ func writeApplyLine(w io.Writer, apply task.Apply) {
 	}
 }
 
-// writeResult reports a stored outcome. The apply record is variadic, like
-// writeTaskDetail's: task result passes what the store derived.
-func writeResult(env *Env, outcome worker.Outcome, runs []task.VerificationRun, earlier []task.TaskAttempt, apply ...task.Apply) {
+// writeResult reports a stored outcome, with the apply record the store derived
+// from the event log.
+func writeResult(env *Env, outcome worker.Outcome, runs []task.VerificationRun, earlier []task.TaskAttempt, apply task.Apply) {
 	w := env.Stdout
 	t := outcome.Task
 	fmt.Fprintf(w, "%s  %s\n", t.Ref, t.Title)
 	fmt.Fprintf(w, "  status  %s\n", t.Status)
-	if len(apply) > 0 {
-		writeApplyLine(w, apply[0])
-	}
+	writeApplyLine(w, apply)
 
 	if outcome.Attempt == nil {
 		fmt.Fprintf(w, "\nThis task has not run yet. Run it with: aidev task run %s\n", t.Identifier())

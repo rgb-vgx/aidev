@@ -7,6 +7,22 @@ with:
 curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh
 ```
 
+## Unreleased
+
+- **A task listing says which repository the task is for, and whether its result
+  has been taken.** `aidev task list` now shows the repository and an apply
+  marker (`[applied → main]`, `[undone]`), and the JSON adds `repo_path`,
+  `apply_state`, `apply_into` and `apply_commit`. `task get`, `task result` and
+  the MCP tools carry the same, and the MCP list gained `needs_apply`.
+
+- `aidev task list --unapplied` answers the question an operator actually has:
+  which `SUCCEEDED` tasks are still waiting to be applied (never applied, or
+  applied and then undone). It contradicts `--status`, which it fixes itself.
+
+- The state is derived from the event log — the newest `task.applied` or
+  `task.apply_undone` — rather than stored a second time, so there is one record
+  of what happened.
+
 ## v0.6.0
 
 Upgrading from v0.5.0: install the new binary and restart Claude Code. There is no

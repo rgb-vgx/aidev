@@ -178,7 +178,7 @@ func TestTaskDetailMentionsWhoRunsVerification(t *testing.T) {
 		Verification: []task.VerificationStep{
 			{Command: "go", Args: []string{"test", "./..."}},
 		},
-	})
+	}, task.Apply{})
 	out := buf.String()
 	if !strings.Contains(out, "go test ./...") {
 		t.Errorf("detail does not show the verification command:\n%s", out)
