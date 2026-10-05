@@ -162,12 +162,14 @@ func writeResult(env *Env, outcome worker.Outcome, runs []task.VerificationRun, 
 	if len(earlier) > 0 {
 		fmt.Fprintf(w, "\nearlier attempts\n")
 		for _, e := range earlier {
-			errText := truncate(oneLine(e.Error), 100)
+			line := fmt.Sprintf("  attempt %d  %s", e.AttemptNumber, e.Status)
 			if e.FailureKind != task.FailureNone {
-				fmt.Fprintf(w, "  attempt %d  %s (%s)  %s\n", e.AttemptNumber, e.Status, e.FailureKind, errText)
-			} else {
-				fmt.Fprintf(w, "  attempt %d  %s  %s\n", e.AttemptNumber, e.Status, errText)
+				line += fmt.Sprintf(" (%s)", e.FailureKind)
 			}
+			if e.Error != "" {
+				line += "  " + truncate(oneLine(e.Error), 100)
+			}
+			fmt.Fprintln(w, line)
 		}
 	}
 

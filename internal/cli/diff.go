@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"aidev/internal/store"
+	"aidev/internal/task"
 )
 
 // taskDiff shows what a task changed: the committed diff for a delivered
@@ -53,10 +54,11 @@ the worktree, marked as not delivered, when it was not.
 		return err
 	}
 
-	// A worktree whose head moved past its base delivered its work to its
-	// branch; anything else never left the worktree.
+	// Only a SUCCEEDED task delivered its work to its branch. A head past the
+	// base is not enough: after a retry that ended in failure it is the
+	// earlier attempt's unverified partial commit.
 	if wt, err := app.store.GetWorktreeByAttempt(ctx, attempt.ID); err == nil {
-		if wt.HeadCommit != "" && wt.HeadCommit != wt.BaseCommit {
+		if t.Status == task.StatusSucceeded && wt.HeadCommit != "" && wt.HeadCommit != wt.BaseCommit {
 			project, err := app.store.GetProject(ctx, t.ProjectID)
 			if err != nil {
 				return err
@@ -65,11 +67,15 @@ the worktree, marked as not delivered, when it was not.
 			if err != nil {
 				return err
 			}
-			diff, err := app.orchestrator.Git.DiffCommits(ctx, repo, wt.BaseCommit, wt.HeadCommit)
+			diff, truncated, err := app.orchestrator.Git.DiffCommits(ctx, repo, wt.BaseCommit, wt.HeadCommit)
 			if err != nil {
 				return err
 			}
 			fmt.Fprint(env.Stdout, diff)
+			if truncated {
+				fmt.Fprintf(env.Stderr, "the diff was truncated at aidev's output limit; see all of it with: git -C %s diff %s %s\n",
+					repo.Path, wt.BaseCommit, wt.HeadCommit)
+			}
 			return nil
 		}
 	} else if !errors.Is(err, store.ErrNotFound) {

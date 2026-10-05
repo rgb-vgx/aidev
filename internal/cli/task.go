@@ -491,16 +491,7 @@ func taskResult(ctx context.Context, env *Env, args []string) error {
 	var earlier []task.TaskAttempt
 	if outcome.Attempt != nil {
 		if all, err := app.store.ListAttempts(ctx, t.ID); err == nil {
-			for _, a := range all {
-				if a.ID == outcome.Attempt.ID {
-					continue
-				}
-				earlier = append(earlier, a)
-			}
-			// ListAttempts returns newest first; earlier attempts read oldest first.
-			for i, j := 0, len(earlier)-1; i < j; i, j = i+1, j-1 {
-				earlier[i], earlier[j] = earlier[j], earlier[i]
-			}
+			earlier = task.EarlierAttempts(all, outcome.Attempt.ID)
 		}
 	}
 
