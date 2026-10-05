@@ -133,6 +133,14 @@ func TestListTasksUnapplied(t *testing.T) {
 	applied := h.createTask(nil)
 	undone := h.createTask(nil)
 	failed := h.createTask(nil)
+	// The filter is about SUCCEEDED tasks, so run the three that must stay
+	// out of a terminal state to SUCCEEDED first; failed goes to FAILED below.
+	h.backend.Work = doTheWork
+	for _, ref := range []string{never.Ref, applied.Ref, undone.Ref} {
+		if out, err := h.orchestrator.RunTask(h.ctx, ref); err != nil || out.Task.Status != task.StatusSucceeded {
+			t.Fatalf("RunTask: %v, %v", out.Task.Status, err)
+		}
+	}
 	seedApply(t, h, applied, "main", "aaaa")
 	seedApply(t, h, undone, "main", "bbbb")
 	seedUndo(t, h, undone, "main", "cccc", "bbbb")
@@ -166,6 +174,7 @@ func TestListTasksUnapplied(t *testing.T) {
 // The CLI list shows the repository and the apply state, and filters by it.
 func TestTaskListShowsRepositoryAndApplyState(t *testing.T) {
 	h := newHarness(t, nil)
+	h.backend.Work = doTheWork
 	applied := h.createTask(nil)
 	seedApply(t, h, applied, "main", "aaaa1111bbbb2222")
 	if out, err := h.orchestrator.RunTask(h.ctx, applied.Ref); err != nil || out.Task.Status != task.StatusSucceeded {
@@ -210,6 +219,7 @@ func TestTaskListShowsRepositoryAndApplyState(t *testing.T) {
 // The JSON shapes are what scripts read.
 func TestTaskListJSONCarriesTheApplyState(t *testing.T) {
 	h := newHarness(t, nil)
+	h.backend.Work = doTheWork
 	created := h.createTask(nil)
 	if out, err := h.orchestrator.RunTask(h.ctx, created.Ref); err != nil || out.Task.Status != task.StatusSucceeded {
 		t.Fatalf("RunTask: %v, %v", out.Task.Status, err)
@@ -256,6 +266,7 @@ func TestTaskListJSONCarriesTheApplyState(t *testing.T) {
 // A single task says the same thing, on every surface.
 func TestTaskGetAndResultShowTheApplyState(t *testing.T) {
 	h := newHarness(t, nil)
+	h.backend.Work = doTheWork
 	created := h.createTask(nil)
 	if out, err := h.orchestrator.RunTask(h.ctx, created.Ref); err != nil || out.Task.Status != task.StatusSucceeded {
 		t.Fatalf("RunTask: %v, %v", out.Task.Status, err)
@@ -363,9 +374,9 @@ func TestMCPListAndResultCarryTheApplyState(t *testing.T) {
 		t.Errorf("needs_apply = %d tasks, want 0: the only succeeded task is applied", waiting.Count)
 	}
 	other := succeededTask(t, m.harness)
-	if _, stderr, err := m.harness.runCLI(t, "task", "apply", created.Ref); err != nil {
-		t.Fatalf("apply: %v\n%s", err, stderr)
-	}
+	// created is already applied (seeded above), so a real `task apply` of it
+	// would be refused as "already applied"; other's untouched result is what
+	// needs applying.
 	m.call(t, "aidev_list_tasks", map[string]any{"needs_apply": true}, &waiting)
 	if waiting.Count != 1 {
 		t.Errorf("needs_apply = %d tasks, want 1 (%s)", waiting.Count, other.Ref)
