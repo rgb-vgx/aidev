@@ -42,7 +42,7 @@ aidev migrate --json</code></pre>
 
 <h3><code>aidev task create</code></h3>
 
-<p>Creates a task. Does not run it. At least one <code>--verify</code> is required.</p>
+<p>Creates a task. Does not run it. At least one <code>--verify</code> is required. A repository with no commits is refused with a message saying to make a first commit.</p>
 
 <table>
 <tr><th>Flag</th><th>What it does</th></tr>
@@ -78,6 +78,7 @@ aidev migrate --json</code></pre>
 <table>
 <tr><th>Command</th><th>Flags</th><th>What it does</th></tr>
 <tr><td><code>aidev task result &lt;task&gt;</code></td><td><code>--logs</code>: include the agent transcript, the diff, and full verification output; <code>--json</code></td><td>Shows the outcome of a task's latest attempt. A task that has never run is not an error: its attempt section is simply absent. After a retry it also lists the earlier attempts with their status, kind and error.</td></tr>
+<tr><td><code>aidev task run-log &lt;task&gt;</code></td><td><code>--path</code>: print only the absolute path of the newest log; <code>--all</code>: print every log, oldest first; <code>--json</code></td><td>Shows the stderr log of a run the MCP server started, which is where the reason lives when a run dies before recording an ending.</td></tr>
 <tr><td><code>aidev task diff &lt;task&gt;</code></td><td></td><td>Shows what a task changed: the committed diff from its base commit to its head commit when the work was delivered, or the uncommitted change its agent left in the worktree, marked as not delivered, when it was not.</td></tr>
 <tr><td><code>aidev task events &lt;task&gt;</code></td><td><code>--payload</code>: include each event's payload; <code>--after SEQ</code>: only events after this sequence number; <code>--limit N</code>: maximum events to return; <code>--json</code></td><td>Shows a task's event history in order. Page with <code>seq &gt; last_seen</code>.</td></tr>
 <tr><td><code>aidev task cancel &lt;task&gt;</code></td><td><code>--reason R</code>: why it is being cancelled (default notes the command line); <code>--json</code></td><td>Cancels a task that has not finished. Moves it to CANCELLED, closes any open attempt, marks any active worktree RETAINED, and appends <code>task.cancelled</code>. Work in progress is never discarded. Cancelling a finished task is an error.</td></tr>

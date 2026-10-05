@@ -78,6 +78,19 @@ func (o *Orchestrator) CreateTask(ctx context.Context, in CreateTaskInput) (task
 		return task.Task{}, err
 	}
 
+	// A repository with no commits yet has nothing to branch from: refuse
+	// before anything is written, including the project registration below.
+	// The question is whether the repository holds any commit, not whether
+	// HEAD resolves — an orphan branch has commits and no HEAD, and a task
+	// there fails on the ref below with an answer that fits.
+	commits, err := o.Git.HasCommits(ctx, repo)
+	if err != nil {
+		return task.Task{}, err
+	}
+	if !commits {
+		return task.Task{}, fmt.Errorf("repository %s has no commits yet, so there is nothing to branch a task from; make a first commit and create the task again", repo.Path)
+	}
+
 	if in.BaseRef != "" {
 		if _, err := o.Git.ResolveCommit(ctx, repo, in.BaseRef); err != nil {
 			return task.Task{}, err

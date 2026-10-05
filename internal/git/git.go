@@ -110,6 +110,22 @@ func (m *Manager) OpenRepository(ctx context.Context, path string) (Repository, 
 	return repo, nil
 }
 
+// HasCommits reports whether the repository holds any commit at all, on any
+// branch, tag or remote-tracking ref. It is deliberately not "does HEAD
+// resolve": after `git checkout --orphan fresh` a repository has commits and an
+// unborn HEAD, and a caller that confuses the two tells a person their
+// repository is empty when it is not.
+func (m *Manager) HasCommits(ctx context.Context, repo Repository) (bool, error) {
+	res, err := m.run(ctx, repo.Path, nil, "rev-list", "--all", "--max-parents=0", "--count")
+	if err != nil {
+		return false, err
+	}
+	if !res.Succeeded() {
+		return false, fmt.Errorf("count commits in %s: %s", repo.Path, firstLine(res.Stderr))
+	}
+	return strings.TrimSpace(res.Stdout) != "0", nil
+}
+
 // ResolveCommit returns the commit a ref points at. An empty ref means HEAD.
 func (m *Manager) ResolveCommit(ctx context.Context, repo Repository, ref string) (string, error) {
 	if strings.TrimSpace(ref) == "" {

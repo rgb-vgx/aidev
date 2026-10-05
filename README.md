@@ -332,6 +332,7 @@ aidev task list   [--status S,S] [--repo .] [--limit N] [--json]
 aidev task get    <task> [--json]
 aidev task run    <task> [--json]
 aidev task result <task> [--logs] [--json]
+aidev task run-log <task> [--path] [--all]  # the log a detached run wrote
 aidev task diff <task>                    # what a task changed
 aidev task events <task> [--payload] [--after SEQ] [--json]
 aidev task cancel <task> [--reason R] [--json]
@@ -721,6 +722,10 @@ aidev task events TASK-000001          # what happened, in order
 **A task is slow.** Almost all of that is the model, not aidev — measured at 0.2
 seconds of aidev's own work against 9 to 656 seconds of agent time. Check
 `aidev task events` to see which stage it is in, and consider a faster model.
+
+**The repository has no commits yet.** `aidev task create` refuses a repository
+with no commits, because there is nothing to branch from. Make a first commit
+and create the task again.
 
 ## Documentation
 
