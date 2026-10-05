@@ -305,3 +305,111 @@ func execSQL(t *testing.T, query string, args ...any) {
 		t.Fatalf("exec %q: %v", query, err)
 	}
 }
+
+// newFailingGitStub is a git that fails the named subcommand the way a full
+// disk does — "No space left on device", exit 128 — and runs the real git for
+// everything else. Every write path that can meet a full disk has one.
+func newFailingGitStub(t *testing.T, failingSubcommand string) string {
+	t.Helper()
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git is not installed")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "git")
+	script := fmt.Sprintf(`#!/bin/sh
+skip=0
+for a in "$@"; do
+  if [ "$skip" = 1 ]; then skip=0; continue; fi
+  case "$a" in
+    -c|-C|--git-dir|--work-tree) skip=1 ;;
+    %s) echo "fatal: unable to write new index file: No space left on device" >&2; exit 128 ;;
+    -*) ;;
+    *) break ;;
+  esac
+done
+exec %q "$@"
+`, failingSubcommand, real)
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// A full disk during a run must produce a recorded failure with its work
+// kept, not a task left mid-run. Each case fails one git write and then
+// requires: the task is terminal, the failure is recorded with a kind, the
+// worktree is retained, recovery finds nothing to take back, and doctor is
+// happy — the state a person can act on.
+func TestFullDiskDuringARunIsARecordedFailure(t *testing.T) {
+	cases := []struct {
+		name      string
+		failing   string
+		wantKind  task.FailureKind
+		wantStage string
+	}{
+		{"creating the worktree", "worktree", task.FailureWorktree, "the checkout could not be made"},
+		{"snapshotting the agent's work", "write-tree", task.FailureWorktree, "the snapshot could not be taken"},
+		{"committing the work", "commit-tree", task.FailureWorktree, "the commit could not be written"},
+		{"moving the branch", "update-ref", task.FailureWorktree, "the branch could not be moved"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, nil)
+			h.git.Command = newFailingGitStub(t, tc.failing)
+			h.backend.Work = doTheWork
+
+			created := h.createTask(nil)
+			outcome, err := h.orchestrator.RunTask(h.ctx, created.Ref)
+			if err != nil {
+				t.Fatalf("RunTask: %v; a full disk is a recorded failure, not an error out of the run", err)
+			}
+			if !outcome.Task.Status.Terminal() {
+				t.Fatalf("status = %s, want a terminal status: %s", outcome.Task.Status, outcome.Message)
+			}
+			if outcome.Task.Status != task.StatusFailed {
+				t.Errorf("status = %s, want FAILED (%s)", outcome.Task.Status, tc.wantStage)
+			}
+			if outcome.Attempt == nil {
+				t.Fatal("the outcome carries no attempt")
+			}
+			attempt, err := h.store.GetAttempt(h.ctx, outcome.Attempt.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if attempt.Status != task.AttemptFailed || attempt.FailureKind != tc.wantKind {
+				t.Errorf("attempt = %s/%s, want FAILED/%s", attempt.Status, attempt.FailureKind, tc.wantKind)
+			}
+			if attempt.Error == "" {
+				t.Error("the attempt records no reason; a person cannot act on that")
+			}
+
+			// Work in progress is kept: the point of retaining is that a
+			// person can look at what the run had before the disk filled.
+			if attempt.AttemptNumber == 1 && tc.failing != "worktree" {
+				wt, err := h.store.GetWorktreeByAttempt(h.ctx, attempt.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if wt.Status != task.WorktreeRetained {
+					t.Errorf("worktree = %s, want RETAINED so the work can be inspected", wt.Status)
+				}
+			}
+
+			// Nothing is left mid-run for recovery or doctor to find.
+			expireLeases(t, created.ID.String())
+			if recovered, err := h.orchestrator.Recover(h.ctx, false); err != nil {
+				t.Fatalf("Recover: %v", err)
+			} else if len(recovered) != 0 {
+				t.Errorf("Recover found %+v, want nothing: the run recorded its own ending", recovered)
+			}
+			stuck, err := h.store.StuckLeases(h.ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(stuck) != 0 {
+				t.Errorf("stuck leases = %+v, want none", stuck)
+			}
+		})
+	}
+}

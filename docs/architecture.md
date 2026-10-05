@@ -775,6 +775,15 @@ whatever the agents' builds left in Docker (`docker system df`). A run that hits
 full disk anyway fails with kind `WORKTREE` or `INTERNAL`, keeps its worktree, and
 can be recovered like any other.
 
+That is tested rather than asserted: `TestFullDiskDuringARunIsARecordedFailure`
+fails each git write a run makes — creating the checkout, snapshotting the agent's
+work, writing the commit, moving the branch — with `No space left on device`, and
+requires a terminal task, a recorded failure kind and reason, a retained worktree,
+nothing left mid-run for `aidev task recover`, and no stuck lease. The one thing a
+run cannot record is a database that cannot be written at all: there is no disk on
+which to record anything. The lease is what covers that case — the attempt's
+renewals stop, and `aidev task recover` takes the task back.
+
 ### Backing up and restoring
 
 The database is the record: tasks, attempts, verification evidence and the event
