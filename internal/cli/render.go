@@ -135,7 +135,7 @@ func writeRunOutcome(env *Env, outcome worker.Outcome, runs []task.VerificationR
 }
 
 // writeResult reports a stored outcome.
-func writeResult(env *Env, outcome worker.Outcome, runs []task.VerificationRun) {
+func writeResult(env *Env, outcome worker.Outcome, runs []task.VerificationRun, earlier []task.TaskAttempt) {
 	w := env.Stdout
 	t := outcome.Task
 	fmt.Fprintf(w, "%s  %s\n", t.Ref, t.Title)
@@ -157,6 +157,18 @@ func writeResult(env *Env, outcome worker.Outcome, runs []task.VerificationRun) 
 	fmt.Fprintf(w, "  took %s\n", a.Duration().Round(time.Second))
 	if a.Error != "" {
 		fmt.Fprintf(w, "  %s\n", oneLine(a.Error))
+	}
+
+	if len(earlier) > 0 {
+		fmt.Fprintf(w, "\nearlier attempts\n")
+		for _, e := range earlier {
+			errText := truncate(oneLine(e.Error), 100)
+			if e.FailureKind != task.FailureNone {
+				fmt.Fprintf(w, "  attempt %d  %s (%s)  %s\n", e.AttemptNumber, e.Status, e.FailureKind, errText)
+			} else {
+				fmt.Fprintf(w, "  attempt %d  %s  %s\n", e.AttemptNumber, e.Status, errText)
+			}
+		}
 	}
 
 	if outcome.WorkerRun != nil {
