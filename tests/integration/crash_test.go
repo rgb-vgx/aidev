@@ -305,11 +305,15 @@ func TestCrashBeforeTheSuccessIsRecordedLeavesTheBranchAlone(t *testing.T) {
 	r.recoverAfterCrash(t, created)
 }
 
-// The narrowest window left: the branch has moved inside the success
-// transaction and the process dies before that transaction commits. The
-// database rolls back, so the task is not SUCCEEDED and recovery cancels it;
-// the branch keeps the verified commit, which is the documented outcome — a
-// commit the record does not claim, never a claim without its commit.
+// The durable-commit invariant: a verified commit may sit on the branch while
+// the database still says VERIFYING, and recovery must never turn that into a
+// claim. The narrowest window is this one — the branch moves inside the
+// success transaction and the process dies before that transaction commits —
+// and it is accepted deliberately, because the opposite order would allow a
+// SUCCEEDED row with no commit behind it. The task is cancelled, never
+// succeeded, and `aidev task apply` refuses it: the commit is left for a
+// person to apply by hand, which is the honest reading of a record that does
+// not claim it.
 func TestCrashBetweenBranchUpdateAndCommitIsRecoverable(t *testing.T) {
 	r := newCrashRig(t, 0)
 	created := r.createTask(verifySlowly(1))
@@ -329,7 +333,16 @@ func TestCrashBetweenBranchUpdateAndCommitIsRecoverable(t *testing.T) {
 	if !r.branchHasMarker(created.Ref) {
 		t.Error("the verified commit vanished from the branch")
 	}
-	if contains(r.eventTypes(created.ID), "task.succeeded") {
+	history := r.eventTypes(created.ID)
+	if contains(history, "task.succeeded") {
 		t.Error("a success was recorded by a run that died before its transaction committed")
+	}
+	if r.status(t, created) != task.StatusCancelled {
+		t.Errorf("status after recovery = %s, want CANCELLED: a commit the record does not claim is not a success", r.status(t, created))
+	}
+	// And nothing else may claim it: apply refuses a task that is not
+	// SUCCEEDED, so the commit stays for a person to take by hand.
+	if out, _, err := r.runCLI(t, "task", "apply", created.Ref); err == nil || !strings.Contains(err.Error(), "SUCCEEDED") {
+		t.Errorf("apply of a cancelled task with an unclaimed commit = %v (%s), want a refusal naming SUCCEEDED", err, out)
 	}
 }

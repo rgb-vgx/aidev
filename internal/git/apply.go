@@ -135,3 +135,71 @@ func (m *Manager) headOf(ctx context.Context, repo Repository) (string, error) {
 	}
 	return strings.TrimSpace(res.Stdout), nil
 }
+
+// DeleteBranch removes a branch, for the branch an automatic retry created
+// before its attempt was taken away. Plumbing: `git branch -D` runs no hooks.
+// A branch that is not there is not an error — the point is that it is gone.
+func (m *Manager) DeleteBranch(ctx context.Context, repo Repository, branch string) error {
+	if strings.TrimSpace(branch) == "" {
+		return fmt.Errorf("delete branch: branch is required")
+	}
+	res, err := m.run(ctx, repo.Path, nil, "branch", "-D", "--", branch)
+	if err != nil {
+		return err
+	}
+	if !res.Succeeded() {
+		if strings.Contains(res.Stderr, "not found") {
+			return nil
+		}
+		return fmt.Errorf("delete branch %s in %s: %s", branch, repo.Path, firstLine(res.Stderr))
+	}
+	return nil
+}
+
+// AbandonBranch gives up a branch the worktree was moved onto — the branch an
+// automatic retry created just before its attempt was taken away. git refuses
+// to delete the branch a worktree has checked out, so HEAD is detached at the
+// same commit first; the work is not lost, it stays reachable from the branch
+// it was on before, and from HEAD. Plumbing only: `symbolic-ref` and
+// `update-ref` run no hooks and touch no files.
+func (w *Worktree) AbandonBranch(ctx context.Context, branch string) error {
+	if strings.TrimSpace(branch) == "" {
+		return fmt.Errorf("abandon branch: branch is required")
+	}
+	want := "refs/heads/" + branch
+
+	res, err := w.m.run(ctx, w.Path, nil, "symbolic-ref", "--quiet", "HEAD")
+	if err != nil {
+		return err
+	}
+	if res.Succeeded() && strings.TrimSpace(res.Stdout) == want {
+		// git refuses to delete HEAD's branch, so HEAD is made a direct ref
+		// at the commit it already points at: --no-deref is what detaches it
+		// without touching a single file in the worktree.
+		head, err := w.m.run(ctx, w.Path, nil, "rev-parse", "HEAD")
+		if err != nil {
+			return err
+		}
+		if !head.Succeeded() {
+			return fmt.Errorf("resolve HEAD in %s: %s", w.Path, firstLine(head.Stderr))
+		}
+		detach, err := w.m.run(ctx, w.Path, nil, "update-ref", "--no-deref", "HEAD", strings.TrimSpace(head.Stdout))
+		if err != nil {
+			return err
+		}
+		if !detach.Succeeded() {
+			return fmt.Errorf("detach HEAD in %s before abandoning %s: %s", w.Path, branch, firstLine(detach.Stderr))
+		}
+	}
+
+	del, err := w.m.run(ctx, w.Path, nil, "update-ref", "-d", want)
+	if err != nil {
+		return err
+	}
+	if !del.Succeeded() {
+		return fmt.Errorf("delete branch %s in %s: %s", branch, w.Path, firstLine(del.Stderr))
+	}
+	// The worktree is no longer on any branch, which is what it is.
+	w.Branch = ""
+	return nil
+}

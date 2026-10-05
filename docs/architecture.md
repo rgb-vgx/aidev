@@ -743,11 +743,23 @@ What a `kill -9` leaves at each boundary is tested against the real binary
 (`tests/integration/crash_test.go`): killed while the agent runs, while the checks
 run, or while waiting for the fence to record a success, the task is recoverable,
 its work retained, and the branch untouched. One window remains and is
-deliberate: the branch update happens inside the success transaction, so a
-process that dies after it and before the commit leaves a verified commit on the
-branch while the database still says `VERIFYING`; recovery then cancels the task.
-The opposite order would risk the worse failure — a `SUCCEEDED` row with no
-commit behind it.
+deliberate. It is worth naming, because everything else in recovery depends on
+it:
+
+**The durable-commit invariant.** A verified commit may exist on a task's branch
+while the database says `VERIFYING` and no ending is recorded. This happens when
+the process dies after the branch update inside the success transaction and before
+that transaction commits — the branch move is git's and survives, the database
+write is not and rolls back. Recovery then cancels the task, exactly as it would
+any other interrupted run, and never claims the commit: no `SUCCEEDED`, no
+`task.succeeded`, and `aidev task apply` refuses a task that is not SUCCEEDED, so
+the commit waits for a person to take by hand (`git merge <commit>`).
+
+The opposite ordering — writing `SUCCEEDED` first — would allow a claim with no
+commit behind it, which is the failure the whole result model exists to prevent.
+In one direction the record understates what happened and a human can see the
+commit; in the other it would overstate it, and nobody could. `TestCrashBetweenBranchUpdateAndCommitIsRecoverable`
+holds this, including the refusal to apply.
 
 Recovery is never fully automatic in the worker: a lease is evidence, and aidev
 does not read it as an instruction. A human runs `aidev task recover` (doctor
@@ -774,6 +786,15 @@ captured output in the database (`aidev prune --logs-older-than 30d`, then
 whatever the agents' builds left in Docker (`docker system df`). A run that hits a
 full disk anyway fails with kind `WORKTREE` or `INTERNAL`, keeps its worktree, and
 can be recovered like any other.
+
+That is tested rather than asserted: `TestFullDiskDuringARunIsARecordedFailure`
+fails each git write a run makes — creating the checkout, snapshotting the agent's
+work, writing the commit, moving the branch — with `No space left on device`, and
+requires a terminal task, a recorded failure kind and reason, a retained worktree,
+nothing left mid-run for `aidev task recover`, and no stuck lease. The one thing a
+run cannot record is a database that cannot be written at all: there is no disk on
+which to record anything. The lease is what covers that case — the attempt's
+renewals stop, and `aidev task recover` takes the task back.
 
 ### Backing up and restoring
 
@@ -815,9 +836,26 @@ aidev task undo TASK-000001      # and back out again, with a revert commit
 ```
 
 `apply` is the one command of aidev's that writes to your checkout, and only the
-branch you have checked out: it refuses uncommitted changes to tracked files and a
-detached HEAD, aborts a conflicting merge and names the files, and records
-`task.applied`. `undo` reverts that merge with a new commit, so it is safe after a
+branch you have checked out. Its contract, held by tests in
+`tests/integration/apply_test.go` and `apply_contract_test.go`:
+
+- it acts only on the branch you have checked out, and refuses a detached HEAD;
+- it refuses uncommitted changes to tracked files, naming them;
+- it refuses unless the task is SUCCEEDED — `SUCCEEDED` is what verification
+  found, and there is nothing else to deliver from;
+- it merges the commit the run recorded, not the branch name: deleting the branch
+  does not stop it, and deleting the commit does (refused, checkout untouched);
+- a branch that moved on since the task ran is fine — merging brings the two sides
+  together and rewrites neither — but a conflict is aborted with the files named
+  and the checkout left exactly as it was;
+- it refuses a second apply, and `undo` refuses when there is nothing to undo, or
+  when the branch it would revert is not the one checked out;
+- `undo` reverts with a new commit, never by rewriting: it works after a push, and
+  a revert that would conflict is refused rather than forced;
+- two applies at once serialise: one merges and the other is told the task is
+  already applied.
+
+It records `task.applied`. `undo` reverts that merge with a new commit, so it is safe after a
 push; applying again after an undo reverts the revert, because merging a branch
 whose merge was reverted would quietly change nothing. Neither changes the task's
 status: `SUCCEEDED` is what verification found, not whether anyone took the work.
