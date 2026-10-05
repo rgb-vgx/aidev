@@ -723,6 +723,10 @@ aidev task events TASK-000001          # what happened, in order
 seconds of aidev's own work against 9 to 656 seconds of agent time. Check
 `aidev task events` to see which stage it is in, and consider a faster model.
 
+**The repository has no commits yet.** `aidev task create` refuses a repository
+with no commits, because there is nothing to branch from. Make a first commit
+and create the task again.
+
 ## Documentation
 
 | | |
