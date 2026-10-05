@@ -7,6 +7,44 @@ with:
 curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh
 ```
 
+## v0.5.0
+
+Upgrading from v0.4.0: install the new binary and restart Claude Code. There is no
+migration and no plugin change in this release.
+
+A hardening release: three ways a run could still write after another process had
+ended its attempt are closed, and what was only asserted about failure and
+recovery is now tested.
+
+- **A run that lost its attempt writes nothing at all.** Three writes were still
+  outside the lease fence: recording the worktree (and its event) while creating
+  it, recording the retry's worktree and branch while handing the worktree over,
+  and marking a worktree retained while recording a failure. Each now goes through
+  the fence, and when it refuses, the run undoes what it did outside the database:
+  the checkout no longer removed is the one it had just made, and the retry's
+  branch — which a cancelled attempt never used — is deleted rather than left
+  behind for the next attempt to collide with.
+
+- **A full disk is a recorded failure.** Failing each git write a run makes
+  (creating the checkout, snapshotting the agent's work, writing the commit,
+  moving the branch) with "No space left on device" produces a terminal task with
+  a recorded failure kind and reason, a retained worktree to inspect, nothing for
+  `aidev task recover` to take back, and no stuck lease. The one case a run cannot
+  record is a database that cannot be written at all — the lease and `aidev task
+  recover` cover that.
+
+- **The contract of `aidev task apply` and `task undo` is written down** in
+  docs/architecture.md and held by tests: they act only on the branch you have
+  checked out, refuse a dirty checkout or a task that did not succeed, deliver the
+  **commit** the run recorded rather than the branch name, merge a branch that
+  moved on without rewriting either side, abort a conflict with the files named,
+  and never force an undo that would conflict. Two applies at once serialise.
+
+- **The durable-commit invariant is named**: a verified commit may exist on the
+  branch while the database still says `VERIFYING` (a process killed inside the
+  success transaction). Recovery cancels the task and never claims the commit, and
+  `apply` refuses a task that is not `SUCCEEDED`, so the commit waits for a person.
+
 ## v0.4.0
 
 Upgrading from v0.3.0: install the new binary, run `claude plugin update
