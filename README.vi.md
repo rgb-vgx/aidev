@@ -657,6 +657,8 @@ aidev task events TASK-000001          # what happened, in order
 
 **Một task chạy chậm.** Hầu hết thời gian đó là do mô hình, không phải aidev — đã đo được 0,2 giây việc của chính aidev so với 9 tới 656 giây của agent. Hãy xem `aidev task events` để biết nó đang ở giai đoạn nào, và cân nhắc một mô hình nhanh hơn.
 
+**Kho mã chưa có commit nào.** `aidev task create` từ chối kho mã chưa có commit nào, vì không có gì để tách nhánh. Hãy tạo commit đầu tiên rồi tạo task lại.
+
 ## Tài liệu
 
 | | |
