@@ -5,13 +5,13 @@
 aidev is a local-first control plane for delegating implementation work to a
 coding agent and **verifying the result yourself**.
 
-A planner — Claude Code, or you at a terminal — hands aidev a task. aidev creates
+A planner, whether Claude Code or you at a terminal, hands aidev a task. It creates
 an isolated git worktree, runs the agent inside it, then runs the task's own test
-commands itself and decides the outcome from the exit codes. The agent's opinion
+commands and decides the outcome from the exit codes. The agent's opinion
 about whether it succeeded is not an input to that decision.
 
-Everything — the task, each attempt, the captured output, the diff, the
-verification results, and a full event history — is persisted in PostgreSQL.
+Everything is persisted in PostgreSQL: the task, each attempt, the captured
+output, the diff, the verification results, and the full event history.
 
 > **Status: Phase 4 of 5.** Usable from the terminal and from Claude Code. The
 > pipeline has been driven end to end against the real OpenCode, and the MCP server
@@ -21,24 +21,23 @@ verification results, and a full event history — is persisted in PostgreSQL.
 
 ## Why it exists
 
-An agent that reports its own success is not a source of truth. aidev's design
-makes that structural rather than advisory:
+An agent that reports its own success is not a source of truth. That is built
+into aidev's design:
 
 - **The only route to `SUCCEEDED` is through `VERIFYING`.** The task lifecycle has
   no edge from "the agent finished" to "it worked", so a claim of passing tests
   cannot move a task to success.
 - **A task with no verification command is rejected at creation.** aidev will not
   accept work whose outcome it could not establish.
-- **The agent writes only inside a dedicated git worktree.** This is not a
-  nicety: OpenCode was measured writing files in non-interactive mode with no
-  permission prompt, so the worktree is the only containment boundary there is
+- **The agent writes only inside a dedicated git worktree.** OpenCode was
+  measured writing files in non-interactive mode with no permission prompt, so
+  the worktree is the only containment boundary there is
   ([docs/research.md §2.6](docs/research.md)).
 - **History is append-only.** The database rejects `UPDATE` on the event log.
 
-The integration suite contains the test that states the whole idea: an agent that
-reports *"All done! Tests pass."* without touching a single file produces a
-**FAILED** task — its claim recorded verbatim, next to the verification result
-that contradicts it.
+One integration test shows this: an agent that reports *"All done! Tests pass."*
+without touching a single file produces a **FAILED** task, its
+claim recorded verbatim beside the verification result that contradicts it.
 
 ## Architecture
 
@@ -70,9 +69,9 @@ schema.
 
 **Trust.** The agent runs as you, with no sandbox: it can read and write anything
 your user can, including other repositories and aidev's own configuration file. aidev
-detects and refuses what it can — changed git state, rewritten checks, stale runs —
-and nothing is merged without review, which suits one person delegating on their
-own machine. Do not give it agents, tasks or users you would not give a shell to;
+detects and refuses some of it, such as changed git state, rewritten checks and
+stale runs. Nothing is merged without review, which suits one person delegating on
+their own machine. Do not give it agents, tasks or users you would not give a shell to;
 see [what the worktree is not](docs/architecture.md#what-the-worktree-is-not).
 
 ## Quick start
@@ -179,19 +178,19 @@ present in every new terminal. Put that line in your shell profile
 setup. `aidev config` prints which file it used.
 
 A conf.json holds the database password, so keep it out of git. Copy it to
-`conf/conf.json` if you prefer — that path is already ignored — or just never
-commit whichever path you use. `aidev config` redacts secrets, so it is safe to
+`conf/conf.json` if you prefer, since that path is already ignored, or just
+never commit whichever path you use. `aidev config` redacts secrets, so it is safe to
 read back.
 
-`aidev migrate` is idempotent — run it as often as you like. Migrations are
+`aidev migrate` is idempotent, so run it as often as you like. Migrations are
 embedded in the binary; there is no separate migration tool to install.
 
 ## Configuration
 
 aidev reads its configuration from one JSON file: the conf.json that `AIDEV_CONFIG`
-names. Nothing else in the environment is consulted for configuration — a variable
-left over in a shell profile must not quietly win over the file someone is reading
-and editing.
+names. Nothing else in the environment is consulted for configuration: a variable left
+over in a shell profile must not win over the file someone is reading and
+editing.
 
 Every setting is optional except `database.url`. The defaults below are what the
 binary uses when a key is absent; conf/conf.example.json shows them all in one file.
@@ -231,7 +230,7 @@ repository it has not seen was measured taking over four minutes before producin
 any output, then seconds afterwards. A short default would make every fresh
 developer's first task fail in a way that looks like a bug in aidev.
 
-To see exactly what aidev resolved — with the database password redacted:
+To see exactly what aidev resolved, with the database password redacted:
 
 ```bash
 aidev config
@@ -254,7 +253,7 @@ aidev task create \
 aidev task run TASK-000001
 ```
 
-That takes minutes, not seconds — most of it is OpenCode. While it runs, the event
+That takes minutes rather than seconds; most of it is OpenCode. While it runs, the event
 log shows where it is:
 
 ```bash
@@ -288,13 +287,13 @@ worktree
 ```
 
 Note the `says` line. That run used a free model whose closing summary was
-incoherent — and it did not matter. The code it wrote was correct, and what
+incoherent, and it did not matter: the code it wrote was correct, and what
 established that was aidev running `go test` and `go vet` itself. An agent's
-account of its own work is recorded because it helps diagnosis, and it is never
+account of its own work is recorded because it helps diagnosis. It is never
 evidence.
 
-The other side of the same coin, with an agent that reported success and touched
-nothing:
+The same picture from the other side, with an agent that reported success and
+touched nothing:
 
 ```text
 TASK-000002 FAILED (VERIFICATION): verification did not pass: 0/1 steps passed
@@ -354,8 +353,8 @@ Every command except `setup` takes `--json` for machine-readable output; human-r
 default. Logs always go to stderr, so `aidev task get TASK-000001 --json | jq`
 works while diagnostics stay visible.
 
-Tasks marked `--requires-approval` stop before doing anything — no worktree, no
-attempt — until `aidev task approve` releases them. So does every task of a
+Tasks marked `--requires-approval` stop before doing anything, with no worktree
+and no attempt, until `aidev task approve` releases them. So does every task of a
 project whose policy is on (`aidev project approval on`), whatever the task
 itself said; the policy is the operator's and exists only at the CLI, so a
 planner creating tasks cannot decide whether its own work is gated.
@@ -399,9 +398,9 @@ failure. `git worktree remove` refuses to discard uncommitted work and aidev nev
 overrides that automatically, so this holds regardless of configuration. See
 [the cleanup policy](docs/architecture.md#cleanup-policy).
 
-Human-readable output goes to **stdout**; structured logs go to **stderr**. This
-separation is load-bearing: when aidev runs as an MCP server, stdout carries the
-JSON-RPC protocol, so nothing else may ever be written there.
+Human-readable output goes to **stdout**; structured logs go to **stderr**. When
+aidev runs as an MCP server, stdout carries the JSON-RPC protocol, so nothing else
+may ever be written there.
 
 ## OpenCode setup
 
@@ -410,8 +409,8 @@ API credentials are required: the public `opencode/*` models work and report zer
 cost, which is how this project's end-to-end test runs without a key.
 
 The default model is `opencode/muse-spark-1.3-contributor-free`, chosen by
-measurement rather than by name. On identical trivial prompts it returned in
-3.2–3.9s across repeated runs; the other free model varied between 3.9s and 100.5s
+measurement, not by name. On identical trivial prompts it returned in
+3.2-3.9s across repeated runs; the other free model varied between 3.9s and 100.5s
 for the same work, which is the difference between a one-minute task and an
 eleven-minute one. Set `agent.opencode.model` to any model you have credentials for, or
 to an empty string to let OpenCode decide.
@@ -425,10 +424,10 @@ aidev invokes `opencode run --dir <worktree> --format json -- <prompt>` and read
 the newline-delimited event stream. You never write that command yourself; knowing
 it is aidev's job, not the planner's.
 
-Two measured behaviours worth knowing before your first task:
+Three measured behaviours worth knowing before your first task:
 
-- **A task takes as long as the model does.** aidev's own share of a run —
-  worktree, diff, verification, every database write — measured 0.2 seconds
+- **A task takes as long as the model does.** aidev's own share of a run
+  (worktree, diff, verification, every database write) measured 0.2 seconds
   against agent times of 9 to 656 seconds. Free-tier latency is the variable that
   matters, and it is not always predictable, which is why
   `tasks.timeout` defaults to 30 minutes.
@@ -486,8 +485,8 @@ Eight tools become available:
 | `aidev_approve_task` | a human releases a gated task; off unless `mcp.allow_approval` is set |
 
 A run takes minutes, so `aidev_run_task` waits a bounded time and then returns with
-`still_running: true` while the task continues — as a separate `aidev task run`
-process, it survives even this server exiting; the planner polls
+`still_running: true` while the task continues. It runs as a separate `aidev task
+run` process that survives even this server exiting, and the planner polls
 `aidev_get_task_result`. The field to read is `succeeded`, which is true only when
 aidev's own verification passed.
 
@@ -522,16 +521,16 @@ change: `--verify 'go test ./backend/...'`, or a service's own test command.
 **The worktree is a clean checkout: only tracked files.** Dependencies that live
 outside git are not there. `go test` is fine, because the module cache is shared,
 but `npm test` or `pytest` will fail in a fresh worktree unless the task's
-verification installs what it needs first — for example
+verification installs what it needs first, for example
 `--verify 'npm --prefix web ci'` before `--verify 'npm --prefix web test'`.
 
 Full schemas, errors and side effects: **[docs/mcp-tools.md](docs/mcp-tools.md)**.
 
-### This has been run, not only wired up
+### An end-to-end run, checked afterwards
 
 Claude Code was given a repository with a test that did not compile, told to use
-only the aidev MCP tools, and explicitly denied `Edit`, `Write`, `Read` and `Bash` —
-so the work could not have come from anywhere but aidev. It created and ran the
+only the aidev MCP tools, and explicitly denied `Edit`, `Write`, `Read` and
+`Bash`, so the work could not have come from anywhere but aidev. It created and ran the
 task, then reported back:
 
 ```text
@@ -562,7 +561,7 @@ make test-e2e         # the real OpenCode, end to end (slow: minutes)
 
 `make check` passes on a machine with no database: integration tests skip
 themselves unless `TEST_DATABASE_URL` is set, so a failure always means a real
-failure rather than a missing environment.
+failure, never a missing environment.
 
 To run the database tests:
 
@@ -585,12 +584,13 @@ Other useful targets: `make db-reset` (destroy the data and start clean),
 
 ### What the tests guard
 
-The suite is not only coverage; several tests exist to hold specific invariants:
+The suite does more than raise coverage: several tests exist to hold specific
+invariants:
 
 - `VERIFYING` is the only state that can reach `SUCCEEDED`.
 - Every non-terminal state can reach `CANCELLED`, so no task is unstoppable.
-- Go enumerations and the SQL `CHECK` constraints cannot drift apart — verified by
-  confirming the test fails when a value is removed from the constraint.
+- Go enumerations and the SQL `CHECK` constraints cannot drift apart, verified by
+  removing a value from the constraint and watching the test fail.
 - `UPDATE` on the event log is refused by the database; deleting a task still
   cascades its history.
 - A task and its creation event commit together or not at all.
@@ -604,8 +604,7 @@ The suite is not only coverage; several tests exist to hold specific invariants:
   do not outlive it.
 
 Several of these were confirmed by deliberately breaking the implementation and
-checking that the test failed, rather than by assuming a green test meant a real
-guarantee.
+watching the test fail, not by trusting a green test.
 
 ## Seeing what a task did (optional)
 
@@ -619,8 +618,8 @@ make jaeger-env  # prints the tracing object to paste into the conf.json that AI
 aidev task run TASK-000001
 ```
 
-For an LLM-oriented view with cost, self-hosted Langfuse works too — six services,
-so it is started separately:
+For an LLM-oriented view with cost, self-hosted Langfuse works too. It runs six
+services, so it is started separately:
 
 ```bash
 make langfuse-up   # six services, UI on :3000
@@ -641,8 +640,8 @@ aidev.task.run            10.97s
 Which also shows where the time goes: the agent was 10.86 of 10.97 seconds.
 
 Two notes from getting this working. Langfuse v4 removed
-`GET /api/public/traces` — use `GET /api/public/v2/observations`, and check the HTTP
-status rather than reading an empty `data` field out of an error body. And aidev
+`GET /api/public/traces`, so use `GET /api/public/v2/observations`, and check the
+HTTP status rather than reading an empty `data` field out of an error body. And aidev
 deliberately does **not** pass its OTLP configuration to the agent: OpenCode is
 instrumented too, and one run otherwise filed 1536 spans of its own internals into
 your backend under aidev's name.
@@ -676,9 +675,9 @@ aidev task recover
 
 A task whose process is still alive keeps a live lease and is left alone. The
 recovery records the expired lease as the reason, closes the open attempt, and
-keeps the partial work. You can still cancel by hand — `aidev task cancel
-TASK-000001 --reason "aidev was killed mid-run"` — and the reasoning for why
-nothing does this on a timer is in [the architecture notes](docs/architecture.md#when-a-run-is-interrupted).
+keeps the partial work. You can still cancel by hand with `aidev task cancel
+TASK-000001 --reason "aidev was killed mid-run"`; the reasoning for why nothing
+does this on a timer is in [the architecture notes](docs/architecture.md#when-a-run-is-interrupted).
 
 **The workspace is filling up.** Failed tasks keep their worktrees on purpose:
 
@@ -705,8 +704,8 @@ change, and one whose worktree is still on disk.
 **There are Docker volumes named after tasks.** An agent ran `docker compose` inside
 its worktree, where a copy of `docker-compose.yml` exists, and Compose named the
 project after the directory. They are empty litter rather than data:
-`docker volume prune` removes them. The project name is left unpinned on purpose —
-see [the reasoning](docs/architecture.md#postgresql-data-and-why-the-compose-project-name-is-not-pinned).
+`docker volume prune` removes them. The project name is left unpinned on purpose,
+as [the reasoning](docs/architecture.md#postgresql-data-and-why-the-compose-project-name-is-not-pinned).
 
 **Is the database persistent?** Yes: a named volume. `make db-up` keeps it in
 `aidev_aidev-pgdata` (Compose prefixes the project name), `aidev setup` in
@@ -723,8 +722,8 @@ aidev task result TASK-000001 --logs   # verification output, agent transcript, 
 aidev task events TASK-000001          # what happened, in order
 ```
 
-**A task is slow.** Almost all of that is the model, not aidev — measured at 0.2
-seconds of aidev's own work against 9 to 656 seconds of agent time. Check
+**A task is slow.** Almost all of that is the model, not aidev: aidev's own work
+measured 0.2 seconds against 9 to 656 seconds of agent time. Check
 `aidev task events` to see which stage it is in, and consider a faster model.
 
 **The repository has no commits yet.** `aidev task create` refuses a repository
@@ -736,7 +735,7 @@ and create the task again.
 | | |
 |---|---|
 | **[docs/guide/index.html](docs/guide/index.html)** | **Start here if you are new.** A four-page guide written for a first week: what aidev is, getting started, debugging, and a full reference. Open it in a browser |
-| [docs/research.md](docs/research.md) | What the installed Claude Code, OpenCode, git and PostgreSQL actually do — measured, with assumptions and open questions marked |
+| [docs/research.md](docs/research.md) | What the installed Claude Code, OpenCode, git and PostgreSQL actually do, measured, with assumptions and open questions marked |
 | [docs/architecture.md](docs/architecture.md) | Package layout, design decisions and their costs, extension seams |
 | [docs/database.md](docs/database.md) | Schema, constraints, lifecycle, concurrency, migrations |
 | [docs/mcp-tools.md](docs/mcp-tools.md) | Every MCP tool: input, output, errors, side effects, and what is deliberately not exposed |

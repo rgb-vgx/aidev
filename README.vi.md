@@ -5,13 +5,13 @@
 aidev là một mặt phẳng điều khiển local-first để giao việc triển khai cho một
 coding agent và **tự mình kiểm chứng kết quả**.
 
-Một planner — Claude Code, hoặc chính bạn ở terminal — giao cho aidev một task. aidev tạo
+Một planner, dù là Claude Code hay chính bạn ở terminal, giao cho aidev một task. Nó tạo
 một worktree git tách biệt, chạy agent bên trong nó, rồi tự mình chạy các lệnh test
 của task và quyết định kết quả dựa trên mã thoát. Ý kiến của agent
 về việc nó có thành công hay không không phải là đầu vào của quyết định đó.
 
-Mọi thứ — task, từng lần thử, output đã thu lại, diff, kết
-quả verification, cùng toàn bộ lịch sử event — đều được lưu trong PostgreSQL.
+Mọi thứ đều được lưu trong PostgreSQL: task, từng lần thử, output đã thu lại,
+diff, kết quả verification, và toàn bộ lịch sử event.
 
 > **Trạng thái: Giai đoạn 4 trên 5.** Dùng được từ terminal và từ Claude Code.
 > Toàn bộ luồng đã được chạy đầu cuối với OpenCode thật, và máy chủ MCP
@@ -21,24 +21,23 @@ quả verification, cùng toàn bộ lịch sử event — đều được lưu 
 
 ## Vì sao aidev tồn tại
 
-Một agent tự báo cáo thành công của chính nó không phải là căn cứ đáng tin. Thiết kế của aidev
-biến điều đó thành cấu trúc bắt buộc chứ không phải lời khuyên:
+Một agent tự báo cáo thành công của chính nó không phải là căn cứ đáng tin. Điều đó
+được xây thẳng vào thiết kế của aidev:
 
 - **Đường duy nhất tới `SUCCEEDED` phải đi qua `VERIFYING`.** Vòng đời của task không có
   cạnh nào từ "agent đã chạy xong" tới "việc đã đúng", nên lời khẳng định test đã qua
   không thể đưa task tới thành công.
 - **Một task không có lệnh verification sẽ bị từ chối ngay khi tạo.** aidev không nhận
   công việc mà nó không thể tự xác lập kết quả.
-- **Agent chỉ được viết bên trong một worktree git riêng.** Đây không phải là
-  chuyện tiện lợi: qua đo đạc thực tế, OpenCode viết tập tin ở chế độ không tương tác mà không
-  hiện câu hỏi cho phép nào, nên worktree là ranh giới cách ly duy nhất còn lại
+- **Agent chỉ được viết bên trong một worktree git riêng.** Qua đo đạc thực tế,
+  OpenCode viết tập tin ở chế độ không tương tác mà không hiện câu hỏi cho phép nào,
+  nên worktree là ranh giới cách ly duy nhất còn lại
   ([docs/research.md §2.6](docs/research.md)).
 - **Lịch sử chỉ được ghi thêm.** Cơ sở dữ liệu từ chối `UPDATE` trên nhật ký event.
 
-Bộ test tích hợp chứa test nói lên toàn bộ ý tưởng: một agent báo cáo
-*"All done! Tests pass."* mà không chạm vào một tập tin nào sẽ tạo ra một task
-**FAILED** — lời khẳng định của nó được ghi lại nguyên văn, đặt cạnh kết quả verification
-bác bỏ nó.
+Một test tích hợp cho thấy điều đó: một agent báo cáo *"All done! Tests pass."*
+mà không chạm vào một tập tin nào sẽ tạo ra một task **FAILED**, lời khẳng định của nó được ghi lại nguyên văn bên cạnh kết quả
+verification bác bỏ nó.
 
 ## Kiến trúc
 
@@ -70,9 +69,9 @@ của cơ sở dữ liệu.
 
 **Mức độ tin cậy.** Agent chạy dưới chính user của bạn, không có sandbox: nó đọc và
 ghi được mọi thứ user của bạn làm được, kể cả các repository khác và tập tin cấu hình của
-chính aidev. aidev phát hiện và từ chối những gì nó có thể — trạng thái git bị đổi,
-lệnh kiểm tra bị viết lại, run cũ còn sót — và không có gì được merge nếu chưa xem
-lại, điều này hợp với một người tự giao việc trên máy của mình. Đừng đưa cho nó
+chính aidev. aidev phát hiện và từ chối một phần trong đó, như trạng thái git bị đổi, lệnh kiểm
+tra bị viết lại hay run cũ còn sót. Không có gì được merge nếu chưa xem lại, điều
+này hợp với một người tự giao việc trên máy của mình. Đừng đưa cho nó
 agent, task hay người dùng mà bạn sẽ không giao quyền dùng shell; xem
 [worktree không phải là gì](docs/architecture.md#what-the-worktree-is-not).
 
@@ -173,13 +172,15 @@ aidev migrate
 
 aidev chỉ đọc đúng tập tin mà `AIDEV_CONFIG` chỉ tới, vì vậy lệnh export phải có mặt trong mọi terminal mới. Hãy đặt dòng đó vào hồ sơ shell của bạn (`~/.bashrc`, `~/.zshrc`, hoặc tập tin tương đương của shell bạn dùng) và đây là việc thiết lập một lần duy nhất. `aidev config` sẽ in ra nó đã dùng tập tin nào.
 
-Một conf.json chứa mật khẩu cơ sở dữ liệu, vì vậy hãy giữ nó ngoài git. Hãy sao chép nó tới `conf/conf.json` nếu bạn thích — đường dẫn đó vốn đã bị bỏ qua — hoặc đơn giản là đừng bao giờ commit đường dẫn mà bạn dùng. `aidev config` che các bí mật, nên đọc lại cũng an toàn.
+Một conf.json chứa mật khẩu cơ sở dữ liệu, vì vậy hãy giữ nó ngoài git. Hãy sao chép nó tới `conf/conf.json` nếu bạn thích, vì đường dẫn đó vốn đã bị bỏ
+qua, hoặc đơn giản là đừng bao giờ commit đường dẫn mà bạn dùng. `aidev config` che các bí mật, nên đọc lại cũng an toàn.
 
-`aidev migrate` có tính lũy đẳng — hãy chạy lại tùy thích. Các migration được nhúng trong chương trình; không cần cài thêm công cụ migration riêng nào.
+`aidev migrate` có tính lũy đẳng, nên hãy chạy lại tùy thích. Các migration được nhúng trong chương trình; không cần cài thêm công cụ migration riêng nào.
 
 ## Cấu hình
 
-aidev chỉ đọc cấu hình từ một tập tin JSON duy nhất: conf.json mà `AIDEV_CONFIG` chỉ tới. Không có gì khác trong môi trường được dùng để cấu hình — một biến còn sót trong hồ sơ shell không được âm thầm lấn át tập tin mà người dùng đang đọc và sửa.
+aidev chỉ đọc cấu hình từ một tập tin JSON duy nhất: conf.json mà `AIDEV_CONFIG` chỉ tới. Không có gì khác trong môi trường được dùng để cấu hình: một biến còn sót trong hồ
+sơ shell không được lấn át tập tin mà người dùng đang đọc và sửa.
 
 Mọi thiết lập đều tùy chọn, trừ `database.url`. Các giá trị mặc định bên dưới là những gì chương trình dùng khi thiếu khóa; conf/conf.example.json trình bày tất cả trong một tập tin.
 
@@ -214,7 +215,7 @@ Mọi thiết lập đều tùy chọn, trừ `database.url`. Các giá trị m�
 
 Giá trị mặc định cho thời gian chờ của task được cố ý để rộng rãi: lần chạy đầu tiên của OpenCode trên một kho mã chưa từng gặp đã được đo mất hơn bốn phút mới cho ra output đầu tiên, rồi sau đó chỉ còn vài giây. Một giá trị mặc định ngắn sẽ khiến task đầu tiên của mọi lập trình viên mới đều thất bại theo cách trông như lỗi của aidev.
 
-Để xem chính xác aidev đã chốt những gì — với mật khẩu cơ sở dữ liệu đã được che:
+Để xem chính xác aidev đã chốt những gì, với mật khẩu cơ sở dữ liệu đã được che:
 
 ```bash
 aidev config
@@ -237,7 +238,7 @@ aidev task create \
 aidev task run TASK-000001
 ```
 
-Việc này mất vài phút chứ không phải vài giây — phần lớn thời gian là OpenCode chạy. Trong khi chạy, nhật ký event cho thấy nó đang ở đâu:
+Việc này mất vài phút chứ không phải vài giây; phần lớn thời gian là OpenCode chạy. Trong khi chạy, nhật ký event cho thấy nó đang ở đâu:
 
 ```bash
 aidev task events TASK-000001
@@ -268,9 +269,13 @@ worktree
   branch  aidev/TASK-000001
 ```
 
-Hãy chú ý dòng `says`. Lần chạy đó dùng một mô hình miễn phí mà tóm tắt cuối của nó khá lộn xộn — nhưng điều đó không quan trọng. Đoạn mã nó viết ra đúng, và điều khẳng định điều đó là aidev đã tự chạy `go test` và `go vet`. Lời tường thuật của agent về công việc của chính nó được ghi lại vì có ích cho việc chẩn đoán, chứ không bao giờ là bằng chứng.
+Hãy chú ý dòng `says`. Lần chạy đó dùng một mô hình miễn phí mà tóm tắt cuối của nó
+khá lộn xộn, và điều đó không quan trọng: đoạn mã nó viết ra đúng, và điều khẳng
+định điều đó là aidev đã tự chạy `go test` và `go vet`. Lời tường thuật của agent về
+công việc của chính nó được ghi lại vì có ích cho việc chẩn đoán. Nó không bao giờ là
+bằng chứng.
 
-Mặt còn lại của cùng một đồng xu, với một agent báo cáo thành công mà không chạm vào gì:
+Cùng tình huống đó ở phía ngược lại: một agent báo cáo thành công mà không chạm vào gì:
 
 ```text
 TASK-000002 FAILED (VERIFICATION): verification did not pass: 0/1 steps passed
@@ -329,8 +334,9 @@ Mọi lệnh trừ `setup` đều nhận `--json` để in kết quả cho máy 
 mặc định. Nhật ký luôn ghi ra stderr, nên `aidev task get TASK-000001 --json | jq`
 vẫn chạy được trong khi các chẩn đoán hiển thị bình thường.
 
-Các task bị đánh dấu `--requires-approval` sẽ dừng lại trước khi làm bất cứ việc gì — không worktree, không
-lần thử nào — cho tới khi `aidev task approve` cho phép chúng tiếp tục. Tương tự với mọi task thuộc dự án
+Các task bị đánh dấu `--requires-approval` sẽ dừng lại trước khi làm bất cứ việc gì,
+không worktree và không lần thử nào, cho tới khi `aidev task approve` cho phép chúng
+tiếp tục. Tương tự với mọi task thuộc dự án
 đang bật chính sách (`aidev project approval on`), bất kể task đó có tự yêu cầu hay không; chính sách thuộc
 về người vận hành và chỉ có ở CLI, nên một planner tạo task không thể tự quyết định công việc của chính
 mình có được phép chạy hay không.
@@ -374,9 +380,9 @@ Một task thất bại để lại worktree của nó nguyên vẹn đúng như
 tự ý vượt qua điều đó, nên điều này đúng bất kể cấu hình ra sao. Xem
 [chính sách dọn dẹp](docs/architecture.md#cleanup-policy).
 
-Output cho người đọc đi ra **stdout**; log có cấu trúc đi ra **stderr**. Sự phân tách
-này mang tính quyết định: khi aidev chạy như một máy chủ MCP, stdout mang giao thức
-JSON-RPC, nên không có gì khác được phép ghi ra đó.
+Output cho người đọc đi ra **stdout**; log có cấu trúc đi ra **stderr**. Khi aidev chạy
+như một máy chủ MCP, stdout mang giao thức JSON-RPC, nên không có gì khác được phép
+ghi ra đó.
 
 ## Thiết lập OpenCode
 
@@ -385,9 +391,9 @@ cần chứng thực API nào: các mô hình công khai `opencode/*` chạy đ�
 không, và đó là cách test đầu cuối của dự án này chạy mà không cần khóa.
 
 Mô hình mặc định là `opencode/muse-spark-1.3-contributor-free`, được chọn bằng
-đo đạc chứ không phải theo tên. Trên cùng những prompt đơn giản giống hệt nhau, nó trả lời trong
-3.2–3.9s qua các lần chạy lặp lại; mô hình miễn phí còn lại dao động giữa 3.9s và 100.5s
-cho cùng công việc — tức là khác biệt giữa một task một phút và một
+đo đạc, không theo tên. Trên cùng những prompt đơn giản giống hệt nhau, nó trả lời trong
+3.2-3.9s qua các lần chạy lặp lại; mô hình miễn phí còn lại dao động giữa 3.9s và 100.5s
+cho cùng công việc, tức là khác biệt giữa một task một phút và một
 task mười một phút. Hãy đặt `agent.opencode.model` thành bất kỳ mô hình nào bạn có chứng thực, hoặc
 thành chuỗi rỗng để OpenCode tự quyết.
 
@@ -400,11 +406,11 @@ aidev gọi `opencode run --dir <worktree> --format json -- <prompt>` rồi đ�
 luồng event phân tách bằng xuống dòng. Bạn không bao giờ tự gõ lệnh đó; biết nó là việc của
 aidev, không phải của planner.
 
-Hai hành vi đã đo đạc đáng biết trước task đầu tiên của bạn:
+Ba hành vi đã đo đạc đáng biết trước task đầu tiên của bạn:
 
-- **Một task lâu đúng bằng thời gian mô hình chạy.** Phần việc của chính aidev trong một lần chạy —
-  worktree, diff, verification, mọi lần ghi cơ sở dữ liệu — được đo chỉ 0.2 giây
-  so với thời gian agent từ 9 tới 656 giây. Độ trễ của bậc miễn phí là biến số quyết định,
+- **Một task lâu đúng bằng thời gian mô hình chạy.** Phần việc của chính aidev trong
+  một lần chạy (worktree, diff, verification, mọi lần ghi cơ sở dữ liệu) được đo chỉ
+  0.2 giây so với thời gian agent từ 9 tới 656 giây. Độ trễ của bậc miễn phí là biến số quyết định,
   và không phải lúc nào cũng đoán trước được, đó là lý do
   `tasks.timeout` mặc định 30 phút.
 - **OpenCode ghi tập tin mà không hỏi**, ngay cả khi không có cờ `--auto`. Đó
@@ -461,9 +467,9 @@ Tám công cụ sau đây sẽ khả dụng:
 | `aidev_cancel_task` | dừng task; worktree của nó được giữ lại |
 | `aidev_approve_task` | con người cho phép task bị chặn chạy tiếp; bị tắt trừ khi đặt `mcp.allow_approval` |
 
-Một lần chạy mất vài phút, nên `aidev_run_task` chờ một khoảng thời gian giới hạn rồi trả về với
-`still_running: true` trong khi task vẫn tiếp tục — nó chạy như một tiến trình
-`aidev task run` riêng nên tồn tại cả khi server này thoát; planner thăm dò
+Một lần chạy mất vài phút, nên `aidev_run_task` chờ một khoảng thời gian giới hạn rồi
+trả về với `still_running: true` trong khi task vẫn tiếp tục. Nó chạy như một tiến
+trình `aidev task run` riêng nên tồn tại cả khi server này thoát, và planner thăm dò
 `aidev_get_task_result`. Trường cần đọc là `succeeded`, chỉ đúng khi
 verification của chính aidev đã qua.
 
@@ -498,15 +504,15 @@ từ gốc hiếm khi là kiểm tra đúng. Hãy nêu đúng cái bao phủ tha
 **Worktree là một bản checkout sạch: chỉ gồm các tập tin đã được theo dõi.** Các phụ thuộc nằm
 ngoài git không có ở đó. `go test` vẫn ổn, vì module cache được dùng chung,
 nhưng `npm test` hoặc `pytest` sẽ thất bại trong một worktree mới trừ khi verification
-của task cài đặt những gì nó cần trước — ví dụ
+của task cài đặt những gì nó cần trước, ví dụ
 `--verify 'npm --prefix web ci'` trước `--verify 'npm --prefix web test'`.
 
 Đầy đủ lược đồ, lỗi và tác dụng phụ: **[docs/mcp-tools.md](docs/mcp-tools.md)**.
 
-### Việc này đã được chạy thật, không chỉ đấu nối xong
+### Một lần chạy đầu cuối, đã kiểm tra lại
 
 Claude Code được giao một kho mã có test không biên dịch được, được dặn chỉ dùng
-các công cụ MCP của aidev, và bị từ chối rõ ràng `Edit`, `Write`, `Read` và `Bash` —
+các công cụ MCP của aidev, và bị từ chối rõ ràng `Edit`, `Write`, `Read` và `Bash`,
 nên công việc không thể đến từ đâu khác ngoài aidev. Nó đã tạo và chạy
 task, rồi báo cáo lại:
 
@@ -536,7 +542,7 @@ make test-integration # everything, including tests that need PostgreSQL
 make test-e2e         # the real OpenCode, end to end (slow: minutes)
 ```
 
-`make check` chạy được trên máy không có cơ sở dữ liệu: các test tích hợp tự bỏ qua trừ khi có đặt `TEST_DATABASE_URL`, nên một lần thất bại luôn là lỗi thật chứ không phải do thiếu môi trường.
+`make check` chạy được trên máy không có cơ sở dữ liệu: các test tích hợp tự bỏ qua trừ khi có đặt `TEST_DATABASE_URL`, nên một lần thất bại luôn là lỗi thật, không bao giờ là do thiếu môi trường.
 
 Để chạy các test cơ sở dữ liệu:
 
@@ -558,11 +564,11 @@ Các mục tiêu hữu ích khác: `make db-reset` (xóa dữ liệu và bắt �
 
 ### Những gì các test giữ
 
-Bộ test không chỉ để đo độ phủ; một số test tồn tại để giữ các bất biến cụ thể:
+Bộ test làm nhiều hơn việc tăng độ phủ: một số test tồn tại để giữ các bất biến cụ thể:
 
 - `VERIFYING` là trạng thái duy nhất có thể tới được `SUCCEEDED`.
 - Mọi trạng thái chưa kết thúc đều tới được `CANCELLED`, nên không task nào là không thể dừng.
-- Các kiểu liệt kê trong Go và các ràng buộc `CHECK` của SQL không thể lệch nhau — điều này được kiểm chứng bằng cách xác nhận test sẽ thất bại khi một giá trị bị gỡ khỏi ràng buộc.
+- Các kiểu liệt kê trong Go và các ràng buộc `CHECK` của SQL không thể lệch nhau , điều này được kiểm chứng bằng cách gỡ một giá trị khỏi ràng buộc và xem test thất bại.
 - `UPDATE` trên nhật ký event bị cơ sở dữ liệu từ chối; xóa một task vẫn xóa theo toàn bộ lịch sử của nó.
 - Một task và event tạo ra nó được commit cùng nhau hoặc không commit gì cả.
 - Một agent không thể tạo ra một task thành công chỉ bằng cách tuyên bố thành công.
@@ -572,7 +578,8 @@ Bộ test không chỉ để đo độ phủ; một số test tồn tại để 
 - Hủy một task giữa chừng vẫn ghi nhận việc hủy, thay vì để hàng đó kẹt ở `RUNNING`.
 - Việc hủy diệt toàn bộ nhóm tiến trình, nên các tiến trình con của lệnh verification không sống sót sau nó.
 
-Một số điều trong đó đã được xác nhận bằng cách cố tình phá hỏng phần cài đặt rồi kiểm tra rằng test thất bại, thay vì cho rằng test xanh là đã có bảo đảm thật.
+Một số điều trong đó đã được xác nhận bằng cách cố tình phá hỏng phần cài đặt rồi xem
+test thất bại, chứ không phải bằng cách tin rằng test xanh là đã có bảo đảm thật.
 
 ## Xem một task đã làm gì (tùy chọn)
 
@@ -584,7 +591,8 @@ make jaeger-env  # prints the tracing object to paste into the conf.json that AI
 aidev task run TASK-000001
 ```
 
-Để có góc nhìn hướng LLM kèm chi phí, Langfuse tự host cũng dùng được — gồm sáu dịch vụ, nên nó được khởi động riêng:
+Để có góc nhìn hướng LLM kèm chi phí, Langfuse tự host cũng dùng được. Nó gồm sáu
+dịch vụ, nên được khởi động riêng:
 
 ```bash
 make langfuse-up   # six services, UI on :3000
@@ -604,7 +612,7 @@ aidev.task.run            10.97s
 
 Nó cũng cho thấy thời gian đi vào đâu: agent chiếm 10,86 trên 10,97 giây.
 
-Hai ghi chú rút ra khi làm cho việc này chạy. Langfuse v4 đã bỏ `GET /api/public/traces` — hãy dùng `GET /api/public/v2/observations`, và hãy kiểm tra trạng thái HTTP thay vì đọc trường `data` rỗng trong thân lỗi. Và aidev cố ý **không** truyền cấu hình OTLP của mình cho agent: OpenCode cũng đã được gắn đo, và một lần chạy đã từng đẩy 1536 span nội bộ của chính nó vào backend của bạn dưới tên aidev.
+Hai ghi chú rút ra khi làm cho việc này chạy. Langfuse v4 đã bỏ `GET /api/public/traces`, nên hãy dùng `GET /api/public/v2/observations`, và hãy kiểm tra trạng thái HTTP thay vì đọc trường `data` rỗng trong thân lỗi. Và aidev cố ý **không** truyền cấu hình OTLP của mình cho agent: OpenCode cũng đã được gắn đo, và một lần chạy đã từng đẩy 1536 span nội bộ của chính nó vào backend của bạn dưới tên aidev.
 
 ## Khi có sự cố
 
@@ -625,7 +633,7 @@ aidev task recover --dry-run
 aidev task recover
 ```
 
-Task mà tiến trình còn sống thì lease còn hiệu lực và được bỏ qua. Lệnh khôi phục ghi lease hết hạn làm lý do, đóng attempt đang mở, và giữ công việc dở dang lại. Bạn vẫn có thể tự hủy — `aidev task cancel TASK-000001 --reason "aidev was killed mid-run"` — và lý do không lệnh nào tự làm việc này theo giờ nằm trong [ghi chú kiến trúc](docs/architecture.md#when-a-run-is-interrupted).
+Task mà tiến trình còn sống thì lease còn hiệu lực và được bỏ qua. Lệnh khôi phục ghi lease hết hạn làm lý do, đóng attempt đang mở, và giữ công việc dở dang lại. Bạn vẫn có thể tự hủy bằng `aidev task cancel TASK-000001 --reason "aidev was killed mid-run"`; lý do không lệnh nào tự làm việc này theo giờ nằm trong [ghi chú kiến trúc](docs/architecture.md#when-a-run-is-interrupted).
 
 **Không gian làm việc đầy dần.** Các task thất bại cố ý giữ lại worktree của chúng:
 
@@ -649,7 +657,7 @@ Run đã bị prune hiện `logs_pruned`, nên output rỗng được hiểu là
 phải im lặng. Event log không bao giờ bị prune. `task delete` từ chối task còn có
 thể thay đổi, và task có worktree vẫn còn trên đĩa.
 
-**Có các volume Docker mang tên task.** Một agent đã chạy `docker compose` bên trong worktree của nó, nơi có một bản sao của `docker-compose.yml`, và Compose đã đặt tên dự án theo thư mục. Chúng chỉ là rác rỗng chứ không phải dữ liệu: `docker volume prune` xóa chúng. Tên dự án cố ý để không ghim — xem [lý do](docs/architecture.md#postgresql-data-and-why-the-compose-project-name-is-not-pinned).
+**Có các volume Docker mang tên task.** Một agent đã chạy `docker compose` bên trong worktree của nó, nơi có một bản sao của `docker-compose.yml`, và Compose đã đặt tên dự án theo thư mục. Chúng chỉ là rác rỗng chứ không phải dữ liệu: `docker volume prune` xóa chúng. Tên dự án cố ý để không ghim, xem [lý do](docs/architecture.md#postgresql-data-and-why-the-compose-project-name-is-not-pinned).
 
 **Cơ sở dữ liệu có được giữ lâu dài không?** Có: nhờ một volume đã đặt tên. `make db-up` giữ nó trong `aidev_aidev-pgdata` (Compose thêm tiền tố tên dự án), `aidev setup` giữ trong `aidev-pgdata`. `make db-down` giữ lại nó và chỉ `make db-reset` mới phá hủy nó. Nếu `aidev setup` phải tạo container của nó trong khi các volume của Compose đã tồn tại, nó sẽ dừng lại và liệt kê chúng thay vì khởi động trên một cơ sở dữ liệu rỗng: hãy truyền `--postgres-volume aidev_aidev-pgdata` để giữ dữ liệu của `make db-up`. Không có PersistentVolumeClaim vì không có Kubernetes.
 
@@ -660,7 +668,8 @@ aidev task result TASK-000001 --logs   # verification output, agent transcript, 
 aidev task events TASK-000001          # what happened, in order
 ```
 
-**Một task chạy chậm.** Hầu hết thời gian đó là do mô hình, không phải aidev — đã đo được 0,2 giây việc của chính aidev so với 9 tới 656 giây của agent. Hãy xem `aidev task events` để biết nó đang ở giai đoạn nào, và cân nhắc một mô hình nhanh hơn.
+**Một task chạy chậm.** Hầu hết thời gian đó là do mô hình, không phải aidev: việc của
+chính aidev đo được 0,2 giây so với 9 tới 656 giây của agent. Hãy xem `aidev task events` để biết nó đang ở giai đoạn nào, và cân nhắc một mô hình nhanh hơn.
 
 **Kho mã chưa có commit nào.** `aidev task create` từ chối kho mã chưa có commit nào, vì không có gì để tách nhánh. Hãy tạo commit đầu tiên rồi tạo task lại.
 
@@ -669,7 +678,7 @@ aidev task events TASK-000001          # what happened, in order
 | | |
 |---|---|
 | **[docs/guide/vi/index.html](docs/guide/vi/index.html)** | **Hãy bắt đầu ở đây nếu bạn là người mới.** Hướng dẫn bốn trang viết cho tuần đầu tiên: aidev là gì, bắt đầu, gỡ lỗi, và tham khảo đầy đủ. Hãy mở nó trong trình duyệt |
-| [docs/research.md](docs/research.md) | Những gì Claude Code, OpenCode, git và PostgreSQL đã cài đặt thật sự làm — đã đo đạc, với các giả định và câu hỏi mở được đánh dấu |
+| [docs/research.md](docs/research.md) | Những gì Claude Code, OpenCode, git và PostgreSQL đã cài đặt thật sự làm, đã đo đạc, với các giả định và câu hỏi mở được đánh dấu |
 | [docs/architecture.md](docs/architecture.md) | Cách sắp xếp các gói, các quyết định thiết kế và cái giá của chúng, các khe mở rộng |
 | [docs/database.md](docs/database.md) | Lược đồ, các ràng buộc, vòng đời, đồng thời, các migration |
 | [docs/mcp-tools.md](docs/mcp-tools.md) | Mọi công cụ MCP: đầu vào, đầu ra, lỗi, tác dụng phụ, và những gì cố ý không lộ ra |
