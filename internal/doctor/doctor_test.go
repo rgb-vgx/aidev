@@ -382,3 +382,31 @@ func TestDiskCheck(t *testing.T) {
 		t.Errorf("without a way to measure, status = %s, want skipped", got.Status)
 	}
 }
+
+// When the database does not answer and Docker is installed, the advice
+// depends on what Docker says: these used to share one generic sentence, and
+// "the daemon is not running" after a reboot looked like a broken container.
+func TestDatabaseAdviceFollowsDockerState(t *testing.T) {
+	cases := []struct {
+		name  string
+		state DockerState
+		want  string
+	}{
+		{"daemon down", DockerState{Daemon: DaemonDown}, "daemon is not running"},
+		{"permission denied", DockerState{Daemon: DaemonDenied}, "docker group"},
+		{"container stopped", DockerState{Daemon: DaemonUp, Container: "exited", Name: "aidev-postgres"}, "docker start aidev-postgres"},
+		{"container running", DockerState{Daemon: DaemonUp, Container: "running", Name: "aidev-postgres"}, "database.url"},
+		{"no container", DockerState{Daemon: DaemonUp, Name: "aidev-postgres"}, "aidev setup"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			deps := healthy()
+			deps.PingDatabase = func(context.Context, string) error { return errors.New("connection refused") }
+			deps.Docker = func(context.Context) DockerState { return tc.state }
+			got := byName(t, Run(context.Background(), deps))[CheckDatabase]
+			if got.Status != StatusFail || !strings.Contains(got.Fix, tc.want) {
+				t.Errorf("database = %s, fix %q; want fail with a fix mentioning %q", got.Status, got.Fix, tc.want)
+			}
+		})
+	}
+}

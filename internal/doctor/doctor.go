@@ -70,7 +70,30 @@ type Deps struct {
 	// FreeSpace returns the bytes available to this user on the filesystem
 	// holding dir. Nil, or errors.ErrUnsupported, skips the disk check.
 	FreeSpace func(dir string) (uint64, error)
+	// Docker reports the state of the Docker daemon and of the PostgreSQL
+	// container `aidev setup` creates. It is asked only when the database
+	// does not answer, to say which of several look-alike problems it is.
+	// Nil falls back to the generic advice.
+	Docker func(ctx context.Context) DockerState
 }
+
+// DockerState is what the database check learns from Docker.
+type DockerState struct {
+	// Daemon is DaemonUp, DaemonDown or DaemonDenied.
+	Daemon string
+	// Container is the setup container's status as docker reports it
+	// (running, exited, created, paused…), or "" when there is none.
+	Container string
+	// Name is the container that was looked up.
+	Name string
+}
+
+// Docker daemon states.
+const (
+	DaemonUp     = "up"
+	DaemonDown   = "down"
+	DaemonDenied = "denied"
+)
 
 // Run performs every check in order and returns one Result per check.
 //
@@ -215,7 +238,7 @@ func databaseResult(ctx context.Context, deps Deps, cfg config.Config, results *
 		summary := fmt.Sprintf("Cannot reach the database: %s.", redactDatabaseURL(err.Error(), cfg.DatabaseURL))
 		var fix string
 		if _, dockerErr := deps.LookPath("docker"); dockerErr == nil {
-			fix = "Run `aidev setup` to start PostgreSQL in Docker (safe to run again), or check that database.url in conf.json points at a running PostgreSQL."
+			fix = dockerFix(ctx, deps)
 		} else {
 			fix = "Install Docker and run `aidev setup`, or check that database.url in conf.json points at a running PostgreSQL."
 		}
@@ -233,6 +256,31 @@ func databaseResult(ctx context.Context, deps Deps, cfg config.Config, results *
 		Summary: "Database is reachable.",
 	})
 	return nil
+}
+
+// dockerFix tells apart the problems that all look like "the database does
+// not answer" when Docker is installed: the daemon is not running (common
+// after a reboot where Docker does not start at boot), this user may not talk
+// to it, the setup container is stopped, or it runs and still does not
+// answer — which points at database.url rather than at Docker.
+func dockerFix(ctx context.Context, deps Deps) string {
+	const generic = "Run `aidev setup` to start PostgreSQL in Docker (safe to run again), or check that database.url in conf.json points at a running PostgreSQL."
+	if deps.Docker == nil {
+		return generic
+	}
+	st := deps.Docker(ctx)
+	switch {
+	case st.Daemon == DaemonDown:
+		return "Docker is installed but its daemon is not running. Start it (`sudo systemctl start docker` on Linux, or open Docker Desktop), then run `aidev doctor` again."
+	case st.Daemon == DaemonDenied:
+		return "Docker is running but this user may not talk to it (permission denied). Add the user to the docker group (`sudo usermod -aG docker $USER`, then log in again), or use rootless Docker."
+	case st.Container == "running":
+		return fmt.Sprintf("The %s container is running but the database does not answer at database.url. Check the host, port, user and password in conf.json against the container (`docker port %s`).", st.Name, st.Name)
+	case st.Container != "":
+		return fmt.Sprintf("The %s container exists but is %s. Start it with `docker start %s` (or `aidev setup`, which does the same and waits until it is ready).", st.Name, st.Container, st.Name)
+	default:
+		return generic
+	}
 }
 
 // migrationsResult checks that no database migration is still waiting to be applied.

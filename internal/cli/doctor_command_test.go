@@ -48,8 +48,11 @@ func TestDoctorReportsEveryCheckAndFailsOnAnUnreachableDatabase(t *testing.T) {
 			t.Errorf("output does not list the %s check:\n%s", name, stdout)
 		}
 	}
-	if !strings.Contains(stdout, "aidev setup") {
-		t.Errorf("output does not say how to start the database:\n%s", stdout)
+	// What to do depends on what this machine's Docker says (doctor asks it
+	// when the database does not answer): start PostgreSQL with setup, or —
+	// when the setup container is already running — fix database.url.
+	if !strings.Contains(stdout, "aidev setup") && !strings.Contains(stdout, "database.url") {
+		t.Errorf("output does not say how to get the database answering:\n%s", stdout)
 	}
 	if strings.Contains(stdout+stderr+err.Error(), "hunter2") {
 		t.Errorf("the database password is shown:\n%s\n%s\n%v", stdout, stderr, err)

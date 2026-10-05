@@ -24,7 +24,12 @@ for a developer point to `make install` in the aidev repository.
 
 Work through the failures in order and run `aidev doctor` again after each fix.
 
-- **database**: when the database does not answer, offer to run `aidev setup`
+- **database**: when the database does not answer, follow the `fix`, which says
+  what Docker reported. If the Docker daemon is not running, ask the user to
+  start it (`sudo systemctl start docker`, or Docker Desktop) — do not run sudo
+  yourself. If the user may not talk to Docker, show them the docker-group fix.
+  If the `aidev-postgres` container is stopped, offer `docker start aidev-postgres`
+  or `aidev setup`. Otherwise offer to run `aidev setup`
   (safe to run again; it starts PostgreSQL in Docker and migrates). If Docker is
   missing, do not install it yourself: tell the user what to install. If
   `database.url` points somewhere other than the local container, ask before
