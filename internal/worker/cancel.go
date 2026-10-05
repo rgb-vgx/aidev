@@ -232,7 +232,9 @@ func (o *Orchestrator) Recover(ctx context.Context, dryRun bool) ([]RecoveredTas
 // CANCELLED is the expected outcome, reported with a nil error. Any other
 // error, or a conflict with any other status, is not.
 func (r *run) cancelledElsewhere(ctx context.Context, cause error) (Outcome, bool) {
-	if !errors.Is(cause, store.ErrConflict) {
+	// A lost fence is the same news as a lost compare-and-set: someone else
+	// ended the attempt (store.HoldLease).
+	if !errors.Is(cause, store.ErrConflict) && !errors.Is(cause, store.ErrLeaseLost) {
 		return Outcome{}, false
 	}
 	reloadCtx, reloadCancel := writeContext(ctx)
@@ -242,6 +244,7 @@ func (r *run) cancelledElsewhere(ctx context.Context, cause error) (Outcome, boo
 		return Outcome{}, false
 	}
 	r.task = current
+	r.attemptOpen = false
 	if wt, wtErr := r.o.Store.GetWorktreeByAttempt(reloadCtx, r.attempt.ID); wtErr == nil {
 		r.record = &wt
 	}

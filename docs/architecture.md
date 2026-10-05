@@ -672,6 +672,20 @@ run in another process notices the `CANCELLED` status on its next poll (every 2
 seconds by default) and stops then. The stopped run adopts the ending the
 cancel already recorded instead of writing a second one.
 
+A lease is evidence, not a lock, so it is backed by a **fence**. A process that
+was paused past its lease — or a run that has not yet polled — could otherwise
+wake up after a recovery or a cancel and go on writing. Every write a run makes
+while its attempt is open first takes `store.HoldLease` in its transaction: lock
+the task row, then the attempt row (the order Cancel uses, so the two cannot
+deadlock), and require the attempt to be `RUNNING` under this process. If it is
+not, the transaction writes nothing and the run adopts the recorded ending.
+Success and retry hold the fence across their git work too — the commit, the
+branch update, the reset — so "the branch moved" and "the task succeeded" happen
+under one lock, and a run that lost its attempt moves nothing. What stays
+unfenced is the attempt's own audit trail, its worker-run and verification rows:
+they record what really ran, which is what a reader needs most when someone else
+ended the attempt. `TestARunThatLostItsAttemptPublishesNothing` holds this.
+
 Recovery is never fully automatic in the worker: a lease is evidence, and aidev
 does not read it as an instruction. A human runs `aidev task recover` (doctor
 warns when there is something for it to do), and the MCP server runs it once when

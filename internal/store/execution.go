@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -137,6 +138,55 @@ func scanAttempt(row scanner) (task.TaskAttempt, error) {
 		return task.TaskAttempt{}, fmt.Errorf("attempt %s has unrecognised status %q", a.ID, status)
 	}
 	return a, nil
+}
+
+// ErrLeaseLost means the attempt a run is writing for is no longer RUNNING
+// under that run's process: someone else — a Cancel, `aidev task recover` —
+// ended it. The run must stop publishing (see HoldLease).
+var ErrLeaseLost = errors.New("the attempt is no longer held by this process")
+
+// HoldLease is the fence every write of a run passes through while its
+// attempt is open (production review, 2026-10-04). Inside the caller's
+// transaction it locks the task row, then the attempt row, and requires the
+// attempt to be RUNNING and leased to owner; otherwise it returns
+// ErrLeaseLost and the caller's transaction writes nothing.
+//
+// A lease alone only lets aidev notice a dead run. A run that was paused, or
+// that never heard of a Cancel, could otherwise go on writing — events after
+// the ending, a commit on the branch — once someone else had finished its
+// attempt. Holding both row locks until the caller commits also makes the
+// fence and the write one step: a Cancel waits on the same rows, in the same
+// order (task first, then attempts), so it cannot slip in between.
+//
+// What it guards is state other parties own: the task's status, its events,
+// and — because the callers hold it across their git work — the branch and
+// the worktree. Rows that only record what an attempt itself did (its worker
+// run, its verification results) are written without it: they describe work
+// that really happened, and an attempt ended elsewhere is when they matter
+// most.
+//
+// It must run inside a transaction — a row lock taken on the pool is released
+// as soon as the statement ends — and refuses otherwise.
+func (s *Store) HoldLease(ctx context.Context, taskID, attemptID uuid.UUID, owner string) error {
+	if s.pool != nil {
+		return fmt.Errorf("hold lease on attempt %s: HoldLease must run inside a transaction", attemptID)
+	}
+	var one int
+	if err := s.db.QueryRow(ctx, `SELECT 1 FROM tasks WHERE id = $1 FOR UPDATE`, taskID).Scan(&one); err != nil {
+		return fmt.Errorf("hold lease on attempt %s: lock task: %w", attemptID, classify(err))
+	}
+	err := s.db.QueryRow(ctx, `
+		SELECT 1 FROM task_attempts
+		WHERE id = $1 AND task_id = $2 AND status = 'RUNNING' AND lease_owner = $3
+		FOR UPDATE`, attemptID, taskID, owner).Scan(&one)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(classify(err), ErrNotFound):
+		return fmt.Errorf("hold lease on attempt %s: %w", attemptID, ErrLeaseLost)
+	default:
+		return fmt.Errorf("hold lease on attempt %s: %w", attemptID, classify(err))
+	}
 }
 
 // RenewLease extends an attempt's lease and returns the task's current status.

@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"aidev/internal/event"
+	"aidev/internal/git"
 	"aidev/internal/logging"
 	"aidev/internal/store"
 	"aidev/internal/task"
@@ -112,20 +113,25 @@ func (r *run) scheduleRetry(ctx context.Context, kind task.FailureKind, cause er
 		message = cause.Error()
 	}
 
-	partial, err := r.commitPartialWork(ctx, kind)
-	if err != nil {
-		// Without the commit the next attempt would start from a branch
-		// that does not hold this attempt's work; failing as usual keeps
-		// the worktree, and the work in it, for a person instead.
-		r.log.WarnContext(ctx, "could not commit the failed attempt's work; not retrying", "error", err.Error())
-		return Outcome{}, false, nil
-	}
-
-	writeCtx, cancel := writeContext(ctx)
+	// As in succeed, the git work — commit, reset — happens behind the
+	// lease fence inside the transaction that records the retry: a run that
+	// lost its attempt must not touch the branch or the worktree a Cancel
+	// promised to keep as it was.
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*git.DefaultTimeout+persistTimeout)
 	defer cancel()
 
+	var (
+		partial   string
+		commitErr error
+	)
 	next := r.attempt.AttemptNumber + 1
-	err = r.o.Store.InTx(writeCtx, func(tx *store.Store) error {
+	err := r.o.Store.InTx(writeCtx, func(tx *store.Store) error {
+		if err := r.fence(writeCtx, tx); err != nil {
+			return err
+		}
+		if partial, commitErr = r.commitPartialWork(ctx, kind); commitErr != nil {
+			return commitErr
+		}
 		if err := tx.TransitionTask(writeCtx, r.task.ID, r.task.Status, task.StatusReady); err != nil {
 			return err
 		}
@@ -158,6 +164,13 @@ func (r *run) scheduleRetry(ctx context.Context, kind task.FailureKind, cause er
 		}
 		return appendEvent(writeCtx, tx, r.task.ID, &r.attempt.ID, event.TypeRetryScheduled, payload)
 	})
+	if commitErr != nil {
+		// Without the commit the next attempt would start from a branch
+		// that does not hold this attempt's work; failing as usual keeps
+		// the worktree, and the work in it, for a person instead.
+		r.log.WarnContext(ctx, "could not commit the failed attempt's work; not retrying", "error", commitErr.Error())
+		return Outcome{}, false, nil
+	}
 	if err != nil {
 		// A Cancel that landed first owns the ending.
 		if out, ok := r.cancelledElsewhere(ctx, err); ok {
@@ -183,6 +196,7 @@ func (r *run) scheduleRetry(ctx context.Context, kind task.FailureKind, cause er
 		rc.failed = failedSteps(*r.report)
 	}
 	r.task.Status = task.StatusReady
+	r.attemptOpen = false
 	r.retry = rc
 	r.retryPending = true
 	return Outcome{}, true, nil

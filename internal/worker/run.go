@@ -71,6 +71,11 @@ type run struct {
 	// a first attempt.
 	retry *retryContext
 
+	// attemptOpen is true from startAttempt until the run records the
+	// attempt's ending (or learns someone else did). While it is, every
+	// write passes the lease fence (see fence).
+	attemptOpen bool
+
 	// leaseAttempt is the attempt whose lease the cancel watch renews. It
 	// changes when a retry starts a new attempt, while the watcher keeps
 	// running, so it is the one field the watcher reads and is atomic.
@@ -393,6 +398,7 @@ func (r *run) startAttempt(ctx context.Context) error {
 			return err
 		}
 		r.attempt = attempt
+		r.attemptOpen = true
 		id := attempt.ID
 		r.leaseAttempt.Store(&id)
 		r.task.Status = task.StatusRunning
@@ -1038,15 +1044,26 @@ func interceptionError(ins []verification.Interception) error {
 // task that is no longer VERIFYING — cancelled while verification ran — keeps
 // its worktree.
 func (r *run) succeed(ctx context.Context) (Outcome, error) {
-	committed, err := r.commitWork(ctx)
-	if err != nil {
-		return r.fail(ctx, task.FailureWorktree, fmt.Errorf("commit failed: %w", err))
-	}
-
-	writeCtx, cancel := writeContext(ctx)
+	// The commit happens inside the transaction that records the success,
+	// after the lease fence: with the task and attempt rows locked, a Cancel
+	// or a recovery cannot end the attempt between "the branch moved" and
+	// "the task succeeded", and a run that already lost its attempt moves
+	// nothing. The budget is git's plus the usual write budget, detached from
+	// the caller's context like every write that records an ending.
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), git.DefaultTimeout+persistTimeout)
 	defer cancel()
 
-	err = r.o.Store.InTx(writeCtx, func(tx *store.Store) error {
+	var (
+		committed bool
+		commitErr error
+	)
+	err := r.o.Store.InTx(writeCtx, func(tx *store.Store) error {
+		if err := r.fence(writeCtx, tx); err != nil {
+			return err
+		}
+		if committed, commitErr = r.commitWork(ctx, tx); commitErr != nil {
+			return commitErr
+		}
 		if err := tx.TransitionTask(writeCtx, r.task.ID, task.StatusVerifying, task.StatusSucceeded); err != nil {
 			return err
 		}
@@ -1061,7 +1078,12 @@ func (r *run) succeed(ctx context.Context) (Outcome, error) {
 			"verification":  r.report.Summary(),
 		})
 	})
+	if commitErr != nil {
+		// Nothing was recorded; the failure path fences again and records it.
+		return r.fail(ctx, task.FailureWorktree, fmt.Errorf("commit failed: %w", commitErr))
+	}
 	if err != nil {
+		r.attemptOpen = false
 		// Someone else finished the task first — Cancel only changes the
 		// database — so the worktree stays where it is and the outcome
 		// reports what the task actually is now, not a success.
@@ -1085,6 +1107,7 @@ func (r *run) succeed(ctx context.Context) (Outcome, error) {
 	}
 
 	r.task.Status = task.StatusSucceeded
+	r.attemptOpen = false
 	r.cleanupAfterSuccess(ctx)
 	r.log.InfoContext(ctx, "task succeeded",
 		"branch", r.worktree.Branch, "head_commit", r.headCommit())
@@ -1107,7 +1130,7 @@ func (r *run) succeed(ctx context.Context) (Outcome, error) {
 // commit was made. An empty commit means the agent changed nothing, which is
 // still a success once verification passed. Nothing is merged — only the
 // task's own branch is written.
-func (r *run) commitWork(ctx context.Context) (bool, error) {
+func (r *run) commitWork(ctx context.Context, tx *store.Store) (bool, error) {
 	// Detached from the caller's context so a cancelled task still delivers,
 	// and bounded by git's own timeout rather than the shorter write budget
 	// so a slow commit is not cut short by aidev.
@@ -1134,11 +1157,15 @@ func (r *run) commitWork(ctx context.Context) (bool, error) {
 	if commit == "" {
 		return false, nil
 	}
-	writeCtx, writeCancel := writeContext(ctx)
-	defer writeCancel()
+	// Recorded in the caller's transaction, so the head commit and the
+	// success it belongs to land together. A failure here fails that
+	// transaction too: a SUCCEEDED row whose worktree does not name the
+	// delivered commit would mislead anyone reading it later.
 	if r.record != nil {
-		if err := r.o.Store.SetWorktreeHead(writeCtx, r.record.ID, commit); err != nil {
-			r.log.WarnContext(ctx, "could not record the commit", "error", err.Error())
+		writeCtx, writeCancel := writeContext(ctx)
+		defer writeCancel()
+		if err := tx.SetWorktreeHead(writeCtx, r.record.ID, commit); err != nil {
+			return false, err
 		}
 	}
 	r.setHeadCommit(commit)
@@ -1255,6 +1282,9 @@ func (r *run) fail(ctx context.Context, kind task.FailureKind, cause error) (Out
 	defer cancel()
 
 	err := r.o.Store.InTx(writeCtx, func(tx *store.Store) error {
+		if err := r.fence(writeCtx, tx); err != nil {
+			return err
+		}
 		if err := tx.TransitionTask(writeCtx, r.task.ID, r.task.Status, next); err != nil {
 			return err
 		}
@@ -1285,6 +1315,7 @@ func (r *run) fail(ctx context.Context, kind task.FailureKind, cause error) (Out
 	}
 
 	r.task.Status = next
+	r.attemptOpen = false
 	r.log.InfoContext(ctx, "task finished unsuccessfully",
 		"status", next.String(), logging.FieldFailureKind, string(kind), "error", message)
 
