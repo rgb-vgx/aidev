@@ -241,12 +241,13 @@ func NewApproval(a task.Approval) *Approval {
 
 // Result is everything known about a task's latest attempt.
 type Result struct {
-	Task         Task           `json:"task" jsonschema:"the task itself"`
-	Attempt      *Attempt       `json:"attempt,omitempty" jsonschema:"the latest attempt, absent if the task has never run"`
-	Worker       *Worker        `json:"worker,omitempty" jsonschema:"what the agent did"`
-	Verification []Verification `json:"verification,omitempty" jsonschema:"the verification aidev ran; this alone decides success"`
-	Worktree     *Worktree      `json:"worktree,omitempty" jsonschema:"the isolated checkout used"`
-	Approval     *Approval      `json:"approval,omitempty" jsonschema:"the most recent approval record"`
+	Task            Task           `json:"task" jsonschema:"the task itself"`
+	Attempt         *Attempt       `json:"attempt,omitempty" jsonschema:"the latest attempt, absent if the task has never run"`
+	EarlierAttempts []Attempt      `json:"earlier_attempts,omitempty" jsonschema:"attempts before the latest one, oldest first; absent when there was only one"`
+	Worker          *Worker        `json:"worker,omitempty" jsonschema:"what the agent did"`
+	Verification    []Verification `json:"verification,omitempty" jsonschema:"the verification aidev ran; this alone decides success"`
+	Worktree        *Worktree      `json:"worktree,omitempty" jsonschema:"the isolated checkout used"`
+	Approval        *Approval      `json:"approval,omitempty" jsonschema:"the most recent approval record"`
 	// TestsModified is a report, not a verdict: editing a test does not fail
 	// the run, but a reviewer must be able to see that what passed was also
 	// written in the same attempt (research §7b tier 1).

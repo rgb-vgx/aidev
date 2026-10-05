@@ -487,8 +487,31 @@ func taskResult(ctx context.Context, env *Env, args []string) error {
 		outcome.Approval = &approval
 	}
 
+	var earlier []task.TaskAttempt
+	if outcome.Attempt != nil {
+		if all, err := app.store.ListAttempts(ctx, t.ID); err == nil {
+			for _, a := range all {
+				if a.ID == outcome.Attempt.ID {
+					continue
+				}
+				earlier = append(earlier, a)
+			}
+			// ListAttempts returns newest first; earlier attempts read oldest first.
+			for i, j := 0, len(earlier)-1; i < j; i, j = i+1, j-1 {
+				earlier[i], earlier[j] = earlier[j], earlier[i]
+			}
+		}
+	}
+
 	if *asJSON {
 		resultView := buildResultView(outcome, runs, *withLogs)
+		if len(earlier) > 0 {
+			views := make([]view.Attempt, 0, len(earlier))
+			for _, a := range earlier {
+				views = append(views, *view.NewAttempt(a))
+			}
+			resultView.EarlierAttempts = views
+		}
 		if *withLogs {
 			return writeJSON(env.Stdout, struct {
 				view.Result
@@ -500,7 +523,7 @@ func taskResult(ctx context.Context, env *Env, args []string) error {
 		return writeJSON(env.Stdout, resultView)
 	}
 
-	writeResult(env, outcome, runs)
+	writeResult(env, outcome, runs, earlier)
 	if *withLogs {
 		writeLogs(env, stdout, stderr, diff)
 	}
