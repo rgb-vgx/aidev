@@ -7,6 +7,19 @@ with:
 curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh
 ```
 
+## Unreleased
+
+- `aidev task run-log <task>` reads the log a detached run wrote under
+  `workspace_root/run-logs/` — the file that holds the reason when a run dies
+  before recording an ending, and that until now only the MCP tool's error
+  message named. `--path`, `--all`, `--json`.
+
+- **A repository with no commits says so.** Creating a task in a `git init` with
+  nothing committed failed with "revision does not exist: main", naming a branch
+  the person never made; it now names the reason and the remedy, writes nothing
+  at all, and leaves a repository whose HEAD is an unborn branch alone (that one
+  has commits, on its default branch, and the task is created from there).
+
 ## v0.5.0
 
 Upgrading from v0.4.0: install the new binary and restart Claude Code. There is no
