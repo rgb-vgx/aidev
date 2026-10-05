@@ -824,9 +824,26 @@ aidev task undo TASK-000001      # and back out again, with a revert commit
 ```
 
 `apply` is the one command of aidev's that writes to your checkout, and only the
-branch you have checked out: it refuses uncommitted changes to tracked files and a
-detached HEAD, aborts a conflicting merge and names the files, and records
-`task.applied`. `undo` reverts that merge with a new commit, so it is safe after a
+branch you have checked out. Its contract, held by tests in
+`tests/integration/apply_test.go` and `apply_contract_test.go`:
+
+- it acts only on the branch you have checked out, and refuses a detached HEAD;
+- it refuses uncommitted changes to tracked files, naming them;
+- it refuses unless the task is SUCCEEDED — `SUCCEEDED` is what verification
+  found, and there is nothing else to deliver from;
+- it merges the commit the run recorded, not the branch name: deleting the branch
+  does not stop it, and deleting the commit does (refused, checkout untouched);
+- a branch that moved on since the task ran is fine — merging brings the two sides
+  together and rewrites neither — but a conflict is aborted with the files named
+  and the checkout left exactly as it was;
+- it refuses a second apply, and `undo` refuses when there is nothing to undo, or
+  when the branch it would revert is not the one checked out;
+- `undo` reverts with a new commit, never by rewriting: it works after a push, and
+  a revert that would conflict is refused rather than forced;
+- two applies at once serialise: one merges and the other is told the task is
+  already applied.
+
+It records `task.applied`. `undo` reverts that merge with a new commit, so it is safe after a
 push; applying again after an undo reverts the revert, because merging a branch
 whose merge was reverted would quietly change nothing. Neither changes the task's
 status: `SUCCEEDED` is what verification found, not whether anyone took the work.
