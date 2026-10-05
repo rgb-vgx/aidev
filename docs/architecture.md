@@ -189,6 +189,33 @@ does not succeed is the expected case, and the caller needs the record rather th
 an exception. `RunTask` returns an error only when it could not conduct the run at
 all.
 
+## Running tasks side by side
+
+Tasks run concurrently when you start them concurrently: several `aidev task run`
+processes, or several `aidev_run_task` calls through MCP, each a process of its
+own with its own attempt, lease, worktree and branch. Nothing in aidev picks READY
+tasks up by itself; that would be a scheduler, which AGENTS.md rules out.
+
+Two shared things had to be made safe for it (measured in docs/research.md §7k):
+
+- **OpenCode's database.** Every OpenCode process keeps its sessions in one SQLite
+  file, and runs started side by side on it die at random at startup with
+  `database is locked` — one in eight in the measurement. The OpenCode backend
+  sets `OPENCODE_DB` to `workspace_root/opencode-db/<ref>.sqlite`, one file per
+  task, which every attempt of the task reuses: a session can only be continued
+  from the database it was created in, and retry continues it. Listing agents at
+  creation uses an in-memory database. `aidev task delete` removes the file.
+- **The containment check.** Each run compares the repository's shared git state
+  before and after its agent. With siblings running, their branches appear and
+  move in the shared repository meanwhile, which used to raise
+  `task.shared_refs_changed` on every run. Branches recorded for another attempt
+  whose run overlapped this one (not finished, or finished after this attempt
+  started) are now left out; a branch of a task that finished earlier, moved by
+  the agent, is still reported (`tests/integration/parallel_test.go`).
+
+Everything else was already per run: the compare-and-set on status, the lease
+and its fence, the worktree under its own name, verification in that worktree.
+
 ## Automatic retry
 
 Designed with the user on 2026-09-17, after a task whose agent stopped early had
@@ -479,7 +506,7 @@ place a listed future feature plugs in without a rewrite.
 
 | Future feature | Seam that already exists |
 |---|---|
-| Concurrent workers | `tasks_ready_claim_idx` matches a `FOR UPDATE SKIP LOCKED` claim; status changes are already compare-and-set. |
+| Concurrent workers | tasks already run side by side as separate `aidev task run` processes or MCP runs (see "Running tasks side by side"); a claiming worker pool would add `FOR UPDATE SKIP LOCKED` on `tasks_ready_claim_idx`. AGENTS.md rules out a scheduler, so none is built. |
 | Another agent backend | `agent.Backend`; orchestration never names a backend. Codex was added exactly this way (`internal/agent/codex.go`, selected with `agent.backend` set to `"codex"`) and is **paused since 2026-09-15**: OpenCode is the backend in use. The code and its tests stay, so resuming is a configuration change. Codex took 6–8 minutes on trivial tasks and, in TASK-000029, read another project's virtualenv outside its worktree. A server-mode OpenCode backend would be another new file in `internal/agent`. |
 | Sandboxed agent execution | `internal/procexec` is the one place processes start, and `agent.Request.WorkingDir` is the only path an agent is given, so containing the agent is a change to how a backend launches. Verification stays local whatever happens: a remote exit code is not aidev's own measurement (docs/opensandbox.md). **Parked as a future feature on 2026-09-15** — tasks are not yet complex enough to need it. Unmeasured: a worktree's `.git` file points into the main repository, so a container would need both mounted. |
 | Dependency DAG | `PENDING` exists as "not yet eligible"; the eligibility check is the hook. |
@@ -845,7 +872,7 @@ Stated plainly so that nobody has to infer it from absence.
 
 | Not implemented | Where the seam is |
 |---|---|
-| Concurrent workers | status changes are compare-and-set and `tasks_ready_claim_idx` matches a `FOR UPDATE SKIP LOCKED` claim, and the lease columns exist so a crashed worker's task can be recognised. What is missing is the claim itself becoming a lease: taking a task must write an owner the way `startAttempt` does, not only a status. |
+| A worker pool that claims tasks | tasks run side by side when you start them side by side, each with its own OpenCode database; nothing picks READY tasks up on its own — that would be a scheduler, which AGENTS.md rules out. |
 | Dependency graphs | `PENDING` exists as "not yet eligible"; the eligibility check in `becomeReady` is the hook. |
 | Automatic merging | a successful task leaves a reviewable commit on its own branch; `aidev task apply` merges it only when a person runs it. Nothing merges on its own, by design. |
 | Automatic expiry of a stale `RUNNING` task | the lease makes staleness detectable and `aidev task recover` acts on it, but nothing cancels on a timer by itself — deliberate, see [Operating it](#when-a-run-is-interrupted). |

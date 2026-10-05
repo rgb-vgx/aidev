@@ -610,3 +610,36 @@ func scanVerificationRun(row scanner) (task.VerificationRun, error) {
 	r.Duration = time.Duration(durationMS) * time.Millisecond
 	return r, nil
 }
+
+// OverlappingBranches returns which of branches belong to another attempt
+// whose run overlapped this one: not finished yet, or finished after since
+// (this attempt's start). Tasks of one repository running side by side
+// create and move such branches in the shared repository while each other's
+// agents work; containment uses this to tell that from an agent touching
+// refs it should not.
+func (s *Store) OverlappingBranches(ctx context.Context, ownAttempt uuid.UUID, since time.Time, branches []string) (map[string]bool, error) {
+	out := map[string]bool{}
+	if len(branches) == 0 {
+		return out, nil
+	}
+	rows, err := s.db.Query(ctx, `
+		SELECT DISTINCT w.branch
+		FROM worktrees w JOIN task_attempts a ON a.id = w.attempt_id
+		WHERE w.branch = ANY($1) AND a.id <> $2
+		  AND (a.finished_at IS NULL OR a.finished_at >= $3)`, branches, ownAttempt, since)
+	if err != nil {
+		return nil, fmt.Errorf("find overlapping branches: %w", classify(err))
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var b string
+		if err := rows.Scan(&b); err != nil {
+			return nil, fmt.Errorf("find overlapping branches: %w", classify(err))
+		}
+		out[b] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("find overlapping branches: %w", classify(err))
+	}
+	return out, nil
+}
