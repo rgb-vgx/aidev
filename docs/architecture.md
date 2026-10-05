@@ -737,6 +737,44 @@ and flags a record whose directory has disappeared. Removal goes through git wit
 `--force`, so uncommitted work is refused rather than discarded; forcing it is
 recorded in the task's history as an operator's decision.
 
+`aidev doctor` measures the free space where worktrees are created and warns
+below 5 GiB, failing below 1 GiB: every task copies the repository and its checks
+may build there, and git that runs out of space fails half-way through a commit.
+The space goes to retained worktrees (`aidev worktree list`, `worktree remove`),
+captured output in the database (`aidev prune --logs-older-than 30d`, then
+`task delete` for finished tasks nobody needs), the per-run logs under
+`workspace_root/run-logs/` (plain files, safe to delete once their run ended), and
+whatever the agents' builds left in Docker (`docker system df`). A run that hits a
+full disk anyway fails with kind `WORKTREE` or `INTERNAL`, keeps its worktree, and
+can be recovered like any other.
+
+### Backing up and restoring
+
+The database is the record: tasks, attempts, verification evidence and the event
+log. Everything else can be rebuilt or is somewhere safer — the delivered work is
+commits on branches in your repositories, retained worktrees are scratch, and
+`conf.json` is a file you can copy. Back up with the PostgreSQL tools of the same
+major version as the server; with the container `aidev setup` starts:
+
+```bash
+docker exec aidev-postgres pg_dump -U aidev -d aidev -Fc > aidev-$(date +%F).dump
+```
+
+Do it before an upgrade that brings migrations — `aidev migrate` changes the
+schema in place and nothing undoes it. To restore, into an empty database the
+configuration points at:
+
+```bash
+docker exec -i aidev-postgres pg_restore -U aidev -d aidev --clean --if-exists < aidev-2026-10-05.dump
+aidev migrate      # brings an older dump up to this binary's schema
+aidev doctor
+```
+
+A restore rolls the record back; it does not touch git. Branches and worktrees
+created after the dump stay on disk, and `aidev worktree list` will not know the
+worktrees of tasks the dump does not contain — remove those by hand with
+`git worktree remove`.
+
 ### A successful task's output
 
 The work is a commit on `aidev/<ref>`. Nothing merges it, and nothing ever will

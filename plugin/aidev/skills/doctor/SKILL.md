@@ -12,7 +12,7 @@ aidev doctor --json
 ```
 
 It prints one result per check, in order: `config`, `git`, `agent`, `database`,
-`migrations`, `workspace`. Each has a `status` (`ok`, `warn`, `fail`, `skipped`),
+`migrations`, `stuck tasks`, `workspace`, `disk`. Each has a `status` (`ok`, `warn`, `fail`, `skipped`),
 a `summary` of what was found and, for a problem, a `fix`. The command exits
 non-zero when any check failed. A `skipped` check depends on an earlier one; fix
 that first and run again.
@@ -43,6 +43,14 @@ Work through the failures in order and run `aidev doctor` again after each fix.
   either file.
 - **agent** and **git**: tell the user what to install; installing software is
   their decision.
+- **stuck tasks**: a task is RUNNING or VERIFYING but the process running it
+  stopped renewing its lease — aidev was killed mid-run. Show the user
+  `aidev task recover --dry-run`, and run `aidev task recover` once they agree:
+  it cancels those tasks and keeps their worktrees.
+- **disk**: little free space where worktrees are created. Show the user what
+  `aidev worktree list` reports and offer `aidev worktree remove <task>` for the
+  retained worktrees they no longer need, and `aidev prune --logs-older-than 30d`
+  for the database; deleting anything is their decision, so ask per item.
 - **project not registered** (`aidev_create_task` says the repository is not
   registered): the MCP server only creates tasks for repositories a person has
   added. Show the user `aidev project add <path>` for the repository they mean,

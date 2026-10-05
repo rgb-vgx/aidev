@@ -33,6 +33,7 @@ func healthy() Deps {
 			return nil, nil
 		},
 		CheckWorkspace: func(string) error { return nil },
+		FreeSpace:      func(string) (uint64, error) { return 100 << 30, nil },
 	}
 }
 
@@ -61,7 +62,7 @@ func TestEverythingHealthyReportsEveryCheckInOrder(t *testing.T) {
 			t.Errorf("%s: an ok result has nothing to fix, got %q", r.Name, r.Fix)
 		}
 	}
-	want := []string{CheckConfig, CheckGit, CheckAgent, CheckDatabase, CheckMigrations, CheckStuckTasks, CheckWorkspace}
+	want := []string{CheckConfig, CheckGit, CheckAgent, CheckDatabase, CheckMigrations, CheckStuckTasks, CheckWorkspace, CheckDisk}
 	if strings.Join(names, ",") != strings.Join(want, ",") {
 		t.Errorf("checks = %v, want %v", names, want)
 	}
@@ -106,7 +107,7 @@ func TestUnreadableConfigFailsAndSkipsWhatNeedsIt(t *testing.T) {
 	if got[CheckGit].Status != StatusOK {
 		t.Errorf("git: status %s, want ok even without a configuration", got[CheckGit].Status)
 	}
-	for _, name := range []string{CheckAgent, CheckDatabase, CheckMigrations, CheckStuckTasks, CheckWorkspace} {
+	for _, name := range []string{CheckAgent, CheckDatabase, CheckMigrations, CheckStuckTasks, CheckWorkspace, CheckDisk} {
 		if got[name].Status != StatusSkipped {
 			t.Errorf("%s: status %s, want skipped when the configuration cannot be read", name, got[name].Status)
 		}
@@ -339,5 +340,45 @@ func TestStuckTasksErrorFailsAndSaysWhy(t *testing.T) {
 		if strings.Contains(r.Summary+r.Fix, "hunter2") {
 			t.Errorf("%s leaks the database password: %+v", r.Name, r)
 		}
+	}
+}
+
+// The disk check warns while there is still room and fails once a task would
+// likely die half-way, and says how to free space either way. A system where
+// space cannot be measured skips it rather than guessing.
+func TestDiskCheck(t *testing.T) {
+	cases := []struct {
+		name   string
+		free   uint64
+		err    error
+		status Status
+	}{
+		{"plenty", 40 << 30, nil, StatusOK},
+		{"little", 3 << 30, nil, StatusWarn},
+		{"almost none", 200 << 20, nil, StatusFail},
+		{"unmeasurable", 0, errors.ErrUnsupported, StatusSkipped},
+		{"unreadable", 0, errors.New("statfs: permission denied"), StatusWarn},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			deps := healthy()
+			deps.FreeSpace = func(string) (uint64, error) { return tc.free, tc.err }
+			got := byName(t, Run(context.Background(), deps))[CheckDisk]
+			if got.Status != tc.status {
+				t.Fatalf("status = %s, want %s (summary %q)", got.Status, tc.status, got.Summary)
+			}
+			if (tc.status == StatusWarn || tc.status == StatusFail) && got.Fix == "" {
+				t.Error("a warning or failure must say what to do")
+			}
+			if tc.status == StatusWarn && tc.err == nil && !strings.Contains(got.Fix, "aidev worktree remove") {
+				t.Errorf("fix = %q, want it to name the way to reclaim a worktree", got.Fix)
+			}
+		})
+	}
+
+	deps := healthy()
+	deps.FreeSpace = nil
+	if got := byName(t, Run(context.Background(), deps))[CheckDisk]; got.Status != StatusSkipped {
+		t.Errorf("without a way to measure, status = %s, want skipped", got.Status)
 	}
 }

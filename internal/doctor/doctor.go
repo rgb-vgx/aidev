@@ -4,6 +4,7 @@ package doctor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -29,6 +30,16 @@ const (
 	CheckMigrations = "migrations"
 	CheckStuckTasks = "stuck tasks"
 	CheckWorkspace  = "workspace"
+	CheckDisk       = "disk"
+)
+
+// Free-space thresholds for the disk check, on the filesystem that holds the
+// workspace. Every task copies the repository into a worktree, its checks may
+// build there, and git fails half-way when the disk fills — a run that dies
+// in the middle of a commit is harder to read than one that never started.
+const (
+	diskWarnBytes = 5 << 30
+	diskFailBytes = 1 << 30
 )
 
 // Result is one check's outcome. Summary says what was found; Fix, set whenever
@@ -56,18 +67,21 @@ type Deps struct {
 	StuckTasks func(ctx context.Context, databaseURL string) ([]string, error)
 	// CheckWorkspace returns nil if dir exists or can be created, and is writable.
 	CheckWorkspace func(dir string) error
+	// FreeSpace returns the bytes available to this user on the filesystem
+	// holding dir. Nil, or errors.ErrUnsupported, skips the disk check.
+	FreeSpace func(dir string) (uint64, error)
 }
 
 // Run performs every check in order and returns one Result per check.
 //
 // It starts with the configuration, then git, the configured agent command,
 // the database, pending migrations, tasks stuck with an expired lease and the
-// workspace directory. When the configuration cannot be read, the checks that
-// need it are skipped. When the database does not answer, the migrations check
-// is skipped; when migrations are pending or unreadable, the stuck-task check
+// workspace directory, then the free space under it. When the configuration
+// cannot be read, the checks that need it are skipped. When the database does
+// not answer, the migrations check is skipped; when migrations are pending or unreadable, the stuck-task check
 // is skipped, because the lease columns it queries may not exist yet.
 func Run(ctx context.Context, deps Deps) []Result {
-	results := make([]Result, 0, 7)
+	results := make([]Result, 0, 8)
 
 	cfg, err := deps.LoadConfig()
 	if err != nil {
@@ -85,6 +99,7 @@ func Run(ctx context.Context, deps Deps) []Result {
 			Result{Name: CheckMigrations, Status: StatusSkipped, Summary: skipped},
 			Result{Name: CheckStuckTasks, Status: StatusSkipped, Summary: skipped},
 			Result{Name: CheckWorkspace, Status: StatusSkipped, Summary: skipped},
+			Result{Name: CheckDisk, Status: StatusSkipped, Summary: skipped},
 		)
 		return results
 	}
@@ -127,6 +142,7 @@ func Run(ctx context.Context, deps Deps) []Result {
 	}
 
 	results = append(results, workspaceResult(deps, cfg))
+	results = append(results, diskResult(deps, cfg))
 
 	return results
 }
@@ -296,6 +312,57 @@ func workspaceResult(deps Deps, cfg config.Config) Result {
 		Status:  StatusOK,
 		Summary: fmt.Sprintf("Workspace directory %s is usable.", cfg.WorkspaceRoot),
 	}
+}
+
+// diskResult reports the free space where task worktrees are created.
+func diskResult(deps Deps, cfg config.Config) Result {
+	if deps.FreeSpace == nil {
+		return Result{Name: CheckDisk, Status: StatusSkipped, Summary: "Skipped: free space cannot be measured on this system."}
+	}
+	free, err := deps.FreeSpace(cfg.WorkspaceRoot)
+	if errors.Is(err, errors.ErrUnsupported) {
+		return Result{Name: CheckDisk, Status: StatusSkipped, Summary: "Skipped: free space cannot be measured on this system."}
+	}
+	if err != nil {
+		return Result{
+			Name:    CheckDisk,
+			Status:  StatusWarn,
+			Summary: fmt.Sprintf("Cannot measure free space for %s: %s.", cfg.WorkspaceRoot, err.Error()),
+			Fix:     "Check the disk holding workspace_root by hand (df -h).",
+		}
+	}
+	const fix = "Free space before running tasks: `aidev worktree list` shows what retained worktrees hold and " +
+		"`aidev worktree remove <task>` reclaims one; `aidev prune --logs-older-than 30d` shrinks the database; " +
+		"`docker system df` shows what Docker keeps."
+	switch {
+	case free < diskFailBytes:
+		return Result{Name: CheckDisk, Status: StatusFail,
+			Summary: fmt.Sprintf("Only %s free where worktrees are created (%s); a task will likely fail half-way.", humanSize(free), cfg.WorkspaceRoot),
+			Fix:     fix}
+	case free < diskWarnBytes:
+		return Result{Name: CheckDisk, Status: StatusWarn,
+			Summary: fmt.Sprintf("%s free where worktrees are created (%s); that is little for a repository copy and its build.", humanSize(free), cfg.WorkspaceRoot),
+			Fix:     fix}
+	default:
+		return Result{Name: CheckDisk, Status: StatusOK,
+			Summary: fmt.Sprintf("%s free where worktrees are created.", humanSize(free))}
+	}
+}
+
+// humanSize renders a byte count the way df -h would.
+func humanSize(n uint64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	value := float64(n)
+	for _, u := range []string{"KiB", "MiB", "GiB", "TiB"} {
+		value /= unit
+		if value < unit {
+			return fmt.Sprintf("%.1f %s", value, u)
+		}
+	}
+	return fmt.Sprintf("%.1f PiB", value/unit)
 }
 
 // redactDatabaseURL replaces every occurrence of the connection string in a

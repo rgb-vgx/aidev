@@ -71,6 +71,7 @@ func runDoctor(ctx context.Context, env *Env, args []string) error {
 			}
 			return descriptions, nil
 		},
+		FreeSpace: freeSpace,
 		CheckWorkspace: func(dir string) error {
 			if err := os.MkdirAll(dir, 0o755); err != nil {
 				return err
