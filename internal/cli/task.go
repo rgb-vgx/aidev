@@ -220,9 +220,15 @@ func taskList(ctx context.Context, env *Env, args []string) error {
 	statusFilter := fs.String("status", "", "comma-separated statuses to include")
 	repo := fs.String("repo", "", "only tasks for this repository")
 	limit := fs.Int("limit", 0, "maximum tasks to return")
+	unapplied := fs.Bool("unapplied", false, "only SUCCEEDED tasks whose result has not been applied")
 	asJSON := fs.Bool("json", false, "print as JSON")
 	if err := fs.Parse(args); err != nil {
 		return usagef("aidev task list: %v", err)
+	}
+
+	// --unapplied already fixes the status, so combining them is a mistake.
+	if *unapplied && strings.TrimSpace(*statusFilter) != "" {
+		return usagef("aidev task list: --unapplied already selects SUCCEEDED tasks; combining it with --status is contradictory")
 	}
 
 	var statuses []task.Status
@@ -244,7 +250,7 @@ func taskList(ctx context.Context, env *Env, args []string) error {
 	}
 	defer app.close()
 
-	filter := store.TaskFilter{Statuses: statuses, Limit: *limit}
+	filter := store.TaskFilter{Statuses: statuses, Limit: *limit, Unapplied: *unapplied}
 	if strings.TrimSpace(*repo) != "" {
 		repository, err := app.orchestrator.Git.OpenRepository(ctx, *repo)
 		if err != nil {
@@ -271,8 +277,8 @@ func taskList(ctx context.Context, env *Env, args []string) error {
 
 	if *asJSON {
 		views := make([]view.Task, 0, len(tasks))
-		for _, t := range tasks {
-			views = append(views, view.NewTask(t))
+		for _, item := range tasks {
+			views = append(views, fillTaskView(item))
 		}
 		return writeJSON(env.Stdout, views)
 	}
@@ -280,10 +286,24 @@ func taskList(ctx context.Context, env *Env, args []string) error {
 		fmt.Fprintln(env.Stdout, "no tasks")
 		return nil
 	}
-	for _, t := range tasks {
-		writeTaskLine(env.Stdout, t)
+	for _, item := range tasks {
+		writeTaskLine(env.Stdout, item.Task, item.RepoPath, item.Apply)
 	}
 	return nil
+}
+
+// fillTaskView converts a store list item to its external shape: the
+// repository as a full path, and the apply fields only when the task was ever
+// applied, so that a never-applied task carries no apply keys at all.
+func fillTaskView(item store.TaskListItem) view.Task {
+	v := view.NewTask(item.Task)
+	v.RepoPath = item.RepoPath
+	if item.Apply.State != task.ApplyNever {
+		v.ApplyState = item.Apply.State.String()
+		v.ApplyInto = item.Apply.Into
+		v.ApplyCommit = item.Apply.Commit
+	}
+	return v
 }
 
 func taskGet(ctx context.Context, env *Env, args []string) error {
@@ -310,11 +330,38 @@ func taskGet(ctx context.Context, env *Env, args []string) error {
 		return err
 	}
 
-	if *asJSON {
-		return writeJSON(env.Stdout, view.NewTask(t))
+	apply, repoPath, err := taskApplyAndRepo(ctx, app, t)
+	if err != nil {
+		return err
 	}
-	writeTaskDetail(env.Stdout, t)
+
+	if *asJSON {
+		v := view.NewTask(t)
+		v.RepoPath = repoPath
+		if apply.State != task.ApplyNever {
+			v.ApplyState = apply.State.String()
+			v.ApplyInto = apply.Into
+			v.ApplyCommit = apply.Commit
+		}
+		return writeJSON(env.Stdout, v)
+	}
+	writeTaskDetail(env.Stdout, t, apply)
 	return nil
+}
+
+// taskApplyAndRepo reads what task get and task result show beside the task
+// itself: the derived apply state and the repository path. Both come from the
+// store, so every surface reports the same thing.
+func taskApplyAndRepo(ctx context.Context, app *app, t task.Task) (task.Apply, string, error) {
+	apply, err := app.store.ApplyState(ctx, t.ID)
+	if err != nil {
+		return task.Apply{}, "", err
+	}
+	repoPath := ""
+	if project, err := app.store.GetProject(ctx, t.ProjectID); err == nil {
+		repoPath = project.RepoPath
+	}
+	return apply, repoPath, nil
 }
 
 // runBudgetMargin is the slack in the total deadline a run puts on itself, on
@@ -496,8 +543,20 @@ func taskResult(ctx context.Context, env *Env, args []string) error {
 		}
 	}
 
+	apply, repoPath, err := taskApplyAndRepo(ctx, app, t)
+	if err != nil {
+		return err
+	}
+
 	if *asJSON {
 		resultView := buildResultView(outcome, runs, *withLogs)
+		resultView.Task.RepoPath = repoPath
+		if apply.State != task.ApplyNever {
+			resultView.Task.ApplyState = apply.State.String()
+			resultView.Task.ApplyInto = apply.Into
+			resultView.Task.ApplyCommit = apply.Commit
+		}
+		resultView.Apply = view.NewApply(apply)
 		if len(earlier) > 0 {
 			views := make([]view.Attempt, 0, len(earlier))
 			for _, a := range earlier {
@@ -516,7 +575,7 @@ func taskResult(ctx context.Context, env *Env, args []string) error {
 		return writeJSON(env.Stdout, resultView)
 	}
 
-	writeResult(env, outcome, runs, earlier)
+	writeResult(env, outcome, runs, earlier, apply)
 	if *withLogs {
 		writeLogs(env, stdout, stderr, diff)
 	}
