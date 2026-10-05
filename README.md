@@ -332,6 +332,7 @@ aidev task list   [--status S,S] [--repo .] [--limit N] [--json]
 aidev task get    <task> [--json]
 aidev task run    <task> [--json]
 aidev task result <task> [--logs] [--json]
+aidev task diff <task>                    # what a task changed
 aidev task events <task> [--payload] [--after SEQ] [--json]
 aidev task cancel <task> [--reason R] [--json]
 aidev task approve <task> [--deny] [--by WHO] [--reason R] [--json]
@@ -429,6 +430,12 @@ Two measured behaviours worth knowing before your first task:
 - **OpenCode writes files without asking**, even without its `--auto` flag. That
   is why every task runs in a dedicated worktree and why aidev refuses a worktree
   path that would land inside your repository.
+- **Concurrent runs need their own OpenCode database.** OpenCode keeps every
+  session in one shared SQLite file, and runs started side by side on it die at
+  random with `database is locked`. aidev therefore gives each task its own,
+  under `workspace_root/opencode-db/`, reused by the task's retries so the agent's
+  session continues; `aidev task delete` removes it. To look at a task's session
+  in OpenCode, point it at that file with the `OPENCODE_DB` environment variable.
 
 See [docs/research.md](docs/research.md) for the measurements behind all of this.
 

@@ -2,6 +2,7 @@ package task
 
 import (
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -384,4 +385,18 @@ type Approval struct {
 	RequestedAt time.Time
 	DecidedAt   *time.Time
 	DecidedBy   string
+}
+
+// EarlierAttempts returns every attempt but latest, oldest first. all may be
+// in any order; ListAttempts gives the newest first. The CLI and the MCP
+// result both use it, so they list the same history.
+func EarlierAttempts(all []TaskAttempt, latest uuid.UUID) []TaskAttempt {
+	var out []TaskAttempt
+	for _, a := range all {
+		if a.ID != latest {
+			out = append(out, a)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].AttemptNumber < out[j].AttemptNumber })
+	return out
 }

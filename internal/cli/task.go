@@ -28,6 +28,7 @@ func runTask(ctx context.Context, env *Env, args []string) error {
 		"get":     {"show one task", taskGet},
 		"run":     {"run a task: isolate, delegate, verify, record", taskRun},
 		"result":  {"show the outcome of a task's latest attempt", taskResult},
+		"diff":    {"show what a task changed", taskDiff},
 		"events":  {"show a task's event history", taskEvents},
 		"cancel":  {"cancel a task that has not finished", taskCancel},
 		"approve": {"approve or deny a task that requires approval", taskApprove},
@@ -487,8 +488,22 @@ func taskResult(ctx context.Context, env *Env, args []string) error {
 		outcome.Approval = &approval
 	}
 
+	var earlier []task.TaskAttempt
+	if outcome.Attempt != nil {
+		if all, err := app.store.ListAttempts(ctx, t.ID); err == nil {
+			earlier = task.EarlierAttempts(all, outcome.Attempt.ID)
+		}
+	}
+
 	if *asJSON {
 		resultView := buildResultView(outcome, runs, *withLogs)
+		if len(earlier) > 0 {
+			views := make([]view.Attempt, 0, len(earlier))
+			for _, a := range earlier {
+				views = append(views, *view.NewAttempt(a))
+			}
+			resultView.EarlierAttempts = views
+		}
 		if *withLogs {
 			return writeJSON(env.Stdout, struct {
 				view.Result
@@ -500,7 +515,7 @@ func taskResult(ctx context.Context, env *Env, args []string) error {
 		return writeJSON(env.Stdout, resultView)
 	}
 
-	writeResult(env, outcome, runs)
+	writeResult(env, outcome, runs, earlier)
 	if *withLogs {
 		writeLogs(env, stdout, stderr, diff)
 	}

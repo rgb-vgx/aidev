@@ -647,7 +647,17 @@ func (s *Server) buildResult(ctx context.Context, st *store.Store, taskID uuid.U
 	if attempt != nil && attempt.Error != "" {
 		message = attempt.Error
 	}
-	return view.NewResult(t, attempt, workerRun, runs, worktree, approval, testsModified, message, includeOutput), nil
+	result := view.NewResult(t, attempt, workerRun, runs, worktree, approval, testsModified, message, includeOutput)
+	// The same history `aidev task result` shows: after a retry, what the
+	// earlier attempts ran into. Best-effort, like the reads above.
+	if attempt != nil {
+		if all, err := st.ListAttempts(ctx, taskID); err == nil {
+			for _, a := range task.EarlierAttempts(all, attempt.ID) {
+				result.EarlierAttempts = append(result.EarlierAttempts, *view.NewAttempt(a))
+			}
+		}
+	}
+	return result, nil
 }
 
 // startRun begins a background execution, or joins one already in flight.

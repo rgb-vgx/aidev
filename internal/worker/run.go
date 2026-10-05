@@ -613,11 +613,13 @@ var errSharedStateUnreadable = errors.New("shared repository state could not be 
 // shaped (docs/research.md §7i).
 //
 // A breach returns an error, which the caller records as FailureContainment.
-// A foreign ref moving is only warned about: another task in the same
-// repository legitimately advances its own branch while this one runs, and
-// the two are not distinguishable from here. The worktree's own branch is
-// ignored for the same reason in reverse — that is where its work belongs,
-// and verification judges it.
+// A foreign ref moving is only warned about. The worktree's own branch is
+// ignored — that is where its work belongs, and verification judges it — and
+// so are the branches of other attempts whose runs overlapped this one: tasks
+// of one repository running side by side create and advance their branches
+// while each other's agents work (docs/research.md §7k), and warning about
+// each would bury the change that matters. What remains is a ref no
+// concurrent aidev run accounts for.
 func (r *run) checkContainment(ctx context.Context) error {
 	after, err := r.worktree.SnapshotSharedState(ctx)
 	if err != nil {
@@ -640,6 +642,7 @@ func (r *run) checkContainment(ctx context.Context) error {
 			foreign[ref] = ch
 		}
 	}
+	r.dropConcurrentBranches(ctx, foreign)
 	if len(foreign) > 0 {
 		r.emit(ctx, event.TypeSharedRefsChanged, map[string]any{
 			"refs": foreign,
@@ -689,6 +692,31 @@ func (r *run) checkContainment(ctx context.Context) error {
 	r.emit(ctx, event.TypeContainmentBreach, payload)
 
 	return fmt.Errorf("the agent modified state shared with the main repository: %s", strings.Join(reasons, "; "))
+}
+
+// dropConcurrentBranches removes from foreign the branches that belong to
+// other attempts running alongside this one. If the lookup fails the
+// warnings stay: a noisy warning is better than a missing one.
+func (r *run) dropConcurrentBranches(ctx context.Context, foreign map[string]git.RefChange) {
+	var names []string
+	for ref := range foreign {
+		if branch, ok := strings.CutPrefix(ref, "refs/heads/"); ok {
+			names = append(names, branch)
+		}
+	}
+	if len(names) == 0 {
+		return
+	}
+	readCtx, cancel := writeContext(ctx)
+	defer cancel()
+	concurrent, err := r.o.Store.OverlappingBranches(readCtx, r.attempt.ID, r.attempt.StartedAt, names)
+	if err != nil {
+		r.log.WarnContext(ctx, "could not tell concurrent tasks' branches apart; reporting every ref change", "error", err.Error())
+		return
+	}
+	for branch := range concurrent {
+		delete(foreign, "refs/heads/"+branch)
+	}
 }
 
 // baseCheck runs the task's verification on the base commit before the agent

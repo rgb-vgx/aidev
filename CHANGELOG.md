@@ -7,6 +7,22 @@ with:
 curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh
 ```
 
+## Unreleased
+
+- **Tasks can run side by side.** Each task now gets its own OpenCode database
+  (`workspace_root/opencode-db/<ref>.sqlite`, kept for its retries): on OpenCode's
+  one shared store, runs started together died at random with `database is
+  locked`. Branches that sibling tasks create meanwhile are no longer reported as
+  shared refs changing.
+
+- `aidev task diff <task>` shows what a task changed: the delivered diff, or the
+  undelivered change of a failed attempt, marked as such.
+
+- After a retry, `aidev task result` — and the MCP result — list the earlier
+  attempts with their status, kind and error.
+
+- Plugin 0.5.1: the review skill starts from `aidev task diff`.
+
 ## v0.3.0
 
 Upgrading from v0.2.0: install the new binary, then run `aidev migrate` (one

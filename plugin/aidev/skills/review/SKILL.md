@@ -11,7 +11,9 @@ the commands cannot. Nothing is merged until you have.
 
 ## 1. Collect the change
 
-The result names the branch in `result.worktree.branch`: `aidev/<ref>`, or
+`aidev task diff <task>` prints the delivered change (base to head) in one go, or
+the agent's undelivered change marked as such; use the git commands below to look
+closer. The result names the branch in `result.worktree.branch`: `aidev/<ref>`, or
 `aidev/<ref>-aN` when a retry succeeded (its history then includes the earlier
 attempts' unverified commits — review the whole range). Below, `<branch>` is that
 name. Compare it with the branch the task started from (its `base_ref`, usually

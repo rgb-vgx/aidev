@@ -5,10 +5,12 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"aidev/internal/agent"
 	"aidev/internal/store"
 	"aidev/internal/worker"
 )
@@ -145,6 +147,15 @@ aidev worktree remove. The task's branch in the repository is left alone.
 			t.Identifier(), t.Identifier(), err)
 	case err != nil:
 		return err
+	}
+	// The task's OpenCode database holds its agent sessions; with the task
+	// gone nothing can continue them.
+	if db := agent.TaskDBPath(opencodeDBDir(app.cfg), t.Identifier()); db != "" {
+		for _, suffix := range []string{"", "-wal", "-shm"} {
+			if err := os.Remove(db + suffix); err != nil && !errors.Is(err, os.ErrNotExist) {
+				fmt.Fprintf(env.Stderr, "could not remove %s: %v\n", db+suffix, err)
+			}
+		}
 	}
 	fmt.Fprintf(env.Stdout, "deleted %s and its history\n", t.Identifier())
 	fmt.Fprintf(env.Stdout, "Its branch, if it delivered one, is still in the repository.\n")

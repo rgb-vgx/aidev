@@ -897,3 +897,72 @@ func TestAnOrdinaryToolFailureIsNotReportedAsARefusal(t *testing.T) {
 		t.Errorf("error = %q, want a plain tool failure not read as a refusal", res.Err)
 	}
 }
+
+// Each task gets its own OpenCode database (docs/research.md §7k): runs on
+// the one shared store die at random when tasks run side by side. Every
+// attempt of a task gets the same file, since a session continues only from
+// the database it was created in; another task gets another file.
+func TestEachTaskGetsItsOwnOpenCodeDatabase(t *testing.T) {
+	envFile := filepath.Join(t.TempDir(), "env.txt")
+	command, _ := fakeOpenCode(t, `printf '%s\n' "$OPENCODE_DB" >> `+shellQuote(envFile)+"\n"+
+		emit(fixtureText, fixtureStepFinishStop)+"exit 0")
+	dbDir := filepath.Join(t.TempDir(), "opencode-db")
+	o := NewOpenCode(command, "")
+	o.DBDir = dbDir
+
+	for _, ref := range []string{"TASK-000001", "TASK-000001", "TASK-000002"} {
+		req := openCodeRequest(t)
+		req.TaskRef = ref
+		if _, err := o.Run(context.Background(), req); err != nil {
+			t.Fatalf("Run %s: %v", ref, err)
+		}
+	}
+	raw, err := os.ReadFile(envFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Fields(string(raw))
+	want := []string{
+		filepath.Join(dbDir, "TASK-000001.sqlite"),
+		filepath.Join(dbDir, "TASK-000001.sqlite"),
+		filepath.Join(dbDir, "TASK-000002.sqlite"),
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("OPENCODE_DB per run = %v, want %v", got, want)
+	}
+	if info, err := os.Stat(dbDir); err != nil || info.Mode().Perm() != 0o700 {
+		t.Errorf("database directory = %v, %v; want it created private (0700)", info, err)
+	}
+}
+
+// Without a directory, or without a reference that can name a file, the run
+// keeps OpenCode's shared store rather than inventing a path.
+func TestTaskDBPath(t *testing.T) {
+	cases := []struct{ dir, ref, want string }{
+		{"/w/opencode-db", "TASK-000007", "/w/opencode-db/TASK-000007.sqlite"},
+		{"", "TASK-000007", ""},
+		{"/w/opencode-db", "", ""},
+		{"/w/opencode-db", "../escape", ""},
+		{"/w/opencode-db", "a/b", ""},
+	}
+	for _, tc := range cases {
+		if got := TaskDBPath(tc.dir, tc.ref); got != tc.want {
+			t.Errorf("TaskDBPath(%q, %q) = %q, want %q", tc.dir, tc.ref, got, tc.want)
+		}
+	}
+}
+
+// Listing agents runs on an in-memory database, off the store a running task
+// may hold.
+func TestAgentListUsesAnInMemoryDatabase(t *testing.T) {
+	envFile := filepath.Join(t.TempDir(), "env.txt")
+	command, _ := fakeOpenCode(t, `printf '%s\n' "$OPENCODE_DB" > `+shellQuote(envFile)+"\nprintf 'build (primary)\\n'")
+	o := NewOpenCode(command, "")
+	if err := o.ValidateAgentName(context.Background(), "build"); err != nil {
+		t.Fatalf("ValidateAgentName: %v", err)
+	}
+	raw, _ := os.ReadFile(envFile)
+	if strings.TrimSpace(string(raw)) != ":memory:" {
+		t.Errorf("agent list ran with OPENCODE_DB=%q, want :memory:", strings.TrimSpace(string(raw)))
+	}
+}
