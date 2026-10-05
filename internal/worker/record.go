@@ -149,20 +149,28 @@ func (r *run) persistVerification(ctx context.Context, report verification.Repor
 	}
 }
 
-// retainWorktree marks the worktree as deliberately kept.
-func (r *run) retainWorktree(ctx context.Context, reason string) {
-	if r.record == nil {
-		return
-	}
-	writeCtx, cancel := writeContext(ctx)
-	defer cancel()
+// retainWorktree marks the worktree as deliberately kept, in a transaction of
+// its own. It is for callers that run after the run's attempt is closed — the
+// success path, when git refuses to remove a worktree something else changed.
+// While an attempt is open the caller passes its own transaction to
+// retainWorktreeTx instead, so the retention sits behind the lease fence.
+func (r *run) retainWorktree(ctx context.Context, reason string) error {
+	return r.write(ctx, func(ctx context.Context, tx *store.Store) error {
+		return r.retainWorktreeTx(ctx, tx, reason)
+	})
+}
 
-	if err := r.o.Store.SetWorktreeStatus(writeCtx, r.record.ID, task.WorktreeRetained); err != nil {
-		r.log.WarnContext(ctx, "could not mark the worktree retained", "error", err.Error())
-		return
+// retainWorktreeTx marks the worktree as deliberately kept inside the caller's
+// transaction, behind whatever fence the caller took.
+func (r *run) retainWorktreeTx(ctx context.Context, tx *store.Store, reason string) error {
+	if r.record == nil {
+		return nil
+	}
+	if err := tx.SetWorktreeStatus(ctx, r.record.ID, task.WorktreeRetained); err != nil {
+		return err
 	}
 	r.record.Status = task.WorktreeRetained
-	r.emit(ctx, event.TypeWorktreeRetained, map[string]any{
+	return appendEvent(ctx, tx, r.task.ID, &r.attempt.ID, event.TypeWorktreeRetained, map[string]any{
 		"path":   r.record.Path,
 		"branch": r.record.Branch,
 		"reason": reason,

@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"text/template"
@@ -299,6 +300,9 @@ func (r *run) continueWorktree(ctx context.Context) error {
 	writeCtx, cancel := writeContext(ctx)
 	defer cancel()
 	if err := r.o.Store.InTx(writeCtx, func(tx *store.Store) error {
+		if err := r.fence(writeCtx, tx); err != nil {
+			return err
+		}
 		recorded, err := tx.CreateWorktree(writeCtx, task.Worktree{
 			ID:         uuid.Must(uuid.NewV7()),
 			AttemptID:  r.attempt.ID,
@@ -318,6 +322,17 @@ func (r *run) continueWorktree(ctx context.Context) error {
 			"continued_from": r.retry.previous,
 		})
 	}); err != nil {
+		if errors.Is(err, store.ErrLeaseLost) {
+			// The branch was created for an attempt that no longer exists;
+			// leaving it would put an empty branch beside the task's own and
+			// make the next attempt's name collide. The worktree detaches to
+			// the same commit first, so nothing is lost.
+			cleanupCtx, cancelCleanup := writeContext(ctx)
+			defer cancelCleanup()
+			if delErr := r.worktree.AbandonBranch(cleanupCtx, branch); delErr != nil {
+				r.log.WarnContext(ctx, "could not delete the branch of an abandoned retry", "branch", branch, "error", delErr.Error())
+			}
+		}
 		return err
 	}
 

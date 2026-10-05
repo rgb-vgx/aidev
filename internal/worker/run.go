@@ -454,6 +454,12 @@ func (r *run) prepareWorktree(ctx context.Context) error {
 	defer cancel()
 
 	if err := r.o.Store.InTx(writeCtx, func(tx *store.Store) error {
+		// The worktree record is state someone else owns (a reviewer reads
+		// it, Cancel and recovery retain it), so it is written behind the
+		// lease fence like everything else of an open attempt.
+		if err := r.fence(writeCtx, tx); err != nil {
+			return err
+		}
 		recorded, err := tx.CreateWorktree(writeCtx, task.Worktree{
 			ID:         uuid.Must(uuid.NewV7()),
 			AttemptID:  r.attempt.ID,
@@ -479,6 +485,16 @@ func (r *run) prepareWorktree(ctx context.Context) error {
 		}
 		return appendEvent(writeCtx, tx, r.task.ID, &r.attempt.ID, event.TypeWorktreeCreated, payload)
 	}); err != nil {
+		if errors.Is(err, store.ErrLeaseLost) {
+			// The attempt was ended while the checkout was being made, so
+			// nothing recorded it: remove it rather than leave a directory
+			// on disk that no row points at.
+			cleanupCtx, cancelCleanup := writeContext(ctx)
+			defer cancelCleanup()
+			if rmErr := r.o.Git.Remove(cleanupCtx, wt, true); rmErr != nil {
+				r.log.WarnContext(ctx, "could not remove the worktree of an attempt that was ended", "path", wt.Path, "error", rmErr.Error())
+			}
+		}
 		return err
 	}
 
@@ -1251,7 +1267,9 @@ func (r *run) cleanupAfterSuccess(ctx context.Context) {
 		// Removal without --force can only fail if something is still
 		// uncommitted, which means keeping it is the right answer.
 		r.log.WarnContext(ctx, "could not remove the worktree; keeping it", "error", err.Error())
-		r.retainWorktree(ctx, err.Error())
+		if err := r.retainWorktree(ctx, err.Error()); err != nil {
+			r.log.WarnContext(ctx, "could not mark the worktree retained", "error", err.Error())
+		}
 		return
 	}
 
@@ -1300,17 +1318,17 @@ func (r *run) fail(ctx context.Context, kind task.FailureKind, cause error) (Out
 		message = cause.Error()
 	}
 
-	// A worktree is only retained when one was created; a task that failed
-	// before that has nothing to keep.
-	if r.worktree != nil {
-		r.retainWorktree(ctx, message)
-	}
-
 	writeCtx, cancel := writeContext(ctx)
 	defer cancel()
 
 	err := r.o.Store.InTx(writeCtx, func(tx *store.Store) error {
 		if err := r.fence(writeCtx, tx); err != nil {
+			return err
+		}
+		// The worktree is retained inside the same fenced transaction, not
+		// before it: a run that lost its attempt must not mark anything of
+		// the task's, and the retention and the failure belong together.
+		if err := r.retainWorktreeTx(writeCtx, tx, message); err != nil {
 			return err
 		}
 		if err := tx.TransitionTask(writeCtx, r.task.ID, r.task.Status, next); err != nil {
