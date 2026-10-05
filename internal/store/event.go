@@ -3,11 +3,14 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 
 	"aidev/internal/event"
+	"aidev/internal/task"
 )
 
 const eventColumns = `id, seq, task_id, attempt_id, type, payload, created_at`
@@ -158,6 +161,79 @@ func (s *Store) TestsModifiedPaths(ctx context.Context, taskID, attemptID uuid.U
 		return nil, fmt.Errorf("tests modified for attempt %s: payload is not decodable: %w", attemptID, err)
 	}
 	return decoded.Paths, nil
+}
+
+// ApplyState returns whether a task's verified result has been taken into the
+// operator's branch, derived from the newest task.applied / task.apply_undone
+// event. A task with neither is ApplyNever, which is not an error — nothing
+// has happened yet, rather than something having gone wrong.
+func (s *Store) ApplyState(ctx context.Context, taskID uuid.UUID) (task.Apply, error) {
+	if taskID == uuid.Nil {
+		return task.Apply{}, fmt.Errorf("apply state: a task id is required")
+	}
+
+	var (
+		eventType string
+		payload   []byte
+		at        time.Time
+	)
+	err := s.db.QueryRow(ctx, `
+		SELECT type, payload, created_at
+		FROM events
+		WHERE task_id = $1 AND type IN ('task.applied', 'task.apply_undone')
+		ORDER BY seq DESC
+		LIMIT 1`,
+		taskID).Scan(&eventType, &payload, &at)
+	if err != nil {
+		if errors.Is(classify(err), ErrNotFound) {
+			return task.Apply{}, nil
+		}
+		return task.Apply{}, fmt.Errorf("apply state for task %s: %w", taskID, classify(err))
+	}
+	return decodeApplyPayload(taskID, eventType, payload, at)
+}
+
+// decodeApply builds the derived state from one apply event's type, payload
+// and timestamp. A nil type means no such event exists, so the task was never
+// applied.
+func decodeApply(taskID uuid.UUID, eventType *string, payload []byte, at *time.Time) (task.Apply, error) {
+	if eventType == nil {
+		return task.Apply{}, nil
+	}
+	var timestamp time.Time
+	if at != nil {
+		timestamp = *at
+	}
+	return decodeApplyPayload(taskID, *eventType, payload, timestamp)
+}
+
+// decodeApplyPayload decodes the newest apply event. The applied payload
+// records into, branch, commit and whether it reapplied after an undo; the
+// undone payload records into, the revert commit and what it undid.
+func decodeApplyPayload(taskID uuid.UUID, eventType string, payload []byte, at time.Time) (task.Apply, error) {
+	switch eventType {
+	case string(event.TypeTaskApplied):
+		var decoded struct {
+			Into   string `json:"into"`
+			Commit string `json:"commit"`
+		}
+		if err := json.Unmarshal(payload, &decoded); err != nil {
+			return task.Apply{}, fmt.Errorf("apply state for task %s: payload is not decodable: %w", taskID, err)
+		}
+		return task.Apply{State: task.ApplyApplied, Into: decoded.Into, Commit: decoded.Commit, At: at}, nil
+	case string(event.TypeTaskApplyUndone):
+		var decoded struct {
+			Into   string `json:"into"`
+			Commit string `json:"commit"`
+			Undid  string `json:"undid"`
+		}
+		if err := json.Unmarshal(payload, &decoded); err != nil {
+			return task.Apply{}, fmt.Errorf("apply state for task %s: payload is not decodable: %w", taskID, err)
+		}
+		return task.Apply{State: task.ApplyUndone, Into: decoded.Into, Commit: decoded.Commit, Undid: decoded.Undid, At: at}, nil
+	default:
+		return task.Apply{}, fmt.Errorf("apply state for task %s: unexpected event type %q", taskID, eventType)
+	}
 }
 
 func scanEvent(row scanner) (event.Event, error) {

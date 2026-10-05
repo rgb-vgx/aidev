@@ -106,6 +106,10 @@ type TaskFilter struct {
 	Statuses  []task.Status // empty means any status
 	Limit     int           // zero means the default
 	Offset    int
+	// Unapplied means the operator's question — SUCCEEDED and not currently
+	// applied — so the listing holds only SUCCEEDED tasks whose newest apply
+	// event is not task.applied (never applied, or applied and then undone).
+	Unapplied bool
 }
 
 // DefaultTaskListLimit bounds an unfiltered listing so that a caller cannot
@@ -115,8 +119,19 @@ const DefaultTaskListLimit = 50
 // MaxTaskListLimit caps an explicit limit.
 const MaxTaskListLimit = 500
 
-// ListTasks returns tasks newest first.
-func (s *Store) ListTasks(ctx context.Context, filter TaskFilter) ([]task.Task, error) {
+// TaskListItem is a task together with the repository it belongs to and its
+// derived apply state, which is what an operator needs to make sense of a
+// listing: which project the task is for, and whether its verified result has
+// been taken into their branch.
+type TaskListItem struct {
+	Task     task.Task
+	RepoPath string
+	Apply    task.Apply
+}
+
+// ListTasks returns tasks newest first, each with its repository path and its
+// apply state derived from the newest task.applied / task.apply_undone event.
+func (s *Store) ListTasks(ctx context.Context, filter TaskFilter) ([]TaskListItem, error) {
 	limit := filter.Limit
 	switch {
 	case limit <= 0:
@@ -139,31 +154,48 @@ func (s *Store) ListTasks(ctx context.Context, filter TaskFilter) ([]task.Task, 
 
 	// A single query with "filter is empty" predicates keeps the SQL static,
 	// which is easier to read and leaves no room for accidental injection.
+	// The repository comes from a join with projects, and the apply state
+	// from the newest task.applied / task.apply_undone event per task; the
+	// events_task_seq_idx (task_id, seq) index serves that lookup.
 	rows, err := s.db.Query(ctx, `
-		SELECT `+taskColumns+`
-		FROM tasks
-		WHERE ($1::uuid IS NULL OR project_id = $1)
-		  AND (cardinality($2::text[]) = 0 OR status = ANY($2))
-		ORDER BY created_at DESC, ref DESC
+		SELECT t.id, t.ref, t.project_id, t.title, t.description, t.agent, t.model, t.hardness, t.priority, t.status,
+			t.acceptance_criteria, t.verification, t.protected_paths, t.setup_steps, t.verification_mode,
+			t.max_retries, t.requires_approval, t.expect_fail_on_base, t.base_ref, t.timeout_seconds, t.created_at, t.updated_at,
+			t.base_commit_at_create,
+			p.repo_path, e.type, e.payload, e.created_at
+		FROM tasks t
+		JOIN projects p ON p.id = t.project_id
+		LEFT JOIN LATERAL (
+			SELECT type, payload, created_at
+			FROM events
+			WHERE task_id = t.id AND type IN ('task.applied', 'task.apply_undone')
+			ORDER BY seq DESC
+			LIMIT 1
+		) e ON true
+		WHERE ($1::uuid IS NULL OR t.project_id = $1)
+		  AND (cardinality($2::text[]) = 0 OR t.status = ANY($2))
+		  AND (NOT $5 OR t.status = 'SUCCEEDED')
+		  AND (NOT $5 OR e.type IS DISTINCT FROM 'task.applied')
+		ORDER BY t.created_at DESC, t.ref DESC
 		LIMIT $3 OFFSET $4`,
-		nullUUID(filter.ProjectID), statuses, limit, offset)
+		nullUUID(filter.ProjectID), statuses, limit, offset, filter.Unapplied)
 	if err != nil {
 		return nil, fmt.Errorf("list tasks: %w", classify(err))
 	}
 	defer rows.Close()
 
-	var tasks []task.Task
+	var items []TaskListItem
 	for rows.Next() {
-		t, err := scanTask(rows)
+		item, err := scanTaskListItem(rows)
 		if err != nil {
 			return nil, fmt.Errorf("list tasks: %w", err)
 		}
-		tasks = append(tasks, t)
+		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("list tasks: %w", classify(err))
 	}
-	return tasks, nil
+	return items, nil
 }
 
 // TransitionTask moves a task from one status to another.
@@ -265,6 +297,78 @@ func scanTask(row scanner) (task.Task, error) {
 	t.VerificationMode = parsedMode
 	t.Timeout = time.Duration(timeoutSeconds) * time.Second
 	return t, nil
+}
+
+// scanTaskListItem reads one row of the ListTasks join: the task itself, the
+// repository path from projects, and the newest apply event for the derived
+// state. A task with no apply event carries ApplyNever.
+func scanTaskListItem(row scanner) (TaskListItem, error) {
+	var (
+		item           TaskListItem
+		status         string
+		hardness       string
+		verification   []byte
+		protectedPaths []byte
+		setupSteps     []byte
+		mode           string
+		timeoutSeconds int
+		eventType      *string
+		eventPayload   []byte
+		eventAt        *time.Time
+	)
+	t := &item.Task
+	err := row.Scan(
+		&t.ID, &t.Ref, &t.ProjectID, &t.Title, &t.Description, &t.Agent, &t.Model, &hardness, &t.Priority,
+		&status, &t.AcceptanceCriteria, &verification, &protectedPaths, &setupSteps, &mode,
+		&t.MaxRetries, &t.RequiresApproval, &t.ExpectFailOnBase,
+		&t.BaseRef, &timeoutSeconds, &t.CreatedAt, &t.UpdatedAt, &t.BaseCommitAtCreate,
+		&item.RepoPath, &eventType, &eventPayload, &eventAt)
+	if err != nil {
+		return TaskListItem{}, classify(err)
+	}
+
+	parsed, err := task.ParseStatus(status)
+	if err != nil {
+		return TaskListItem{}, fmt.Errorf("task %s has unrecognised status: %w", t.ID, err)
+	}
+	t.Status = parsed
+
+	if hardness != "" {
+		h, err := task.ParseHardness(hardness)
+		if err != nil {
+			return TaskListItem{}, fmt.Errorf("task %s has unrecognised hardness: %w", t.ID, err)
+		}
+		t.Hardness = h
+	}
+
+	if len(verification) > 0 {
+		if err := json.Unmarshal(verification, &t.Verification); err != nil {
+			return TaskListItem{}, fmt.Errorf("task %s has unreadable verification steps: %w", t.ID, err)
+		}
+	}
+	if len(protectedPaths) > 0 {
+		if err := json.Unmarshal(protectedPaths, &t.ProtectedPaths); err != nil {
+			return TaskListItem{}, fmt.Errorf("task %s has unreadable protected paths: %w", t.ID, err)
+		}
+	}
+	if len(setupSteps) > 0 {
+		if err := json.Unmarshal(setupSteps, &t.SetupSteps); err != nil {
+			return TaskListItem{}, fmt.Errorf("task %s has unreadable setup steps: %w", t.ID, err)
+		}
+	}
+	parsedMode, err := task.ParseVerificationMode(mode)
+	if err != nil {
+		return TaskListItem{}, fmt.Errorf("task %s has unrecognised verification mode: %w", t.ID, err)
+	}
+	t.VerificationMode = parsedMode
+	t.Timeout = time.Duration(timeoutSeconds) * time.Second
+
+	apply, err := decodeApply(t.ID, eventType, eventPayload, eventAt)
+	if err != nil {
+		return TaskListItem{}, err
+	}
+	item.Apply = apply
+	return item, nil
 }
 
 // nullUUID maps the zero UUID onto SQL NULL so that "any project" can be

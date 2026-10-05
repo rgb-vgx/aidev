@@ -859,6 +859,8 @@ It records `task.applied`. `undo` reverts that merge with a new commit, so it is
 push; applying again after an undo reverts the revert, because merging a branch
 whose merge was reverted would quietly change nothing. Neither changes the task's
 status: `SUCCEEDED` is what verification found, not whether anyone took the work.
+The list and the result show whether the work has been applied, derived from the
+event log rather than stored twice.
 
 ## Tracing
 

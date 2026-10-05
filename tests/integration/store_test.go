@@ -282,7 +282,7 @@ func TestListTasksFilters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTasks by status: %v", err)
 	}
-	if len(ready) != 1 || ready[0].ID != a.ID {
+	if len(ready) != 1 || ready[0].Task.ID != a.ID {
 		t.Errorf("status filter returned %d tasks, want only %s", len(ready), a.Ref)
 	}
 

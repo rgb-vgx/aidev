@@ -207,14 +207,26 @@ func (s *Server) getTask(ctx context.Context, _ *sdk.CallToolRequest, in TaskInp
 	if err != nil {
 		return nil, TaskOutput{}, err
 	}
-	return nil, TaskOutput{Task: view.NewTask(t)}, nil
+	v := view.NewTask(t)
+	if project, err := st.GetProject(ctx, t.ProjectID); err == nil {
+		v.RepoPath = project.RepoPath
+	}
+	if apply, err := st.ApplyState(ctx, t.ID); err != nil {
+		return nil, TaskOutput{}, err
+	} else if apply.State != task.ApplyNever {
+		v.ApplyState = apply.State.String()
+		v.ApplyInto = apply.Into
+		v.ApplyCommit = apply.Commit
+	}
+	return nil, TaskOutput{Task: v}, nil
 }
 
 // ListTasksInput is the input of aidev_list_tasks.
 type ListTasksInput struct {
-	RepoPath string   `json:"repo_path,omitempty" jsonschema:"only tasks for this git repository"`
-	Statuses []string `json:"statuses,omitempty" jsonschema:"only these statuses, for example [\"FAILED\"]. Valid values: PENDING, READY, RUNNING, VERIFYING, SUCCEEDED, FAILED, CANCELLED, WAITING_APPROVAL"`
-	Limit    int      `json:"limit,omitempty" jsonschema:"maximum tasks to return; defaults to 50"`
+	RepoPath   string   `json:"repo_path,omitempty" jsonschema:"only tasks for this git repository"`
+	Statuses   []string `json:"statuses,omitempty" jsonschema:"only these statuses, for example [\"FAILED\"]. Valid values: PENDING, READY, RUNNING, VERIFYING, SUCCEEDED, FAILED, CANCELLED, WAITING_APPROVAL"`
+	Limit      int      `json:"limit,omitempty" jsonschema:"maximum tasks to return; defaults to 50"`
+	NeedsApply bool     `json:"needs_apply,omitempty" jsonschema:"only SUCCEEDED tasks whose verified result has not been applied: never applied, or applied and then undone"`
 }
 
 // ListTasksOutput is the output of aidev_list_tasks.
@@ -224,7 +236,7 @@ type ListTasksOutput struct {
 }
 
 func (s *Server) listTasks(ctx context.Context, _ *sdk.CallToolRequest, in ListTasksInput) (*sdk.CallToolResult, ListTasksOutput, error) {
-	filter := store.TaskFilter{Limit: in.Limit}
+	filter := store.TaskFilter{Limit: in.Limit, Unapplied: in.NeedsApply}
 
 	// An unknown status is the caller's mistake, and naming it is more use than a
 	// connection error: checked before connecting.
@@ -266,8 +278,15 @@ func (s *Server) listTasks(ctx context.Context, _ *sdk.CallToolRequest, in ListT
 		return nil, ListTasksOutput{}, err
 	}
 	views := make([]view.Task, 0, len(tasks))
-	for _, t := range tasks {
-		views = append(views, view.NewTask(t))
+	for _, item := range tasks {
+		v := view.NewTask(item.Task)
+		v.RepoPath = item.RepoPath
+		if item.Apply.State != task.ApplyNever {
+			v.ApplyState = item.Apply.State.String()
+			v.ApplyInto = item.Apply.Into
+			v.ApplyCommit = item.Apply.Commit
+		}
+		views = append(views, v)
 	}
 	return nil, ListTasksOutput{Tasks: views, Count: len(views)}, nil
 }
@@ -648,6 +667,21 @@ func (s *Server) buildResult(ctx context.Context, st *store.Store, taskID uuid.U
 		message = attempt.Error
 	}
 	result := view.NewResult(t, attempt, workerRun, runs, worktree, approval, testsModified, message, includeOutput)
+	// Best-effort, like the reads above: whether the verified result was
+	// taken is a courtesy to the reader.
+	var apply task.Apply
+	if a, err := st.ApplyState(ctx, taskID); err == nil {
+		apply = a
+	}
+	if project, err := st.GetProject(ctx, t.ProjectID); err == nil {
+		result.Task.RepoPath = project.RepoPath
+	}
+	if apply.State != task.ApplyNever {
+		result.Task.ApplyState = apply.State.String()
+		result.Task.ApplyInto = apply.Into
+		result.Task.ApplyCommit = apply.Commit
+	}
+	result.Apply = view.NewApply(apply)
 	// The same history `aidev task result` shows: after a retry, what the
 	// earlier attempts ran into. Best-effort, like the reads above.
 	if attempt != nil {
