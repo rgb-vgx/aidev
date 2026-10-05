@@ -686,6 +686,16 @@ unfenced is the attempt's own audit trail, its worker-run and verification rows:
 they record what really ran, which is what a reader needs most when someone else
 ended the attempt. `TestARunThatLostItsAttemptPublishesNothing` holds this.
 
+What a `kill -9` leaves at each boundary is tested against the real binary
+(`tests/integration/crash_test.go`): killed while the agent runs, while the checks
+run, or while waiting for the fence to record a success, the task is recoverable,
+its work retained, and the branch untouched. One window remains and is
+deliberate: the branch update happens inside the success transaction, so a
+process that dies after it and before the commit leaves a verified commit on the
+branch while the database still says `VERIFYING`; recovery then cancels the task.
+The opposite order would risk the worse failure — a `SUCCEEDED` row with no
+commit behind it.
+
 Recovery is never fully automatic in the worker: a lease is evidence, and aidev
 does not read it as an instruction. A human runs `aidev task recover` (doctor
 warns when there is something for it to do), and the MCP server runs it once when
