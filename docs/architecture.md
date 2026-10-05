@@ -521,6 +521,32 @@ config, hooks, attributes or HEAD changed means the attempt fails as
 rather than changing it — anyone who can create a task can have a verification
 command run anything anyway, which is the next section.
 
+### What the worktree is not
+
+"The only boundary" is a statement about where aidev puts the work and which paths
+its own git commands accept — not about what the agent can reach. The agent is a
+process running as the same Unix user as aidev, with no sandbox (parked as a future
+feature, docs/opensandbox.md). Whatever that user can do, the agent can do:
+
+- read and write any file the user can: the main checkout, other tasks' worktrees,
+  `~/.ssh`, the aidev binary and its `conf.json`;
+- read the database password from that `conf.json` and connect to PostgreSQL
+  directly — `AIDEV_*` variables are stripped from its environment, but the file is
+  not hidden — so it could rewrite task rows; the transition trigger keeps an
+  illegal status from being stored, but not a legal one;
+- reach the network, start processes that outlive the run, and use any credential
+  the user's environment holds.
+
+What aidev adds on top is detection and refusal, not prevention: containment fails
+an attempt that changed shared git state, interception and protected paths refuse
+an attempt that rewrote what judges it, the lease fence stops a stale run from
+writing, and every result is reviewed before it is merged. That is the right fit
+for its intended use — one operator on their own machine delegating to an agent
+they would otherwise run by hand — and the wrong one for an agent you do not
+trust, other people's tasks, or a shared machine. Those need operating-system
+isolation around the agent (a container or VM with only the worktree mounted, or
+a separate user), which aidev does not provide today.
+
 ### Verification commands are arbitrary code, deliberately
 
 A task defines the commands aidev runs to verify it, and aidev runs them. That is

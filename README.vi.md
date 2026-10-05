@@ -68,6 +68,14 @@ của cơ sở dữ liệu.
 | OpenCode | 1.18+ | chỉ cần từ Giai đoạn 2; đã kiểm chứng với 1.18.30 |
 | Claude Code | 2.x | chỉ cần từ Giai đoạn 4; đã kiểm chứng với 2.1.268 |
 
+**Mức độ tin cậy.** Agent chạy dưới chính user của bạn, không có sandbox: nó đọc và
+ghi được mọi thứ user của bạn làm được, kể cả các repository khác và tập tin cấu hình của
+chính aidev. aidev phát hiện và từ chối những gì nó có thể — trạng thái git bị đổi,
+lệnh kiểm tra bị viết lại, run cũ còn sót — và không có gì được merge nếu chưa xem
+lại, điều này hợp với một người tự giao việc trên máy của mình. Đừng đưa cho nó
+agent, task hay người dùng mà bạn sẽ không giao quyền dùng shell; xem
+[worktree không phải là gì](docs/architecture.md#what-the-worktree-is-not).
+
 ## Bắt đầu nhanh
 
 Bạn cần git và OpenCode và, trừ khi đã có sẵn PostgreSQL, Docker. Bạn không cần Go.
