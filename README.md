@@ -68,6 +68,13 @@ schema.
 | OpenCode | 1.18+ | only needed from Phase 2; verified against 1.18.30 |
 | Claude Code | 2.x | only needed from Phase 4; verified against 2.1.268 |
 
+**Trust.** The agent runs as you, with no sandbox: it can read and write anything
+your user can, including other repositories and aidev's own configuration file. aidev
+detects and refuses what it can — changed git state, rewritten checks, stale runs —
+and nothing is merged without review, which suits one person delegating on their
+own machine. Do not give it agents, tasks or users you would not give a shell to;
+see [what the worktree is not](docs/architecture.md#what-the-worktree-is-not).
+
 ## Quick start
 
 You need git and OpenCode and, unless you already have PostgreSQL, Docker. You do not need Go.
@@ -330,6 +337,8 @@ aidev task cancel <task> [--reason R] [--json]
 aidev task approve <task> [--deny] [--by WHO] [--reason R] [--json]
 aidev task recover [--dry-run] [--json]   # cancel tasks whose lease expired
 aidev task delete <task>                  # delete a finished task and its history
+aidev task apply <task>                   # merge a succeeded task into your branch
+aidev task undo <task>                    # revert what apply merged
 aidev prune --logs-older-than 30d [--dry-run]  # clear old captured output
 
 aidev project add   [path]                        # register a repository for MCP tasks

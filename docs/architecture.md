@@ -485,7 +485,7 @@ place a listed future feature plugs in without a rewrite.
 | Dependency DAG | `PENDING` exists as "not yet eligible"; the eligibility check is the hook. |
 | Observability / event-driven features | `events.seq` gives every event a position, and `AppendEvent` takes a per-task advisory lock so that within a task the sequence order is also the commit order: a consumer can resume from a cursor without missing an event. Across tasks the order is allocation order, not commit order. |
 | Approval workflows | `approvals` with one-pending-per-task, plus `WAITING_APPROVAL` in the state machine. |
-| Merge | every successful task leaves a reviewable commit on its branch (`aidev/<ref>`, or `aidev/<ref>-aN` after a retry), and `worktrees` records branch, base commit and head commit; nothing merges yet, by design. |
+| Merge | every successful task leaves a reviewable commit on its branch (`aidev/<ref>`, or `aidev/<ref>-aN` after a retry), and `worktrees` records branch, base commit and head commit. Nothing merges on its own, by design; `aidev task apply` merges when a person asks, and `task undo` reverts it. |
 
 Deliberately **not** present: a scheduler, a DAG executor, automatic merge, a web
 dashboard, authentication, Redis, Kafka, Kubernetes, or an LLM inside aidev.
@@ -520,6 +520,32 @@ config, hooks, attributes or HEAD changed means the attempt fails as
 (docs/research.md §7i.2). Detection is after the fact, so it widens the trust
 rather than changing it — anyone who can create a task can have a verification
 command run anything anyway, which is the next section.
+
+### What the worktree is not
+
+"The only boundary" is a statement about where aidev puts the work and which paths
+its own git commands accept — not about what the agent can reach. The agent is a
+process running as the same Unix user as aidev, with no sandbox (parked as a future
+feature, docs/opensandbox.md). Whatever that user can do, the agent can do:
+
+- read and write any file the user can: the main checkout, other tasks' worktrees,
+  `~/.ssh`, the aidev binary and its `conf.json`;
+- read the database password from that `conf.json` and connect to PostgreSQL
+  directly — `AIDEV_*` variables are stripped from its environment, but the file is
+  not hidden — so it could rewrite task rows; the transition trigger keeps an
+  illegal status from being stored, but not a legal one;
+- reach the network, start processes that outlive the run, and use any credential
+  the user's environment holds.
+
+What aidev adds on top is detection and refusal, not prevention: containment fails
+an attempt that changed shared git state, interception and protected paths refuse
+an attempt that rewrote what judges it, the lease fence stops a stale run from
+writing, and every result is reviewed before it is merged. That is the right fit
+for its intended use — one operator on their own machine delegating to an agent
+they would otherwise run by hand — and the wrong one for an agent you do not
+trust, other people's tasks, or a shared machine. Those need operating-system
+isolation around the agent (a container or VM with only the worktree mounted, or
+a separate user), which aidev does not provide today.
 
 ### Verification commands are arbitrary code, deliberately
 
@@ -672,6 +698,30 @@ run in another process notices the `CANCELLED` status on its next poll (every 2
 seconds by default) and stops then. The stopped run adopts the ending the
 cancel already recorded instead of writing a second one.
 
+A lease is evidence, not a lock, so it is backed by a **fence**. A process that
+was paused past its lease — or a run that has not yet polled — could otherwise
+wake up after a recovery or a cancel and go on writing. Every write a run makes
+while its attempt is open first takes `store.HoldLease` in its transaction: lock
+the task row, then the attempt row (the order Cancel uses, so the two cannot
+deadlock), and require the attempt to be `RUNNING` under this process. If it is
+not, the transaction writes nothing and the run adopts the recorded ending.
+Success and retry hold the fence across their git work too — the commit, the
+branch update, the reset — so "the branch moved" and "the task succeeded" happen
+under one lock, and a run that lost its attempt moves nothing. What stays
+unfenced is the attempt's own audit trail, its worker-run and verification rows:
+they record what really ran, which is what a reader needs most when someone else
+ended the attempt. `TestARunThatLostItsAttemptPublishesNothing` holds this.
+
+What a `kill -9` leaves at each boundary is tested against the real binary
+(`tests/integration/crash_test.go`): killed while the agent runs, while the checks
+run, or while waiting for the fence to record a success, the task is recoverable,
+its work retained, and the branch untouched. One window remains and is
+deliberate: the branch update happens inside the success transaction, so a
+process that dies after it and before the commit leaves a verified commit on the
+branch while the database still says `VERIFYING`; recovery then cancels the task.
+The opposite order would risk the worse failure — a `SUCCEEDED` row with no
+commit behind it.
+
 Recovery is never fully automatic in the worker: a lease is evidence, and aidev
 does not read it as an instruction. A human runs `aidev task recover` (doctor
 warns when there is something for it to do), and the MCP server runs it once when
@@ -687,15 +737,63 @@ and flags a record whose directory has disappeared. Removal goes through git wit
 `--force`, so uncommitted work is refused rather than discarded; forcing it is
 recorded in the task's history as an operator's decision.
 
+`aidev doctor` measures the free space where worktrees are created and warns
+below 5 GiB, failing below 1 GiB: every task copies the repository and its checks
+may build there, and git that runs out of space fails half-way through a commit.
+The space goes to retained worktrees (`aidev worktree list`, `worktree remove`),
+captured output in the database (`aidev prune --logs-older-than 30d`, then
+`task delete` for finished tasks nobody needs), the per-run logs under
+`workspace_root/run-logs/` (plain files, safe to delete once their run ended), and
+whatever the agents' builds left in Docker (`docker system df`). A run that hits a
+full disk anyway fails with kind `WORKTREE` or `INTERNAL`, keeps its worktree, and
+can be recovered like any other.
+
+### Backing up and restoring
+
+The database is the record: tasks, attempts, verification evidence and the event
+log. Everything else can be rebuilt or is somewhere safer — the delivered work is
+commits on branches in your repositories, retained worktrees are scratch, and
+`conf.json` is a file you can copy. Back up with the PostgreSQL tools of the same
+major version as the server; with the container `aidev setup` starts:
+
+```bash
+docker exec aidev-postgres pg_dump -U aidev -d aidev -Fc > aidev-$(date +%F).dump
+```
+
+Do it before an upgrade that brings migrations — `aidev migrate` changes the
+schema in place and nothing undoes it. To restore, into an empty database the
+configuration points at:
+
+```bash
+docker exec -i aidev-postgres pg_restore -U aidev -d aidev --clean --if-exists < aidev-2026-10-05.dump
+aidev migrate      # brings an older dump up to this binary's schema
+aidev doctor
+```
+
+A restore rolls the record back; it does not touch git. Branches and worktrees
+created after the dump stay on disk, and `aidev worktree list` will not know the
+worktrees of tasks the dump does not contain — remove those by hand with
+`git worktree remove`.
+
 ### A successful task's output
 
-The work is a commit on `aidev/<ref>`. Nothing merges it, and nothing ever will
-without a person asking:
+The work is a commit on `aidev/<ref>` (`aidev/<ref>-aN` after a retry; the result
+names it). Nothing merges it, and nothing ever will without a person asking:
 
 ```bash
 git log --oneline aidev/TASK-000001
 git diff main..aidev/TASK-000001
+aidev task apply TASK-000001     # when you want it: a merge commit into your branch
+aidev task undo TASK-000001      # and back out again, with a revert commit
 ```
+
+`apply` is the one command of aidev's that writes to your checkout, and only the
+branch you have checked out: it refuses uncommitted changes to tracked files and a
+detached HEAD, aborts a conflicting merge and names the files, and records
+`task.applied`. `undo` reverts that merge with a new commit, so it is safe after a
+push; applying again after an undo reverts the revert, because merging a branch
+whose merge was reverted would quietly change nothing. Neither changes the task's
+status: `SUCCEEDED` is what verification found, not whether anyone took the work.
 
 ## Tracing
 
@@ -749,7 +847,7 @@ Stated plainly so that nobody has to infer it from absence.
 |---|---|
 | Concurrent workers | status changes are compare-and-set and `tasks_ready_claim_idx` matches a `FOR UPDATE SKIP LOCKED` claim, and the lease columns exist so a crashed worker's task can be recognised. What is missing is the claim itself becoming a lease: taking a task must write an owner the way `startAttempt` does, not only a status. |
 | Dependency graphs | `PENDING` exists as "not yet eligible"; the eligibility check in `becomeReady` is the hook. |
-| Merging | a successful task leaves a reviewable commit on its own branch. Nothing merges it, by design. |
+| Automatic merging | a successful task leaves a reviewable commit on its own branch; `aidev task apply` merges it only when a person runs it. Nothing merges on its own, by design. |
 | Automatic expiry of a stale `RUNNING` task | the lease makes staleness detectable and `aidev task recover` acts on it, but nothing cancels on a timer by itself — deliberate, see [Operating it](#when-a-run-is-interrupted). |
 | A second agent backend | `agent.Backend`, plus a server-mode OpenCode option evaluated and documented in docs/research.md §2.8. |
 | A web surface, auth, multi-tenancy | explicit non-goals. aidev is a local-first tool for one operator. |

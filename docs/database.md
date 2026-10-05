@@ -132,6 +132,13 @@ forward every time it ticks. A NULL expiry means nobody ever reported in — a r
 killed before its first tick — and is treated as expired, because there is no
 holder to wait for. `aidev task recover` cancels tasks whose lease has run out.
 
+The lease is also a fence: while its attempt is open, a run's writes start with
+`HoldLease`, which locks the task row and then the attempt row and requires the
+attempt to be `RUNNING` with this process as `lease_owner`. Once a Cancel or a
+recovery has finished the attempt, the old process's status changes, events and
+git publication are refused; its `worker_runs` and `verification_runs` rows, the
+audit record of what it ran, are still kept.
+
 ### `worktrees`
 The isolated workspace an attempt ran in. `attempt_id` is **unique**: the
 isolation boundary is per attempt, so a second worktree for one attempt would be a

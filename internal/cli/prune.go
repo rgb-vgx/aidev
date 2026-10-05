@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"aidev/internal/store"
+	"aidev/internal/worker"
 )
 
 // runPrune reclaims the space captured output takes (research C6). It clears
@@ -147,5 +148,70 @@ aidev worktree remove. The task's branch in the repository is left alone.
 	}
 	fmt.Fprintf(env.Stdout, "deleted %s and its history\n", t.Identifier())
 	fmt.Fprintf(env.Stdout, "Its branch, if it delivered one, is still in the repository.\n")
+	return nil
+}
+
+// taskApply merges a SUCCEEDED task's branch into the repository's
+// checked-out branch: the step from "verified" to "in my project", taken only
+// when a person asks.
+func taskApply(ctx context.Context, env *Env, args []string) error {
+	return applyCommand(ctx, env, args, "apply", `usage: aidev task apply <task> [--json]
+
+Merges a SUCCEEDED task's branch into the branch checked out in its repository,
+with a merge commit so the change stays one commit you can find and revert. The
+checkout must have no uncommitted changes to tracked files. A conflict is aborted
+and reported; nothing is changed then. Undo with aidev task undo <task>.
+`, func(app *app, id string) (worker.ApplyResult, error) { return app.orchestrator.Apply(ctx, id) })
+}
+
+// taskUndo reverts what taskApply merged, with a new commit.
+func taskUndo(ctx context.Context, env *Env, args []string) error {
+	return applyCommand(ctx, env, args, "undo", `usage: aidev task undo <task> [--json]
+
+Reverts the merge aidev task apply made, with a new commit on the same branch —
+safe even after you pushed. That branch must be checked out, with no uncommitted
+changes to tracked files. Running aidev task apply again re-applies it.
+`, func(app *app, id string) (worker.ApplyResult, error) { return app.orchestrator.Undo(ctx, id) })
+}
+
+func applyCommand(ctx context.Context, env *Env, args []string, name, usage string,
+	do func(*app, string) (worker.ApplyResult, error)) error {
+	fs := flag.NewFlagSet("task "+name, flag.ContinueOnError)
+	fs.SetOutput(env.Stderr)
+	asJSON := fs.Bool("json", false, "print the result as JSON")
+	fs.Usage = func() {
+		fmt.Fprint(env.Stderr, usage)
+		fs.PrintDefaults()
+	}
+	positionals, err := parseInterspersed(fs, args)
+	if err != nil {
+		return usagef("aidev task %s: %v", name, err)
+	}
+	identifier, err := oneIdentifier("task "+name, positionals)
+	if err != nil {
+		return err
+	}
+
+	app, err := openApp(ctx)
+	if err != nil {
+		return err
+	}
+	defer app.close()
+
+	res, err := do(app, identifier)
+	if err != nil {
+		return err
+	}
+	if *asJSON {
+		return writeJSON(env.Stdout, map[string]any{
+			"task":      res.Task.Identifier(),
+			"into":      res.Into,
+			"branch":    res.Branch,
+			"commit":    res.Commit,
+			"reapplied": res.Reapplied,
+			"message":   res.Message,
+		})
+	}
+	fmt.Fprintln(env.Stdout, res.Message)
 	return nil
 }

@@ -73,6 +73,11 @@ func (r *run) persistWorkerRun(ctx context.Context, result agent.Result) *task.W
 		record.DiffTruncated = diff.Truncated
 		record.ChangedFiles = diff.ChangedFiles
 	}
+	// Not fenced, deliberately: this row is the audit record of an agent
+	// run that really happened under this attempt, and it is most valuable
+	// exactly when someone else ended the attempt meanwhile. It changes no
+	// state another party owns. Events, status and anything in git are what
+	// the fence keeps a run from writing after losing its attempt.
 	if head, err := r.worktree.HeadCommit(gitCtx); err == nil && r.record != nil {
 		writeCtx, cancel := writeContext(ctx)
 		defer cancel()
@@ -126,6 +131,9 @@ func (r *run) persistVerification(ctx context.Context, report verification.Repor
 	writeCtx, cancel := writeContext(ctx)
 	defer cancel()
 
+	// The rows are audit records of checks that really ran, kept like the
+	// worker run (see persistWorkerRun); the step events go through emit and
+	// are fenced.
 	for _, vr := range report.Runs {
 		if _, err := r.o.Store.CreateVerificationRun(writeCtx, vr); err != nil {
 			r.log.ErrorContext(ctx, "could not persist a verification result",
@@ -174,6 +182,9 @@ func (r *run) transition(ctx context.Context, next task.Status, evType event.Typ
 
 	current := r.task.Status
 	if err := r.o.Store.InTx(writeCtx, func(tx *store.Store) error {
+		if err := r.fence(writeCtx, tx); err != nil {
+			return err
+		}
 		if err := tx.TransitionTask(writeCtx, r.task.ID, current, next); err != nil {
 			return err
 		}
@@ -185,6 +196,30 @@ func (r *run) transition(ctx context.Context, next task.Status, evType event.Typ
 	return nil
 }
 
+// fence is the lease check every write of an open attempt starts with
+// (store.HoldLease): inside tx, the task and attempt rows are locked and the
+// attempt must still be RUNNING under this process. Once the run has recorded
+// its attempt's ending — or before it has one — there is nothing to fence.
+func (r *run) fence(ctx context.Context, tx *store.Store) error {
+	if !r.attemptOpen {
+		return nil
+	}
+	return tx.HoldLease(ctx, r.task.ID, r.attempt.ID, processLeaseOwner())
+}
+
+// write runs fn in a transaction behind the fence, on the write budget. A run
+// that lost its attempt gets store.ErrLeaseLost and fn never runs.
+func (r *run) write(ctx context.Context, fn func(context.Context, *store.Store) error) error {
+	writeCtx, cancel := writeContext(ctx)
+	defer cancel()
+	return r.o.Store.InTx(writeCtx, func(tx *store.Store) error {
+		if err := r.fence(writeCtx, tx); err != nil {
+			return err
+		}
+		return fn(writeCtx, tx)
+	})
+}
+
 // emit appends an informational event.
 //
 // A failure here is logged rather than propagated: these events describe progress
@@ -192,14 +227,18 @@ func (r *run) transition(ctx context.Context, next task.Status, evType event.Typ
 // written would trade a real result for a bookkeeping gap. Events that must agree
 // with state are written inside the transition transaction instead.
 func (r *run) emit(ctx context.Context, evType event.Type, payload any) {
-	writeCtx, cancel := writeContext(ctx)
-	defer cancel()
-
 	var attemptID *uuid.UUID
 	if r.attempt.ID != uuid.Nil {
 		attemptID = &r.attempt.ID
 	}
-	if err := appendEvent(writeCtx, r.o.Store, r.task.ID, attemptID, evType, payload); err != nil {
+	err := r.write(ctx, func(ctx context.Context, tx *store.Store) error {
+		return appendEvent(ctx, tx, r.task.ID, attemptID, evType, payload)
+	})
+	switch {
+	case errors.Is(err, store.ErrLeaseLost):
+		// Someone else ended the attempt; its history ends with them.
+		r.log.WarnContext(ctx, "the attempt was ended elsewhere; not appending", "event", evType.String())
+	case err != nil:
 		r.log.ErrorContext(ctx, "could not append an event", "event", evType.String(), "error", err.Error())
 	}
 }

@@ -275,3 +275,17 @@ func nullUUID(id uuid.UUID) *uuid.UUID {
 	}
 	return &id
 }
+
+// LockTask takes the task's row lock until the caller's transaction ends, so
+// two operations on the same task — two `aidev task apply` at once — run one
+// after the other. It must run inside a transaction.
+func (s *Store) LockTask(ctx context.Context, id uuid.UUID) error {
+	if s.pool != nil {
+		return fmt.Errorf("lock task %s: LockTask must run inside a transaction", id)
+	}
+	var one int
+	if err := s.db.QueryRow(ctx, `SELECT 1 FROM tasks WHERE id = $1 FOR UPDATE`, id).Scan(&one); err != nil {
+		return fmt.Errorf("lock task %s: %w", id, classify(err))
+	}
+	return nil
+}

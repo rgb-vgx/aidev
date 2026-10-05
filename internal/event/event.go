@@ -79,6 +79,13 @@ const (
 	// task in the same repository rather than the agent.
 	TypeContainmentBreach Type = "task.containment_breach"
 	TypeSharedRefsChanged Type = "task.shared_refs_changed"
+
+	// Applying the result. A person ran `aidev task apply` (the task branch
+	// was merged into their checked-out branch) or `aidev task undo` (that
+	// merge was reverted). They leave the status alone: SUCCEEDED is what
+	// verification found, not whether anyone took the work.
+	TypeTaskApplied     Type = "task.applied"
+	TypeTaskApplyUndone Type = "task.apply_undone"
 )
 
 // AllTypes lists every event type aidev emits. The migration's CHECK constraint
@@ -97,6 +104,7 @@ func AllTypes() []Type {
 		TypeVerificationWorktreeModified,
 		TypeApprovalRequired, TypeApprovalGranted, TypeApprovalDenied,
 		TypeContainmentBreach, TypeSharedRefsChanged,
+		TypeTaskApplied, TypeTaskApplyUndone,
 	}
 }
 

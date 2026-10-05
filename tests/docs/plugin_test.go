@@ -155,7 +155,7 @@ func TestDelegateSkillUsesRealCreateTaskArguments(t *testing.T) {
 func TestDoctorSkillNamesEveryCheck(t *testing.T) {
 	text := readDoc(t, pluginDir+"/skills/doctor/SKILL.md")
 	checks := []string{doctor.CheckConfig, doctor.CheckGit, doctor.CheckAgent,
-		doctor.CheckDatabase, doctor.CheckMigrations, doctor.CheckWorkspace}
+		doctor.CheckDatabase, doctor.CheckMigrations, doctor.CheckWorkspace, doctor.CheckDisk}
 	for _, name := range checks {
 		if !strings.Contains(text, "`"+name+"`") {
 			t.Errorf("the doctor skill does not name the %s check", name)

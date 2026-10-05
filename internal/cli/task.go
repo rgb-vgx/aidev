@@ -33,6 +33,8 @@ func runTask(ctx context.Context, env *Env, args []string) error {
 		"approve": {"approve or deny a task that requires approval", taskApprove},
 		"recover": {"cancel tasks whose lease expired", taskRecover},
 		"delete":  {"delete a finished task and its history", taskDelete},
+		"apply":   {"merge a succeeded task's branch into your checked-out branch", taskApply},
+		"undo":    {"revert what aidev task apply merged", taskUndo},
 	}
 
 	writeTaskUsage := func(w *Env) {
