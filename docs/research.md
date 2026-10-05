@@ -544,6 +544,31 @@ therefore reuse the first attempt's database. `opencode agent list` works with
 Consequence for aidev: one database per task (`workspace_root/opencode-db/<ref>.sqlite`), reused
 by every attempt of that task.
 
+## 7l. aidev on aidev, two tasks at once **[OBSERVED]**
+
+2026-10-05, aidev v0.3.0-2-gdebedc3 (per-task OpenCode database and the containment fix of
+§7k), model `opencode/muse-spark-1.3-contributor-free`. Two STANDARD tasks of aidev's own
+repository were specified test-first on `spec/*` branches and started at the same second as two
+`aidev task run` processes, each with `--max-retries 2 --expect-fail-on-base --protect <spec>`:
+
+| Task | Change | Base check | Agent | Result |
+|---|---|---|---|---|
+| TASK-000086 | earlier attempts in `task result` | red, as it must be | 2m19s, 5 files | SUCCEEDED, attempt 1 |
+| TASK-000087 | new `aidev task diff` | red | 2m44s, 7 files | SUCCEEDED, attempt 1 |
+
+Each run had its own `opencode-db/<ref>.sqlite`; neither reported `task.shared_refs_changed`
+although both created and moved branches in the same repository meanwhile; no test file was
+touched. `aidev task apply` merged the first and refused the second — both had edited
+neighbouring rows of the command reference — leaving the checkout as it was; that merge was
+resolved by hand.
+
+Review beyond the green specifications found what the tests did not exercise: `task diff` took
+"head past base" for "delivered", which a retried failure satisfies with its partial commit; a
+patch over the output cap ended silently; the MCP result did not fill the new
+`earlier_attempts`; a cosmetic trailing space. All four were fixed test-first (commit
+`c289031`). The pattern of earlier delegations holds: a green specification proves the
+specification, and the review supplies what it left out.
+
 ## 7b. Phase 2 probes: git and OpenCode mechanics
 
 Measured later than the rest, when the execution core was designed. Same rules:
