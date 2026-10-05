@@ -55,6 +55,15 @@ type OpenCode struct {
 	// with no credentials configured (docs/research.md §2.10).
 	Model string
 
+	// DBDir, when set, gives every task its own OpenCode database there
+	// (<ref>.sqlite, through OPENCODE_DB). Concurrent runs on OpenCode's one
+	// shared store die at random with "database is locked" (docs/research.md
+	// §7k), so tasks running side by side need their own. Every attempt of a
+	// task uses the same file: a session can only be continued from the
+	// database it was created in, which is what automatic retry relies on.
+	// Empty keeps OpenCode's shared store.
+	DBDir string
+
 	// agents holds the last successful lookup, guarded by agentsMu, which is
 	// also held for the duration of a lookup so that concurrent validations
 	// share one spawn instead of racing to start their own.
@@ -111,6 +120,32 @@ func (o *OpenCode) buildArgs(req Request) []string {
 	return append(args, "--", req.Prompt)
 }
 
+// TaskDBPath is where a task's OpenCode database lives under dir, or "" when
+// ref cannot name a file safely. CLI cleanup uses it too, so the two cannot
+// disagree about the name.
+func TaskDBPath(dir, ref string) string {
+	ref = strings.TrimSpace(ref)
+	if dir == "" || ref == "" || !safeRef.MatchString(ref) {
+		return ""
+	}
+	return filepath.Join(dir, ref+".sqlite")
+}
+
+var safeRef = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// taskDB returns the database a task's runs use, creating its directory, or
+// "" to use the shared store (no DBDir, or no task reference to name it by).
+func (o *OpenCode) taskDB(ref string) (string, error) {
+	path := TaskDBPath(o.DBDir, ref)
+	if path == "" {
+		return "", nil
+	}
+	if err := os.MkdirAll(o.DBDir, 0o700); err != nil {
+		return "", fmt.Errorf("create the opencode database directory %s: %w", o.DBDir, err)
+	}
+	return path, nil
+}
+
 // agentFallback matches the warning OpenCode prints when it does not recognise
 // the requested agent. It then runs its default agent and exits 0
 // (docs/research.md §2.5), so this text is the only evidence that the task did
@@ -137,6 +172,17 @@ func (o *OpenCode) Run(ctx context.Context, req Request) (Result, error) {
 	result.Model = o.effectiveModel(req)
 	scanner := newEventScanner()
 
+	var extraEnv []string
+	if db, err := o.taskDB(req.TaskRef); err != nil {
+		result.Status = task.WorkerFailed
+		result.FailureKind = task.FailureStartup
+		result.Err = err
+		result.FinishedAt = time.Now().UTC()
+		return result, err
+	} else if db != "" {
+		extraEnv = append(extraEnv, "OPENCODE_DB="+db)
+	}
+
 	spec := procexec.Spec{
 		Command:        o.command(),
 		Args:           args,
@@ -145,7 +191,8 @@ func (o *OpenCode) Run(ctx context.Context, req Request) (Result, error) {
 		MaxOutputBytes: req.MaxOutputBytes,
 		// The agent executes instructions we do not control; it must not see
 		// aidev's own configuration (AIDEV_CONFIG → database URL).
-		DropEnv: []string{"AIDEV_"},
+		DropEnv:  []string{"AIDEV_"},
+		ExtraEnv: extraEnv,
 		// Parse while the process runs, so events survive even when the capture
 		// cap discards the tail of a very chatty run.
 		Tee: scanner,
@@ -379,6 +426,10 @@ func (o *OpenCode) ListAgents(ctx context.Context) ([]string, error) {
 		Dir:            dir,
 		Timeout:        agentListTimeout,
 		MaxOutputBytes: 1 << 20,
+		// Listing agents needs no history; an in-memory database keeps the
+		// lookup off the shared store a running task may hold
+		// (docs/research.md §7k).
+		ExtraEnv: []string{"OPENCODE_DB=:memory:"},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("list opencode agents: %w", err)

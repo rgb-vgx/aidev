@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -88,7 +89,11 @@ func connectApp(ctx context.Context, cfg config.Config, logger *slog.Logger) (*a
 
 	// The backend is selectable so that the Codex implementation is reachable;
 	// OpenCode remains the default.
-	var backend agent.Backend = agent.NewOpenCode(cfg.OpenCodeCommand, cfg.OpenCodeModel)
+	opencode := agent.NewOpenCode(cfg.OpenCodeCommand, cfg.OpenCodeModel)
+	// One OpenCode database per task, so tasks can run side by side
+	// (docs/research.md §7k).
+	opencode.DBDir = opencodeDBDir(cfg)
+	var backend agent.Backend = opencode
 	if cfg.AgentBackend == config.BackendCodex {
 		backend = agent.NewCodex(agent.CodexOptions{
 			Command: cfg.CodexCommand,
@@ -162,4 +167,10 @@ func requireCurrentSchema(ctx context.Context, db *store.Store) error {
 	}
 	return fmt.Errorf("database schema is behind: %d %s pending (%s); run `aidev migrate` to apply them",
 		len(pending), noun, strings.Join(pending, ", "))
+}
+
+// opencodeDBDir is where each task's OpenCode database lives: next to the
+// worktrees, so it is cleaned up with them and never inside a repository.
+func opencodeDBDir(cfg config.Config) string {
+	return filepath.Join(cfg.WorkspaceRoot, "opencode-db")
 }

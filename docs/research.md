@@ -509,13 +509,40 @@ Each item is forced by a finding above, not by preference.
 4. **[UNRESOLVED]** Whether `step_finish.reason` has values beyond `stop` and `tool-calls`
    (e.g. a length/abort reason). Treated as: anything that is not `stop` and is not followed by
    a successful finish is non-conclusive, and verification decides the outcome anyway.
-5. **[UNRESOLVED]** Behaviour under concurrent `opencode run` invocations against worktrees of
-   the *same* repository, given the shared SQLite store and shared project identity. The MVP is
-   single-flight per task and does not depend on this; it must be settled before parallel workers.
+5. **[OBSERVED — settled 2026-10-05, see §7k]** Concurrent `opencode run` invocations sharing
+   the default SQLite store still fail at random; one database file per task fixes it.
 6. **[ASSUMPTION]** `.mcp.json` project-scope approval is a one-time interactive step; a
    fully headless first-run may need `--scope user` or `--scope local` instead.
 
 ---
+
+## 7k. Concurrent OpenCode runs **[OBSERVED]**
+
+Measured 2026-10-05 on OpenCode 1.18.34, model `opencode/muse-spark-1.3-contributor-free`,
+probe in `.probe/conc/`. Each run used agent `build` to create three files, append to them and
+list the directory (8–19 tool calls, 17–56 s).
+
+| Setup | Runs | Result |
+|---|---|---|
+| shared default store (`~/.local/share/opencode/opencode.db`, 763 MB) | 3 × "reply ok", concurrent | 3/3 |
+| shared default store | 2 rounds × 4 tool-using, concurrent | **7/8** — one died after 1 s, 0 steps, exit 1: `Error: Unexpected error … database is locked` |
+| own `XDG_DATA_HOME` per run, `auth.json` symlinked in | 2 rounds × 4 | 8/8; ~5 MB per directory, no slower |
+| own `OPENCODE_DB` per run, **worktrees of one repository** | 2 rounds × 4 | 8/8 |
+
+So the 2026-09-15 finding (§7g: concurrent runs kill each other) still holds, intermittently:
+the store sets `busy_timeout = 5000` but a run can still lose at startup. The binary reads
+`OPENCODE_DB` (an absolute path, a path relative to the data directory, or `:memory:`) and uses it
+instead of the shared database, leaving `auth.json`, the snapshot directory and the rest of the
+data directory shared — which also keeps `XDG_DATA_HOME` out of the commands the agent runs.
+
+Session continuation follows the database, not the directory: a session created with
+`OPENCODE_DB=a.sqlite` continued with the same variable recalled its context ("5813"); continued
+against the default store it failed with `Error: Session not found` (exit 1). A retry must
+therefore reuse the first attempt's database. `opencode agent list` works with
+`OPENCODE_DB=:memory:`.
+
+Consequence for aidev: one database per task (`workspace_root/opencode-db/<ref>.sqlite`), reused
+by every attempt of that task.
 
 ## 7b. Phase 2 probes: git and OpenCode mechanics
 

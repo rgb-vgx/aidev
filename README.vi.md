@@ -404,6 +404,13 @@ Hai hành vi đã đo đạc đáng biết trước task đầu tiên của bạ
 - **OpenCode ghi tập tin mà không hỏi**, ngay cả khi không có cờ `--auto`. Đó
   là lý do mọi task chạy trong một worktree riêng và aidev từ chối đường dẫn worktree
   nằm bên trong kho mã của bạn.
+- **Chạy đồng thời cần mỗi task một database OpenCode riêng.** OpenCode giữ mọi
+  phiên trong một tập tin SQLite dùng chung, và các lần chạy cùng lúc trên đó chết
+  ngẫu nhiên với lỗi `database is locked`. Vì vậy aidev cho mỗi task một tập tin
+  riêng dưới `workspace_root/opencode-db/`, dùng lại cho các lần retry của task để
+  phiên của agent được tiếp tục; `aidev task delete` sẽ xóa nó. Muốn xem phiên của
+  một task trong OpenCode, hãy trỏ OpenCode tới tập tin đó bằng biến môi trường
+  `OPENCODE_DB`.
 
 Xem [docs/research.md](docs/research.md) để biết các số đo đằng sau tất cả những điều này.
 
