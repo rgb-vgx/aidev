@@ -119,3 +119,32 @@ func TestAMissingBaseRefStillSaysTheRevisionDoesNotExist(t *testing.T) {
 		t.Errorf("error = %q, want it to name the ref", err)
 	}
 }
+
+// A repository can have commits and still have an unborn HEAD — `git checkout
+// --orphan fresh` does exactly that. What must never happen is the "no commits"
+// message: it would be false. What does happen is that the task is created from
+// the project's default branch, which is where the commits are, and the record
+// says so.
+func TestARepositoryWithCommitsOnAnOrphanBranchIsNotCalledEmpty(t *testing.T) {
+	h := newHarness(t, nil)
+	gitRun(t, h.repoPath, "checkout", "-q", "--orphan", "fresh")
+	mainTip := strings.TrimSpace(gitRun(t, h.repoPath, "rev-parse", "main"))
+
+	created, err := h.orchestrator.CreateTask(h.ctx, worker.CreateTaskInput{
+		RepoPath:     h.repoPath,
+		Title:        "A change",
+		Verification: []task.VerificationStep{{Command: "true"}},
+	})
+	if err != nil {
+		if strings.Contains(err.Error(), "no commits") {
+			t.Fatalf("error = %q, want anything but a claim that this repository has no commits: it has them on main", err)
+		}
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if created.BaseRef != "" && created.BaseRef != "main" {
+		t.Errorf("base ref = %q, want the project's default branch", created.BaseRef)
+	}
+	if created.BaseCommitAtCreate != mainTip {
+		t.Errorf("base commit = %s, want main's tip %s", created.BaseCommitAtCreate, mainTip)
+	}
+}
