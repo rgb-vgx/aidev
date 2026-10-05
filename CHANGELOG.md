@@ -7,7 +7,12 @@ with:
 curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh
 ```
 
-## Unreleased
+## v0.3.0
+
+Upgrading from v0.2.0: install the new binary, then run `aidev migrate` (one
+migration, for the apply and undo events) and `claude plugin update aidev@aidev`,
+and restart Claude Code. Back up the database first if you like — the new
+"Backing up and restoring" section in docs/architecture.md shows how.
 
 - **Apply and undo.** `aidev task apply <task>` merges a succeeded task's branch
   into the branch you have checked out, with a merge commit, and records it;
