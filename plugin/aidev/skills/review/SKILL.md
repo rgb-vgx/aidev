@@ -59,6 +59,13 @@ Only with the user's go-ahead, unless they already asked you to merge reviewed w
    (never `-F -`). Say what changed, why, and what you checked beyond the tests.
 4. Do not push unless asked.
 
+For a user who is not a developer, or who just wants it in, `aidev task apply <task>`
+does steps 1–3 in one go — it merges the task's branch into the checked-out branch
+with a merge commit, refuses a checkout with uncommitted changes, aborts and names
+the files on a conflict — and records it in the task's history. Run the project's
+check right after it; if that fails, `aidev task undo <task>` reverts the merge with
+a new commit (safe after a push), and that is also the answer to "take it back".
+
 ## 5. Report
 
 - **Developer**: the merge commit, what the diff does, what you checked beyond the

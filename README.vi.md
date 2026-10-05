@@ -312,6 +312,8 @@ aidev task cancel <task> [--reason R] [--json]
 aidev task approve <task> [--deny] [--by WHO] [--reason R] [--json]
 aidev task recover [--dry-run] [--json]   # cancel tasks whose lease expired
 aidev task delete <task>                  # delete a finished task and its history
+aidev task apply <task>                   # merge a succeeded task into your branch
+aidev task undo <task>                    # revert what apply merged
 aidev prune --logs-older-than 30d [--dry-run]  # clear old captured output
 
 aidev project add   [path]                        # đăng ký một repository cho task qua MCP

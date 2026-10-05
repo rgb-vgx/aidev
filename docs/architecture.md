@@ -485,7 +485,7 @@ place a listed future feature plugs in without a rewrite.
 | Dependency DAG | `PENDING` exists as "not yet eligible"; the eligibility check is the hook. |
 | Observability / event-driven features | `events.seq` gives every event a position, and `AppendEvent` takes a per-task advisory lock so that within a task the sequence order is also the commit order: a consumer can resume from a cursor without missing an event. Across tasks the order is allocation order, not commit order. |
 | Approval workflows | `approvals` with one-pending-per-task, plus `WAITING_APPROVAL` in the state machine. |
-| Merge | every successful task leaves a reviewable commit on its branch (`aidev/<ref>`, or `aidev/<ref>-aN` after a retry), and `worktrees` records branch, base commit and head commit; nothing merges yet, by design. |
+| Merge | every successful task leaves a reviewable commit on its branch (`aidev/<ref>`, or `aidev/<ref>-aN` after a retry), and `worktrees` records branch, base commit and head commit. Nothing merges on its own, by design; `aidev task apply` merges when a person asks, and `task undo` reverts it. |
 
 Deliberately **not** present: a scheduler, a DAG executor, automatic merge, a web
 dashboard, authentication, Redis, Kafka, Kubernetes, or an LLM inside aidev.
@@ -777,13 +777,23 @@ worktrees of tasks the dump does not contain — remove those by hand with
 
 ### A successful task's output
 
-The work is a commit on `aidev/<ref>`. Nothing merges it, and nothing ever will
-without a person asking:
+The work is a commit on `aidev/<ref>` (`aidev/<ref>-aN` after a retry; the result
+names it). Nothing merges it, and nothing ever will without a person asking:
 
 ```bash
 git log --oneline aidev/TASK-000001
 git diff main..aidev/TASK-000001
+aidev task apply TASK-000001     # when you want it: a merge commit into your branch
+aidev task undo TASK-000001      # and back out again, with a revert commit
 ```
+
+`apply` is the one command of aidev's that writes to your checkout, and only the
+branch you have checked out: it refuses uncommitted changes to tracked files and a
+detached HEAD, aborts a conflicting merge and names the files, and records
+`task.applied`. `undo` reverts that merge with a new commit, so it is safe after a
+push; applying again after an undo reverts the revert, because merging a branch
+whose merge was reverted would quietly change nothing. Neither changes the task's
+status: `SUCCEEDED` is what verification found, not whether anyone took the work.
 
 ## Tracing
 
@@ -837,7 +847,7 @@ Stated plainly so that nobody has to infer it from absence.
 |---|---|
 | Concurrent workers | status changes are compare-and-set and `tasks_ready_claim_idx` matches a `FOR UPDATE SKIP LOCKED` claim, and the lease columns exist so a crashed worker's task can be recognised. What is missing is the claim itself becoming a lease: taking a task must write an owner the way `startAttempt` does, not only a status. |
 | Dependency graphs | `PENDING` exists as "not yet eligible"; the eligibility check in `becomeReady` is the hook. |
-| Merging | a successful task leaves a reviewable commit on its own branch. Nothing merges it, by design. |
+| Automatic merging | a successful task leaves a reviewable commit on its own branch; `aidev task apply` merges it only when a person runs it. Nothing merges on its own, by design. |
 | Automatic expiry of a stale `RUNNING` task | the lease makes staleness detectable and `aidev task recover` acts on it, but nothing cancels on a timer by itself — deliberate, see [Operating it](#when-a-run-is-interrupted). |
 | A second agent backend | `agent.Backend`, plus a server-mode OpenCode option evaluated and documented in docs/research.md §2.8. |
 | A web surface, auth, multi-tenancy | explicit non-goals. aidev is a local-first tool for one operator. |
