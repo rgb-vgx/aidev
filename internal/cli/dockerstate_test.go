@@ -38,10 +38,66 @@ func TestProbeDocker(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := probeDocker(context.Background(), tc.d, "aidev-postgres")
+			got := probeDocker(context.Background(), tc.d, nil, "aidev-postgres")
 			if got.Daemon != tc.daemon || got.Container != tc.state || got.Name != "aidev-postgres" {
 				t.Errorf("probeDocker = %+v, want daemon %q container %q", got, tc.daemon, tc.state)
 			}
 		})
 	}
+}
+
+// The systemd units are read before any docker command, because `docker info`
+// can itself start the daemon through docker.socket: read afterwards, the
+// service would always look active.
+func TestProbeDockerReadsSystemdBeforeTouchingDocker(t *testing.T) {
+	var order []string
+	units := func(_ context.Context, verb, unit string) string {
+		order = append(order, verb+" "+unit)
+		switch verb + " " + unit {
+		case "is-active docker.service":
+			return "inactive"
+		case "is-enabled docker.service":
+			return "disabled"
+		case "is-enabled docker.socket":
+			return "enabled"
+		}
+		return ""
+	}
+	d := recordingDocker{fakeDocker: fakeDocker{info: "29.8.2\n", inspect: "running\n"}, order: &order}
+
+	got := probeDocker(context.Background(), d, units, "aidev-postgres")
+	if got.ServiceActive != "inactive" || got.ServiceEnabled != "disabled" || got.SocketEnabled != "enabled" {
+		t.Errorf("units = %q/%q/%q, want inactive/disabled/enabled", got.ServiceActive, got.ServiceEnabled, got.SocketEnabled)
+	}
+	if len(order) == 0 || !strings.HasPrefix(order[0], "is-active") {
+		t.Fatalf("calls = %v, want systemd asked first", order)
+	}
+	for i, call := range order {
+		if strings.HasPrefix(call, "docker ") {
+			for _, later := range order[i:] {
+				if strings.HasPrefix(later, "is-") {
+					t.Fatalf("calls = %v: systemd was asked after a docker command", order)
+				}
+			}
+			break
+		}
+	}
+}
+
+// Without systemd the units stay empty and the probe works as before.
+func TestProbeDockerWithoutSystemd(t *testing.T) {
+	got := probeDocker(context.Background(), fakeDocker{info: "29.8.2\n", inspect: "exited\n"}, nil, "aidev-postgres")
+	if got.ServiceActive != "" || got.ServiceEnabled != "" || got.SocketEnabled != "" || got.Container != "exited" {
+		t.Errorf("probeDocker = %+v, want empty units and the container state", got)
+	}
+}
+
+type recordingDocker struct {
+	fakeDocker
+	order *[]string
+}
+
+func (r recordingDocker) Run(ctx context.Context, args ...string) (string, error) {
+	*r.order = append(*r.order, "docker "+strings.Join(args, " "))
+	return r.fakeDocker.Run(ctx, args...)
 }

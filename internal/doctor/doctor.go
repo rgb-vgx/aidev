@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"aidev/internal/config"
 )
@@ -75,6 +76,9 @@ type Deps struct {
 	// does not answer, to say which of several look-alike problems it is.
 	// Nil falls back to the generic advice.
 	Docker func(ctx context.Context) DockerState
+	// Sleep waits between pings while PostgreSQL starts in a Docker the
+	// database check has just woken. Nil means time.Sleep.
+	Sleep func(time.Duration)
 }
 
 // DockerState is what the database check learns from Docker.
@@ -86,7 +90,41 @@ type DockerState struct {
 	Container string
 	// Name is the container that was looked up.
 	Name string
+
+	// The Docker systemd units as systemctl reports them, or "" where there
+	// is no systemd to ask. They are read before any docker command runs,
+	// because a docker command can itself start the daemon through
+	// docker.socket: ServiceActive is how the check knows Docker was not
+	// running until it looked.
+	ServiceActive  string // docker.service: active, inactive, failed…
+	ServiceEnabled string // docker.service: enabled, disabled, masked…
+	SocketEnabled  string // docker.socket: enabled, disabled…
 }
+
+// startedByProbe reports whether Docker was not running until the check's own
+// docker command woke it through docker.socket.
+func (st DockerState) startedByProbe() bool {
+	return st.ServiceActive != "" && st.ServiceActive != "active" && st.Daemon == DaemonUp
+}
+
+// bootAdvice says how to make Docker start at boot when systemd reports that
+// it does not, and is empty otherwise — including where there is no systemd.
+func (st DockerState) bootAdvice() string {
+	if st.ServiceEnabled != "disabled" {
+		return ""
+	}
+	if st.SocketEnabled == "enabled" {
+		return "Docker does not start at boot on this machine: docker.service is disabled and only docker.socket is enabled, and aidev reaches PostgreSQL over TCP, which does not wake it. Enable it with `sudo systemctl enable docker.service`."
+	}
+	return "Docker does not start at boot on this machine (docker.service is disabled). Enable it with `sudo systemctl enable docker.service`."
+}
+
+// databaseWakeWait bounds how long the database check waits for PostgreSQL in
+// a Docker it has just woken, and databaseWakePoll how often it asks.
+const (
+	databaseWakeWait = 20 * time.Second
+	databaseWakePoll = time.Second
+)
 
 // Docker daemon states.
 const (
@@ -234,52 +272,109 @@ func agentResult(deps Deps, cfg config.Config) Result {
 // databaseResult appends the database check and returns the ping error, if any,
 // so Run can skip the migrations check when the database does not answer.
 func databaseResult(ctx context.Context, deps Deps, cfg config.Config, results *[]Result) error {
-	if err := deps.PingDatabase(ctx, cfg.DatabaseURL); err != nil {
-		summary := fmt.Sprintf("Cannot reach the database: %s.", redactDatabaseURL(err.Error(), cfg.DatabaseURL))
-		var fix string
-		if _, dockerErr := deps.LookPath("docker"); dockerErr == nil {
-			fix = dockerFix(ctx, deps)
-		} else {
-			fix = "Install Docker and run `aidev setup`, or check that database.url in conf.json points at a running PostgreSQL."
-		}
+	err := deps.PingDatabase(ctx, cfg.DatabaseURL)
+	if err == nil {
+		*results = append(*results, Result{
+			Name:    CheckDatabase,
+			Status:  StatusOK,
+			Summary: "Database is reachable.",
+		})
+		return nil
+	}
+
+	summary := fmt.Sprintf("Cannot reach the database: %s.", redactDatabaseURL(err.Error(), cfg.DatabaseURL))
+	if _, dockerErr := deps.LookPath("docker"); dockerErr != nil {
 		*results = append(*results, Result{
 			Name:    CheckDatabase,
 			Status:  StatusFail,
 			Summary: summary,
-			Fix:     fix,
+			Fix:     "Install Docker and run `aidev setup`, or check that database.url in conf.json points at a running PostgreSQL.",
 		})
 		return err
 	}
+
+	var st DockerState
+	known := deps.Docker != nil
+	if known {
+		st = deps.Docker(ctx)
+	}
+	// The probe woke Docker and the container is coming back under its
+	// restart policy: PostgreSQL is starting, not misconfigured, so give it
+	// a moment before calling anything broken.
+	if known && st.startedByProbe() && (st.Container == "running" || st.Container == "restarting") {
+		if waitForDatabase(ctx, deps, cfg) == nil {
+			fix := st.bootAdvice()
+			if fix == "" {
+				fix = "Make Docker start at boot, so aidev finds PostgreSQL after a restart without this check waking it."
+			}
+			*results = append(*results, Result{
+				Name:    CheckDatabase,
+				Status:  StatusWarn,
+				Summary: "The database did not answer at first: Docker was not running, and this check started it (a docker command wakes docker.socket). PostgreSQL answers now.",
+				Fix:     fix,
+			})
+			return nil
+		}
+	}
+
+	fix := "Run `aidev setup` to start PostgreSQL in Docker (safe to run again), or check that database.url in conf.json points at a running PostgreSQL."
+	if known {
+		fix = dockerFix(st)
+	}
 	*results = append(*results, Result{
 		Name:    CheckDatabase,
-		Status:  StatusOK,
-		Summary: "Database is reachable.",
+		Status:  StatusFail,
+		Summary: summary,
+		Fix:     fix,
 	})
-	return nil
+	return err
+}
+
+// waitForDatabase pings until the database answers or databaseWakeWait runs out.
+func waitForDatabase(ctx context.Context, deps Deps, cfg config.Config) error {
+	sleep := deps.Sleep
+	if sleep == nil {
+		sleep = time.Sleep
+	}
+	var err error
+	for waited := time.Duration(0); waited < databaseWakeWait; waited += databaseWakePoll {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		sleep(databaseWakePoll)
+		if err = deps.PingDatabase(ctx, cfg.DatabaseURL); err == nil {
+			return nil
+		}
+	}
+	return err
 }
 
 // dockerFix tells apart the problems that all look like "the database does
 // not answer" when Docker is installed: the daemon is not running (common
 // after a reboot where Docker does not start at boot), this user may not talk
-// to it, the setup container is stopped, or it runs and still does not
-// answer — which points at database.url rather than at Docker.
-func dockerFix(ctx context.Context, deps Deps) string {
-	const generic = "Run `aidev setup` to start PostgreSQL in Docker (safe to run again), or check that database.url in conf.json points at a running PostgreSQL."
-	if deps.Docker == nil {
-		return generic
+// to it, the check itself just started Docker and PostgreSQL is not up yet,
+// the setup container is stopped, or it runs and still does not answer —
+// which points at database.url rather than at Docker.
+func dockerFix(st DockerState) string {
+	withBoot := func(fix string) string {
+		if advice := st.bootAdvice(); advice != "" {
+			return fix + " " + advice
+		}
+		return fix
 	}
-	st := deps.Docker(ctx)
 	switch {
 	case st.Daemon == DaemonDown:
-		return "Docker is installed but its daemon is not running. Start it (`sudo systemctl start docker` on Linux, or open Docker Desktop), then run `aidev doctor` again."
+		return withBoot("Docker is installed but its daemon is not running. Start it (`sudo systemctl start docker` on Linux, or open Docker Desktop), then run `aidev doctor` again.")
 	case st.Daemon == DaemonDenied:
 		return "Docker is running but this user may not talk to it (permission denied). Add the user to the docker group (`sudo usermod -aG docker $USER`, then log in again), or use rootless Docker."
+	case st.startedByProbe() && st.Container != "":
+		return withBoot(fmt.Sprintf("Docker was not running; this check started it, and the %s container is %s but PostgreSQL has not answered yet. Give it a few seconds and run `aidev doctor` again.", st.Name, st.Container))
 	case st.Container == "running":
 		return fmt.Sprintf("The %s container is running but the database does not answer at database.url. Check the host, port, user and password in conf.json against the container (`docker port %s`).", st.Name, st.Name)
 	case st.Container != "":
 		return fmt.Sprintf("The %s container exists but is %s. Start it with `docker start %s` (or `aidev setup`, which does the same and waits until it is ready).", st.Name, st.Container, st.Name)
 	default:
-		return generic
+		return "Run `aidev setup` to start PostgreSQL in Docker (safe to run again), or check that database.url in conf.json points at a running PostgreSQL."
 	}
 }
 
