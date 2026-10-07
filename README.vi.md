@@ -306,8 +306,11 @@ aidev config [--json]                 # the resolved configuration, password red
 aidev migrate [--json]                # apply pending migrations
 
 aidev task create --title T --verify CMD [--repo .] [--description D]
-                  [--acceptance A] [--agent build] [--priority N]
-                  [--requires-approval] [--base-ref REF] [--timeout 30m]
+                  [--acceptance A] [--agent build] [--model M] [--priority N]
+                  [--hardness TRIVIAL|STANDARD|HARD] [--max-retries N]
+                  [--setup CMD] [--protect GLOB] [--expect-fail-on-base]
+                  [--verify-mode in_place|clean] [--requires-approval]
+                  [--base-ref REF] [--timeout 30m] [--json]
 aidev task list   [--status S,S] [--repo .] [--limit N] [--unapplied] [--json]
 aidev task get    <task> [--json]
 aidev task run    <task> [--json]
@@ -340,6 +343,17 @@ tiếp tục. Tương tự với mọi task thuộc dự án
 đang bật chính sách (`aidev project approval on`), bất kể task đó có tự yêu cầu hay không; chính sách thuộc
 về người vận hành và chỉ có ở CLI, nên một planner tạo task không thể tự quyết định công việc của chính
 mình có được phép chạy hay không.
+
+Ba cờ giúp các lệnh kiểm tra của task khó pass một cách tình cờ.
+`--expect-fail-on-base` chạy các lệnh kiểm tra trên commit gốc trước khi agent
+bắt đầu và làm task thất bại nếu chúng đã pass ở đó, vì lệnh kiểm tra pass ngay
+trên commit gốc không phân biệt được có làm hay không làm. `--protect` nêu các
+đường dẫn agent không được sửa, chẳng hạn các tập tin test mô tả công việc; lần
+thử nào sửa một trong số đó sẽ thất bại trước khi lệnh kiểm tra nào chạy.
+`--verify-mode clean` chạy các lệnh kiểm tra trong một bản checkout mới của kết
+quả, nên những tập tin agent để lại mà chưa track hoặc bị ignore không thể làm
+chúng pass. `--expect-fail-on-base` và `--verify-mode clean` từ chối các kho mã
+có ghim submodule.
 
 ## Chuyện gì xảy ra bên trong
 
@@ -503,9 +517,11 @@ từ gốc hiếm khi là kiểm tra đúng. Hãy nêu đúng cái bao phủ tha
 
 **Worktree là một bản checkout sạch: chỉ gồm các tập tin đã được theo dõi.** Các phụ thuộc nằm
 ngoài git không có ở đó. `go test` vẫn ổn, vì module cache được dùng chung,
-nhưng `npm test` hoặc `pytest` sẽ thất bại trong một worktree mới trừ khi verification
-của task cài đặt những gì nó cần trước, ví dụ
-`--verify 'npm --prefix web ci'` trước `--verify 'npm --prefix web test'`.
+nhưng `npm test` hoặc `pytest` sẽ thất bại trong một worktree mới trừ khi task
+cài trước những gì nó cần bằng `--setup` (MCP: `setup_steps`), ví dụ
+`--setup 'npm --prefix web ci'` cùng với `--verify 'npm --prefix web test'`. Các
+lệnh setup chạy trước verification, ở cùng chỗ verification chạy, theo cùng quy
+tắc: mỗi lệnh một dòng, không qua shell, và setup thất bại thì task thất bại.
 
 Đầy đủ lược đồ, lỗi và tác dụng phụ: **[docs/mcp-tools.md](docs/mcp-tools.md)**.
 

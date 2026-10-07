@@ -326,8 +326,11 @@ aidev config [--json]                 # the resolved configuration, password red
 aidev migrate [--json]                # apply pending migrations
 
 aidev task create --title T --verify CMD [--repo .] [--description D]
-                  [--acceptance A] [--agent build] [--priority N]
-                  [--requires-approval] [--base-ref REF] [--timeout 30m]
+                  [--acceptance A] [--agent build] [--model M] [--priority N]
+                  [--hardness TRIVIAL|STANDARD|HARD] [--max-retries N]
+                  [--setup CMD] [--protect GLOB] [--expect-fail-on-base]
+                  [--verify-mode in_place|clean] [--requires-approval]
+                  [--base-ref REF] [--timeout 30m] [--json]
 aidev task list   [--status S,S] [--repo .] [--limit N] [--unapplied] [--json]
 aidev task get    <task> [--json]
 aidev task run    <task> [--json]
@@ -359,6 +362,16 @@ and no attempt, until `aidev task approve` releases them. So does every task of 
 project whose policy is on (`aidev project approval on`), whatever the task
 itself said; the policy is the operator's and exists only at the CLI, so a
 planner creating tasks cannot decide whether its own work is gated.
+
+Three flags make a task's checks harder to pass by accident.
+`--expect-fail-on-base` runs the checks on the base commit before the agent
+starts and fails the task if they already pass there, because checks that pass
+on the base cannot tell the work from no work. `--protect` names paths the agent
+must not change, such as the test files that specify the work; an attempt that
+changes one fails before any check runs. `--verify-mode clean` runs the checks in
+a fresh checkout of the result, so files the agent left untracked or ignored
+cannot make them pass. `--expect-fail-on-base` and `--verify-mode clean` refuse
+repositories that pin submodules.
 
 ## What happens under the hood
 
@@ -521,9 +534,11 @@ change: `--verify 'go test ./backend/...'`, or a service's own test command.
 
 **The worktree is a clean checkout: only tracked files.** Dependencies that live
 outside git are not there. `go test` is fine, because the module cache is shared,
-but `npm test` or `pytest` will fail in a fresh worktree unless the task's
-verification installs what it needs first, for example
-`--verify 'npm --prefix web ci'` before `--verify 'npm --prefix web test'`.
+but `npm test` or `pytest` will fail in a fresh worktree unless the task
+installs what it needs first with `--setup` (MCP: `setup_steps`), for example
+`--setup 'npm --prefix web ci'` with `--verify 'npm --prefix web test'`. Setup
+commands run before verification, where it runs, under the same rules: one
+command each, no shell, and a failing setup fails the task.
 
 Full schemas, errors and side effects: **[docs/mcp-tools.md](docs/mcp-tools.md)**.
 
