@@ -84,6 +84,15 @@ Call `aidev_create_task` with:
   - any file that must not change (applied database migrations, for example);
   - "Do not end your turn with a statement of what you will do next: make the
     change, run the verification commands, and keep going until they pass."
+
+  The agent can read and write only inside its worktree: a tool call that
+  reaches any other path (an installed program under `/opt`, a sibling
+  repository, a gitignored file that exists only in your checkout) is refused,
+  and the refusal ends its session. Never ask it to explore such a path. Explore
+  it yourself first, write down what the task needs, and commit that on the spec
+  branch with the tests, so the agent reads it from its checkout. Running a
+  program installed elsewhere from a test (a verification command that starts an
+  installed app) is fine; reading its files is not.
 - `acceptance_criteria`: the plain sentences from step 1.
 - `verification`: the commands from step 3. Include the whole relevant suite, not
   only the new tests, so nothing else breaks unnoticed.
@@ -125,6 +134,11 @@ the result describes the last one:
 - **The environment is broken** (database down, invalid API key, agent missing):
   fix that first with the `doctor` skill (`aidev doctor`); retrying will fail the
   same way.
+- **A tool call was refused outside the worktree** (the error says the agent
+  "reached outside its worktree" and names the path): the task asked for
+  something that is not in the checkout. Gather what it needed from that path
+  yourself, commit it on the spec branch, and create a new task that points at
+  it. Do not ask the user to widen the agent's permissions.
 
 ## 8. When it succeeds
 

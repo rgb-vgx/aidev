@@ -966,3 +966,40 @@ func TestAgentListUsesAnInMemoryDatabase(t *testing.T) {
 		t.Errorf("agent list ran with OPENCODE_DB=%q, want :memory:", strings.TrimSpace(string(raw)))
 	}
 }
+
+// Verbatim from TASK-000091 against ~/work/AI/Axiom-Office on 2026-10-08. The
+// agent ran bash in its own worktree to read files under /opt/kingsoft, and
+// OpenCode turned down the external_directory permission. The tool event only
+// says where the command ran — the worktree — so the run was reported as "a
+// tool call for <the worktree> was refused", which points at the one place the
+// agent was allowed to be. What was refused is on stderr, and it wins.
+func TestARefusalNamesWhatOpenCodeTurnedDownNotWhereTheCommandRan(t *testing.T) {
+	req := openCodeRequest(t)
+	refusedBashInWorktree := fmt.Sprintf(
+		`{"type":"tool_use","timestamp":1791398231006,"sessionID":"ses_ee85bcf6fffeRHGIEr0PwIZVVU","part":{"type":"tool","tool":"bash",`+
+			`"state":{"status":"error","input":{"command":"python3 -c \"open('/opt/kingsoft/wps-office/office6/addons/jsapi/libjsapisubserver.so','rb')\"","workdir":%q},`+
+			`"error":"The user rejected permission to use this specific tool call."}}}`,
+		req.WorkingDir)
+	stderr := `printf '\033[93m\033[1m! \033[0mpermission requested: external_directory (/opt/kingsoft/wps-office/office6/addons/jsapi/*); auto-rejecting\n' >&2`
+
+	command, _ := fakeOpenCode(t, emit(fixtureStepStart, refusedBashInWorktree, fixtureStepFinishTools)+stderr+"\nexit 0")
+	res, err := NewOpenCode(command, "").Run(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Err == nil || !errors.Is(res.Err, ErrToolRefused) {
+		t.Fatalf("Err = %v, want a refusal", res.Err)
+	}
+	message := res.Err.Error()
+	for _, want := range []string{"outside its worktree", "/opt/kingsoft/wps-office/office6/addons/jsapi/*", "external_directory", "repository"} {
+		if !strings.Contains(message, want) {
+			t.Errorf("error = %q, want it to contain %q", message, want)
+		}
+	}
+	if strings.Contains(message, "for "+req.WorkingDir) {
+		t.Errorf("error = %q names the worktree as the refused path", message)
+	}
+	if strings.Contains(message, "python3") || strings.Contains(message, "libjsapisubserver") {
+		t.Errorf("error = %q, want the command line left out of it", message)
+	}
+}

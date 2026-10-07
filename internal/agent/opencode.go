@@ -306,7 +306,7 @@ func classify(proc procexec.Result, events transcript, req Request) (task.Worker
 		// change, the other is a task asking for something outside the worktree.
 		if events.Refusals > 0 {
 			return task.WorkerFailed, task.FailureAgentError,
-				refusalError(events, req.WorkingDir)
+				refusalError(events, req.WorkingDir, proc.Stderr)
 		}
 		return task.WorkerFailed, task.FailureAgentError, fmt.Errorf(
 			"opencode ended with finish reason %q: %s, so it never stopped of its own accord",
@@ -323,25 +323,48 @@ func classify(proc procexec.Result, events transcript, req Request) (task.Worker
 // worktree is aidev's containment doing its job, and the remedy is the task: it
 // asked for something that is not in the checkout. A refusal inside the worktree
 // is a permission configuration, and the remedy is elsewhere entirely.
-func refusalError(events transcript, workingDir string) error {
-	return toolRefused{refusalMessage(events, workingDir)}
+//
+// Where it was reaching comes from OpenCode's own "permission requested" line on
+// stderr when there is one: the tool event only says where a bash command ran,
+// which is usually the worktree itself, while the line names what was turned
+// down (TASK-000091 read /opt/kingsoft from a command run in its worktree).
+func refusalError(events transcript, workingDir, stderr string) error {
+	return toolRefused{refusalMessage(events, workingDir, stderr)}
 }
 
+// permissionRequest is the line OpenCode prints when a headless run turns a
+// permission down: `permission requested: external_directory (/opt/x/*);
+// auto-rejecting`, behind colour codes that ansiCode strips first.
+var (
+	permissionRequest = regexp.MustCompile(`permission requested: ([a-z_]+) \(([^)]*)\); auto-rejecting`)
+	ansiCode          = regexp.MustCompile("\x1b\\[[0-9;]*m")
+)
+
 // refusalMessage words the refusal; refusalError marks it as one.
-func refusalMessage(events transcript, workingDir string) error {
+func refusalMessage(events transcript, workingDir, stderr string) error {
 	also := ""
 	if events.Refusals > 1 {
 		also = fmt.Sprintf(" (%d refused in all)", events.Refusals)
 	}
 
-	switch path := events.RefusedPath; {
+	path, permission := events.RefusedPath, ""
+	if m := permissionRequest.FindStringSubmatch(ansiCode.ReplaceAllString(stderr, "")); m != nil {
+		permission, path = m[1], m[2]
+	}
+	if permission != "" {
+		permission = " (" + permission + ")"
+	}
+
+	switch {
 	case path == "":
 		return fmt.Errorf("opencode stopped because a tool call was refused%s; a refusal ends "+
 			"the session, so nothing after it ran", also)
 	case outside(workingDir, path):
-		return fmt.Errorf("opencode stopped because the agent reached outside its worktree, for %s%s; "+
+		return fmt.Errorf("opencode stopped because the agent reached outside its worktree, for %s%s%s; "+
 			"a refusal ends the session, so nothing after it ran. The task is asking for something "+
-			"that is not in the checkout", path, also)
+			"that is not in the checkout: put what the agent needs into the repository (the planner "+
+			"can gather it and commit it with the specification) rather than widening what the agent "+
+			"may reach", path, permission, also)
 	default:
 		return fmt.Errorf("opencode stopped because a tool call for %s was refused%s; a refusal ends "+
 			"the session, so nothing after it ran", path, also)

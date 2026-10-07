@@ -7,6 +7,19 @@ with:
 curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh
 ```
 
+## Unreleased
+
+- **A refused tool call names what was refused.** When an agent ran a command in
+  its worktree that read a path outside it, the result said "a tool call for
+  <the worktree> was refused", naming the one place the agent was allowed to be.
+  aidev now takes the path from OpenCode's own `permission requested` line, says
+  the agent reached outside its worktree and which permission was turned down,
+  and that the remedy is to put what it needs into the repository.
+
+- Plugin 0.5.3: the delegate skill tells the planner never to send the agent to a
+  path outside the repository, but to gather what it needs and commit it with
+  the specification.
+
 ## v0.8.0
 
 Upgrading from v0.7.0: install the new binary, run `aidev migrate` (migration
