@@ -64,6 +64,10 @@ type Fake struct {
 	// means "accept any non-empty name", which is what most tests want.
 	KnownAgents []string
 
+	// AgentVersion and VersionErr are what Version reports.
+	AgentVersion string
+	VersionErr   error
+
 	mu    sync.Mutex
 	calls []Request
 }
@@ -193,6 +197,13 @@ func (f *Fake) Run(ctx context.Context, req Request) (Result, error) {
 		}
 	}
 	return finish(), nil
+}
+
+// Version implements Versioner.
+func (f *Fake) Version(context.Context) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.AgentVersion, f.VersionErr
 }
 
 // ValidateAgentName implements Validator.

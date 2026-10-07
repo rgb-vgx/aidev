@@ -16,15 +16,17 @@ import (
 )
 
 // persistWorkerRun records the agent invocation together with the diff aidev
-// collected. A failure to collect the diff does not fail the task: the diff is
-// evidence about the run, and losing it is not a reason to discard the run.
-func (r *run) persistWorkerRun(ctx context.Context, result agent.Result) *task.WorkerRun {
+// collected and the agent version the backend reported ("" when unknown). A
+// failure to collect the diff does not fail the task: the diff is evidence
+// about the run, and losing it is not a reason to discard the run.
+func (r *run) persistWorkerRun(ctx context.Context, result agent.Result, agentVersion string) *task.WorkerRun {
 	record := task.WorkerRun{
 		ID:              uuid.Must(uuid.NewV7()),
 		AttemptID:       r.attempt.ID,
 		Backend:         result.Backend,
 		Model:           result.Model,
 		Agent:           r.task.Agent,
+		AgentVersion:    agentVersion,
 		Status:          result.Status,
 		FailureKind:     result.FailureKind,
 		Command:         result.Command,

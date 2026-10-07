@@ -465,7 +465,8 @@ func scanWorktree(row scanner) (task.Worktree, error) {
 
 const workerRunColumns = `id, attempt_id, backend, model, agent, status, failure_kind, command, working_dir,
 	exit_code, stdout, stdout_truncated, stderr, stderr_truncated, session_id, summary,
-	finish_reason, tokens, cost, diff, diff_truncated, changed_files, started_at, finished_at, logs_pruned`
+	finish_reason, tokens, cost, diff, diff_truncated, changed_files, started_at, finished_at, logs_pruned,
+	agent_version`
 
 // CreateWorkerRun records what an agent backend did.
 func (s *Store) CreateWorkerRun(ctx context.Context, r task.WorkerRun) (task.WorkerRun, error) {
@@ -478,13 +479,13 @@ func (s *Store) CreateWorkerRun(ctx context.Context, r task.WorkerRun) (task.Wor
 			id, attempt_id, backend, model, agent, status, failure_kind, command, working_dir,
 			exit_code, stdout, stdout_truncated, stderr, stderr_truncated,
 			session_id, summary, finish_reason, tokens, cost, diff, diff_truncated,
-			changed_files, started_at, finished_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
+			changed_files, started_at, finished_at, agent_version
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
 		RETURNING `+workerRunColumns,
 		r.ID, r.AttemptID, r.Backend, r.Model, r.Agent, string(r.Status), string(r.FailureKind), r.Command,
 		r.WorkingDir, r.ExitCode, r.Stdout, r.StdoutTruncated, r.Stderr, r.StderrTruncated,
 		r.SessionID, r.Summary, r.FinishReason, tokens, r.Cost, r.Diff, r.DiffTruncated,
-		r.ChangedFiles, r.StartedAt, r.FinishedAt)
+		r.ChangedFiles, r.StartedAt, r.FinishedAt, r.AgentVersion)
 
 	created, err := scanWorkerRun(row)
 	if err != nil {
@@ -527,7 +528,8 @@ func scanWorkerRun(row scanner) (task.WorkerRun, error) {
 	err := row.Scan(&r.ID, &r.AttemptID, &r.Backend, &r.Model, &r.Agent, &status, &kind, &r.Command, &r.WorkingDir,
 		&r.ExitCode, &r.Stdout, &r.StdoutTruncated, &r.Stderr, &r.StderrTruncated,
 		&r.SessionID, &r.Summary, &r.FinishReason, &tokens, &r.Cost, &r.Diff,
-		&r.DiffTruncated, &r.ChangedFiles, &r.StartedAt, &r.FinishedAt, &r.LogsPruned)
+		&r.DiffTruncated, &r.ChangedFiles, &r.StartedAt, &r.FinishedAt, &r.LogsPruned,
+		&r.AgentVersion)
 	if err != nil {
 		return task.WorkerRun{}, classify(err)
 	}

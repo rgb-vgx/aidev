@@ -233,6 +233,10 @@ type WorkerRun struct {
 	Model string
 	Agent string
 
+	// AgentVersion is what the agent's `--version` printed for this run, or
+	// "" when it could not be read.
+	AgentVersion string
+
 	Status      WorkerRunStatus
 	FailureKind FailureKind
 

@@ -116,7 +116,10 @@ func writeRunOutcome(env *Env, outcome worker.Outcome, runs []task.VerificationR
 
 	if outcome.WorkerRun != nil {
 		r := outcome.WorkerRun
-		fmt.Fprintf(w, "\nagent (%s)\n", r.Backend)
+		fmt.Fprintf(w, "\nagent (%s)\n", agentLabel(*r))
+		if r.Model != "" {
+			fmt.Fprintf(w, "  model         %s\n", r.Model)
+		}
 		fmt.Fprintf(w, "  outcome       %s", r.Status)
 		if r.FailureKind != task.FailureNone {
 			fmt.Fprintf(w, " (%s)", r.FailureKind)
@@ -203,7 +206,10 @@ func writeResult(env *Env, outcome worker.Outcome, runs []task.VerificationRun, 
 
 	if outcome.WorkerRun != nil {
 		r := outcome.WorkerRun
-		fmt.Fprintf(w, "\nagent (%s)  %s  %d file(s) changed\n", r.Backend, r.Status, r.ChangedFiles)
+		fmt.Fprintf(w, "\nagent (%s)  %s  %d file(s) changed\n", agentLabel(*r), r.Status, r.ChangedFiles)
+		if r.Model != "" {
+			fmt.Fprintf(w, "  model  %s\n", r.Model)
+		}
 		if len(outcome.TestsModified) > 0 {
 			fmt.Fprintf(w, "  tests  %s\n", strings.Join(outcome.TestsModified, ", "))
 		}
@@ -334,4 +340,13 @@ func writeBaseMoved(w io.Writer, outcome worker.Outcome) {
 	}
 	fmt.Fprintf(w, "  base moved  %s when created, %s when run\n",
 		shortCommit(at), shortCommit(outcome.Worktree.BaseCommit))
+}
+
+// agentLabel names the backend that ran and, when it was read, the version
+// the agent reported: "opencode 1.18.35", or just "opencode".
+func agentLabel(r task.WorkerRun) string {
+	if r.AgentVersion == "" {
+		return r.Backend
+	}
+	return r.Backend + " " + r.AgentVersion
 }

@@ -260,7 +260,7 @@ Reads the outcome of a task's most recent attempt.
 | `result.task` | the task and its status |
 | `result.attempt` | the latest attempt: status, `failure_kind`, timing. Absent if it has never run |
 | `result.earlier_attempts` | after a retry, the attempts before the latest one, oldest first, each with its status, `failure_kind` and error; absent when there was only one |
-| `result.worker` | what the agent did — including `summary`, which is its **claim**, and `changed_files`, which aidev counted from git |
+| `result.worker` | what the agent did — including `summary`, which is its **claim**, and `changed_files`, which aidev counted from git; `model` and `agent_version` say what ran, and are absent when unknown |
 | `result.verification` | one entry per step: command, status, exit code. **This is the evidence** |
 | `result.worktree` | path, branch, and whether it was `REMOVED` or `RETAINED` |
 | `result.approval` | the most recent approval record |

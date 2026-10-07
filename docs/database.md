@@ -185,6 +185,12 @@ point, would be invisible (docs/research.md §4.4).
 Environment variables are deliberately **not** stored. The argv is task-defined
 and safe to record; an environment can carry credentials.
 
+`model` and `agent` (migration `0003_task_model`) name what actually ran, resolved
+at run time. `agent_version` (migration `0019_agent_version`) is what the agent's
+own `--version` printed for the run, read alongside the agent rather than before
+it, so it adds no time to a run. It is empty when the version could not be read,
+and for runs recorded before the migration; a failed lookup never fails the run.
+
 `logs_pruned` (migration `0016_logs_pruned`, also on `verification_runs`) is set
 when `aidev prune --logs-older-than` cleared the run's `stdout`, `stderr` and `diff`
 for retention. Only runs of finished tasks are pruned, and only these columns; the
