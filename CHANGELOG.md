@@ -7,6 +7,24 @@ with:
 curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh
 ```
 
+## Unreleased
+
+- **Every run records which agent version and model ran it.** `task result`,
+  its JSON and the MCP result now show the model and what the agent's
+  `--version` printed (`agent (opencode 1.18.35)`), so a task that passes one day
+  and fails the next after an agent upgrade can be told apart from a flaky one.
+  The version is read alongside the agent, so it costs a run no time, and a
+  failed lookup never fails the run. Migration `0019_agent_version`.
+
+- **`aidev doctor` names the cause when Docker did not start at boot.** Its own
+  `docker` command used to wake Docker through `docker.socket` and then blame
+  `database.url` while PostgreSQL was still starting. It now reads systemd
+  first, waits for PostgreSQL when the check itself started Docker, says so,
+  and says how to start Docker at boot. Plugin 0.5.2.
+
+- The README documents every `task create` flag, including `--setup`,
+  `--protect`, `--expect-fail-on-base` and `--verify-mode`.
+
 ## v0.7.0
 
 Upgrading from v0.6.0: install the new binary and restart Claude Code. There is no

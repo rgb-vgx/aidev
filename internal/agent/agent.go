@@ -162,6 +162,16 @@ type Backend interface {
 	Run(ctx context.Context, req Request) (Result, error)
 }
 
+// Versioner is implemented by backends that can say which version of their
+// agent is installed. aidev records it with every worker run: an agent
+// upgraded between two runs of one task is otherwise invisible, and it is the
+// first thing to rule out when the same task passes one day and fails the next.
+// A failure to answer is never a reason to fail the run; the version is then
+// recorded as unknown.
+type Versioner interface {
+	Version(ctx context.Context) (string, error)
+}
+
 // Validator is implemented by backends that can check a configuration value
 // before a task is created, rather than letting it fail at run time.
 //

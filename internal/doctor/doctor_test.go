@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	"aidev/internal/config"
 )
@@ -408,5 +409,140 @@ func TestDatabaseAdviceFollowsDockerState(t *testing.T) {
 				t.Errorf("database = %s, fix %q; want fail with a fix mentioning %q", got.Status, got.Fix, tc.want)
 			}
 		})
+	}
+}
+
+// After a reboot on a machine where docker.service is disabled and only
+// docker.socket is enabled, Docker is not running and PostgreSQL with it, and
+// aidev — which reaches PostgreSQL over TCP — never wakes it. The doctor's own
+// `docker info` does wake it, through the socket, and the container comes back
+// under its restart policy a moment later. Reporting "the container is running
+// but the database does not answer at database.url" then sends the person to
+// check a password that is fine, and the next run is green with the cause never
+// named. The doctor says what happened instead.
+func wokenByProbe() DockerState {
+	return DockerState{
+		Daemon:         DaemonUp,
+		Container:      "running",
+		Name:           "aidev-postgres",
+		ServiceActive:  "inactive",
+		ServiceEnabled: "disabled",
+		SocketEnabled:  "enabled",
+	}
+}
+
+func TestDoctorSaysWhenItStartedDockerItself(t *testing.T) {
+	deps := healthy()
+	pings := 0
+	deps.PingDatabase = func(context.Context, string) error {
+		pings++
+		if pings < 3 {
+			return errors.New("connection refused")
+		}
+		return nil
+	}
+	deps.Docker = func(context.Context) DockerState { return wokenByProbe() }
+	deps.Sleep = func(time.Duration) {}
+
+	results := byName(t, Run(context.Background(), deps))
+	got := results[CheckDatabase]
+	if got.Status != StatusWarn {
+		t.Fatalf("database = %s (%s), want warn: it answers now, after the doctor started Docker", got.Status, got.Summary)
+	}
+	for _, want := range []string{"Docker was not running", "answers now"} {
+		if !strings.Contains(got.Summary, want) {
+			t.Errorf("summary %q lacks %q", got.Summary, want)
+		}
+	}
+	for _, want := range []string{"docker.service is disabled", "docker.socket", "sudo systemctl enable docker.service"} {
+		if !strings.Contains(got.Fix, want) {
+			t.Errorf("fix %q lacks %q", got.Fix, want)
+		}
+	}
+	// The database answers, so the checks that need it run.
+	if m := results[CheckMigrations]; m.Status != StatusOK {
+		t.Errorf("migrations = %s, want ok: the database answered in the end", m.Status)
+	}
+}
+
+// Woken, but PostgreSQL is still starting when the wait runs out: a failure,
+// with the cause named and no word about database.url.
+func TestDoctorStartedDockerButPostgresIsNotReadyYet(t *testing.T) {
+	deps := healthy()
+	deps.PingDatabase = func(context.Context, string) error { return errors.New("connection refused") }
+	deps.Docker = func(context.Context) DockerState { return wokenByProbe() }
+	deps.Sleep = func(time.Duration) {}
+
+	got := byName(t, Run(context.Background(), deps))[CheckDatabase]
+	if got.Status != StatusFail {
+		t.Fatalf("database = %s, want fail", got.Status)
+	}
+	for _, want := range []string{"Docker was not running", "aidev doctor", "sudo systemctl enable docker.service"} {
+		if !strings.Contains(got.Fix, want) {
+			t.Errorf("fix %q lacks %q", got.Fix, want)
+		}
+	}
+	if strings.Contains(got.Fix, "database.url") {
+		t.Errorf("fix %q points at database.url, which is not the problem", got.Fix)
+	}
+}
+
+// The boot advice follows what systemd reports, and is absent when Docker
+// already starts at boot or when there is no systemd to ask.
+func TestDockerBootAdvice(t *testing.T) {
+	cases := []struct {
+		name    string
+		state   DockerState
+		want    string
+		notWant string
+	}{
+		{"daemon down, service disabled, socket on",
+			DockerState{Daemon: DaemonDown, ServiceActive: "inactive", ServiceEnabled: "disabled", SocketEnabled: "enabled"},
+			"sudo systemctl enable docker.service", ""},
+		{"daemon down, both disabled",
+			DockerState{Daemon: DaemonDown, ServiceActive: "inactive", ServiceEnabled: "disabled", SocketEnabled: "disabled"},
+			"sudo systemctl enable docker.service", "docker.socket is enabled"},
+		{"daemon down, service enabled",
+			DockerState{Daemon: DaemonDown, ServiceActive: "failed", ServiceEnabled: "enabled", SocketEnabled: "enabled"},
+			"daemon is not running", "systemctl enable"},
+		{"daemon down, no systemd",
+			DockerState{Daemon: DaemonDown},
+			"daemon is not running", "systemctl enable"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			deps := healthy()
+			deps.PingDatabase = func(context.Context, string) error { return errors.New("connection refused") }
+			deps.Docker = func(context.Context) DockerState { return tc.state }
+			deps.Sleep = func(time.Duration) {}
+			got := byName(t, Run(context.Background(), deps))[CheckDatabase]
+			if !strings.Contains(got.Fix, tc.want) {
+				t.Errorf("fix %q lacks %q", got.Fix, tc.want)
+			}
+			if tc.notWant != "" && strings.Contains(got.Fix, tc.notWant) {
+				t.Errorf("fix %q should not say %q", got.Fix, tc.notWant)
+			}
+		})
+	}
+}
+
+// A container that was already running before the doctor touched Docker is
+// not a wake-up: the original advice about database.url stands, and the doctor
+// does not wait.
+func TestRunningContainerThatWasNotWokenKeepsTheDatabaseURLAdvice(t *testing.T) {
+	deps := healthy()
+	deps.PingDatabase = func(context.Context, string) error { return errors.New("password authentication failed") }
+	state := wokenByProbe()
+	state.ServiceActive = "active"
+	deps.Docker = func(context.Context) DockerState { return state }
+	slept := false
+	deps.Sleep = func(time.Duration) { slept = true }
+
+	got := byName(t, Run(context.Background(), deps))[CheckDatabase]
+	if got.Status != StatusFail || !strings.Contains(got.Fix, "database.url") {
+		t.Errorf("database = %s, fix %q; want fail pointing at database.url", got.Status, got.Fix)
+	}
+	if slept {
+		t.Error("the doctor waited for a database whose Docker was already running")
 	}
 }

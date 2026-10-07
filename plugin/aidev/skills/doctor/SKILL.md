@@ -33,7 +33,10 @@ Work through the failures in order and run `aidev doctor` again after each fix.
   (safe to run again; it starts PostgreSQL in Docker and migrates). If Docker is
   missing, do not install it yourself: tell the user what to install. If
   `database.url` points somewhere other than the local container, ask before
-  changing it.
+  changing it. A database **warning** that says the check started Docker itself
+  means the database works now: Docker was not running until `aidev doctor`
+  woke it. Pass on the `fix`, which says how to make Docker start at boot
+  (`sudo systemctl enable docker.service`); it needs sudo, so the user runs it.
 - **migrations**: run `aidev migrate`. It only adds tables and columns aidev needs.
 - **workspace**: if the directory cannot be created, show the user the path and
   the error; do not change permissions on their machine without asking.

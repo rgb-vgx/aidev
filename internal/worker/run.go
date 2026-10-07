@@ -564,11 +564,15 @@ func (r *run) runAgent(ctx context.Context) error {
 		"prompt_length": len(prompt),
 	})
 
+	// The version lookup runs alongside the agent: `opencode --version` takes
+	// about 0.4s, twice aidev's own share of a run, and the agent takes
+	// minutes, so done in parallel it costs nothing.
+	agentVersion := r.lookupAgentVersion(ctx)
 	result, runErr := r.o.Backend.Run(ctx, req)
 
 	// Persist what the agent did even when the run failed: the audit record is
 	// most valuable precisely then.
-	record := r.persistWorkerRun(ctx, result)
+	record := r.persistWorkerRun(ctx, result, agentVersion())
 	r.workerRun = record
 
 	r.setAgentUsageSpan(span, record)
@@ -1396,4 +1400,26 @@ func branchName(t task.Task, attempt task.TaskAttempt) string {
 		return "aidev/" + t.Identifier()
 	}
 	return fmt.Sprintf("aidev/%s-a%d", t.Identifier(), attempt.AttemptNumber)
+}
+
+// lookupAgentVersion starts asking the backend for its agent's version and
+// returns a function that waits for the answer: "" when the backend cannot
+// say, or the lookup failed. The lookup never fails the run.
+func (r *run) lookupAgentVersion(ctx context.Context) func() string {
+	v, ok := r.o.Backend.(agent.Versioner)
+	if !ok {
+		return func() string { return "" }
+	}
+	done := make(chan string, 1)
+	go func() {
+		// Detached from the run's cancellation, so a cancelled run still
+		// records which agent it was; the lookup bounds itself.
+		version, err := v.Version(context.WithoutCancel(ctx))
+		if err != nil {
+			r.log.WarnContext(ctx, "could not read the agent version", "error", err.Error())
+			version = ""
+		}
+		done <- version
+	}()
+	return func() string { return <-done }
 }

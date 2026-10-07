@@ -123,6 +123,8 @@ func NewAttempt(a task.TaskAttempt) *Attempt {
 // observed; Summary in particular is a claim, not evidence.
 type Worker struct {
 	Backend      string `json:"backend" jsonschema:"agent backend that ran, for example opencode"`
+	AgentVersion string `json:"agent_version,omitempty" jsonschema:"what the agent's --version printed for this run; absent when it could not be read"`
+	Model        string `json:"model,omitempty" jsonschema:"the model the agent ran on; absent when the backend chose without saying"`
 	Status       string `json:"status" jsonschema:"SUCCEEDED, FAILED, TIMED_OUT or CANCELLED - describes the agent's run, not whether the work is correct"`
 	FailureKind  string `json:"failure_kind,omitempty" jsonschema:"classification when the agent did not succeed"`
 	ExitCode     *int   `json:"exit_code,omitempty" jsonschema:"process exit status, absent if the agent never started"`
@@ -141,6 +143,8 @@ type Worker struct {
 func NewWorker(r task.WorkerRun) *Worker {
 	return &Worker{
 		Backend:         r.Backend,
+		AgentVersion:    r.AgentVersion,
+		Model:           r.Model,
 		Status:          r.Status.String(),
 		FailureKind:     r.FailureKind.String(),
 		ExitCode:        r.ExitCode,
