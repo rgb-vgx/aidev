@@ -7,7 +7,11 @@ with:
 curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh
 ```
 
-## Unreleased
+## v0.8.0
+
+Upgrading from v0.7.0: install the new binary, run `aidev migrate` (migration
+`0019_agent_version` adds one column with a default), run `claude plugin update
+aidev@aidev` and restart Claude Code.
 
 - **Every run records which agent version and model ran it.** `task result`,
   its JSON and the MCP result now show the model and what the agent's
