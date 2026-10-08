@@ -349,7 +349,9 @@ Ba cờ giúp các lệnh kiểm tra của task khó pass một cách tình cờ
 bắt đầu và làm task thất bại nếu chúng đã pass ở đó, vì lệnh kiểm tra pass ngay
 trên commit gốc không phân biệt được có làm hay không làm. `--protect` nêu các
 đường dẫn agent không được sửa, chẳng hạn các tập tin test mô tả công việc; lần
-thử nào sửa một trong số đó sẽ thất bại trước khi lệnh kiểm tra nào chạy.
+thử nào sửa một trong số đó sẽ thất bại trước khi lệnh kiểm tra nào chạy. Tập
+tin git ignore, như `__pycache__` hay báo cáo do lệnh kiểm tra ghi ra, không bị
+tính.
 `--verify-mode clean` chạy các lệnh kiểm tra trong một bản checkout mới của kết
 quả, nên những tập tin agent để lại mà chưa track hoặc bị ignore không thể làm
 chúng pass. `--expect-fail-on-base` và `--verify-mode clean` từ chối các kho mã

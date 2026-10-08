@@ -9,6 +9,13 @@ curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh
 
 ## Unreleased
 
+- **Protected paths no longer count files git ignores.** TASK-000093 was refused
+  for `__pycache__/` and `tests/wps/out/` "changing" under `tests/**`: both
+  ignored, both written by the checks the agent ran, none of it work the agent
+  did. A protected path, and the "tests changed" report, now judge only what a
+  commit would carry. A verification runner shadowed by an ignored file (a
+  `.venv` the agent made) is still intercepted.
+
 - **A refused tool call names what was refused.** When an agent ran a command in
   its worktree that read a path outside it, the result said "a tool call for
   <the worktree> was refused", naming the one place the agent was allowed to be.

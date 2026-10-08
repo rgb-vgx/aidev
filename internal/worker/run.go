@@ -843,8 +843,12 @@ func (r *run) verify(ctx context.Context) (Outcome, error) {
 	}
 
 	// A runner the agent changed is not independent evidence, so verification
-	// does not run at all when one is found.
-	changed, err := r.worktree.ChangedPaths(ctx)
+	// does not run at all when one is found. Interception looks at every
+	// change, ignored files included, because a shadowing runner hides there;
+	// the test report and the protected-path decision look only at what a
+	// commit would carry, because that is the work — not the __pycache__ and
+	// reports the checks themselves leave behind (TASK-000093).
+	changes, err := r.worktree.ChangedPaths(ctx)
 	if err != nil {
 		span.SetAttributes(attribute.Bool("aidev.verification.passed", false))
 		return r.fail(ctx, task.FailureInternal,
@@ -856,7 +860,7 @@ func (r *run) verify(ctx context.Context) (Outcome, error) {
 	// that. The classifier only reports — it never decides the outcome
 	// (research §7b tier 1); refusing a run for touching a test path is the
 	// separate protected_paths decision (tier 2).
-	if paths := verification.TestPaths(changed); len(paths) > 0 {
+	if paths := verification.TestPaths(changes.Committable); len(paths) > 0 {
 		r.testsModified = paths
 		r.emit(ctx, event.TypeVerificationTestsModified, map[string]any{"paths": paths})
 	}
@@ -870,8 +874,8 @@ func (r *run) verify(ctx context.Context) (Outcome, error) {
 	allSteps = append(allSteps, r.task.SetupSteps...)
 	allSteps = append(allSteps, r.task.Verification...)
 
-	intercepted := verification.Interceptions(allSteps, changed)
-	violated, err := verification.Violations(r.task.ProtectedPaths, changed)
+	intercepted := verification.Interceptions(allSteps, changes.All())
+	violated, err := verification.Violations(r.task.ProtectedPaths, changes.Committable)
 	if err != nil {
 		// A stored pattern that cannot be evaluated means the guard the task's
 		// creator asked for is gone: fail closed rather than run checks that

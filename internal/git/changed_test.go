@@ -89,9 +89,23 @@ func TestChangedPathsSeesEveryKindOfChangeSinceTheBaseCommit(t *testing.T) {
 	gitIn(t, wt.Path, "add", "sub/committed.txt")
 	gitIn(t, wt.Path, "commit", "-qm", "agent committed")
 
-	changed, err := wt.ChangedPaths(ctx)
+	changes, err := wt.ChangedPaths(ctx)
 	if err != nil {
 		t.Fatalf("ChangedPaths: %v", err)
+	}
+	changed := changes.All()
+
+	// What a commit would carry, and what git ignores, are reported apart:
+	// the ignored half matters to runner interception, never to the work.
+	for _, want := range []string{"main.go", "pytest.py", "go.mod", "sub/committed.txt"} {
+		if !covers(changes.Committable, want) || covers(changes.Ignored, want) {
+			t.Errorf("%s: committable %q, ignored %q; want it committable only", want, changes.Committable, changes.Ignored)
+		}
+	}
+	for _, want := range []string{"pytest.pyc", "build/out/runner"} {
+		if !covers(changes.Ignored, want) || covers(changes.Committable, want) {
+			t.Errorf("%s: committable %q, ignored %q; want it ignored only", want, changes.Committable, changes.Ignored)
+		}
 	}
 
 	for _, want := range []string{"main.go", "pytest.py", "go.mod", "pytest.pyc", "build/out/runner", "sub/committed.txt"} {
@@ -148,8 +162,8 @@ func TestChangedPathsOnAnUntouchedWorktreeIsEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ChangedPaths: %v", err)
 	}
-	if len(changed) != 0 {
-		t.Errorf("ChangedPaths on a fresh worktree = %q, want nothing", changed)
+	if all := changed.All(); len(all) != 0 {
+		t.Errorf("ChangedPaths on a fresh worktree = %q, want nothing", all)
 	}
 }
 
@@ -265,7 +279,7 @@ func TestChangedPathsFailsClosedWhenGitOutputIsTruncated(t *testing.T) {
 			changed, err := wt.ChangedPaths(ctx)
 			if err == nil {
 				t.Fatalf("ChangedPaths returned %d paths built from truncated output of %s; "+
-					"a short list makes interception miss a changed runner", len(changed), tc.name)
+					"a short list makes interception miss a changed runner", len(changed.All()), tc.name)
 			}
 			if !strings.Contains(strings.ToLower(err.Error()), "truncat") {
 				t.Errorf("err = %v, want it to say the output was truncated so the cause is obvious", err)
