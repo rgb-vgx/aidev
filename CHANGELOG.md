@@ -9,6 +9,14 @@ curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh
 
 ## Unreleased
 
+- **A failed attempt says where its work is.** The agent does not commit (its
+  prompt tells it not to): aidev commits the work itself once it passes, so a
+  failed attempt's branch still points at the base. `task result` now says the
+  agent's changes are in the worktree, uncommitted, and why. The README, the
+  CLI help and the reference wrongly said that `--verify-mode clean` leaves out
+  untracked or uncommitted files; it leaves out only files git ignores, and a
+  test now pins that clean mode verifies and commits new untracked files.
+
 - **A cancel stops the whole run and says so.** TASK-000092 was cancelled while
   WPS, started by the agent's test command in its own session, kept running:
   stopping a run reached only the agent's process group. The agent and every

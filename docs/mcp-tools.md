@@ -119,7 +119,7 @@ Creates a task. Does **not** run it.
 | `verification` | string[] | **yes** | commands aidev runs itself to decide the outcome |
 | `protected_paths` | string[] | no | glob paths the agent must not change (`.env*`, `migrations/*`, `ci`); an attempt that changes a matching path fails verification before any check runs; files git ignores (a `__pycache__`, a report the checks write) do not count |
 | `setup_steps` | string[] | no | commands that run before verification to prepare the checkout (`npm ci`); same argv rules as `verification`; a setup command that fails fails the task before any check runs |
-| `verification_mode` | string | no | where verification runs: `in_place` (in the agent's worktree) or `clean` (a fresh checkout of the result, so ignored or uncommitted files cannot make the checks pass); empty takes the project's default; frozen into the task at creation |
+| `verification_mode` | string | no | where verification runs: `in_place` (in the agent's worktree) or `clean` (a fresh checkout of what aidev would commit — every change and new file except those git ignores — so an ignored file cannot make the checks pass; the agent does not need to commit); empty takes the project's default; frozen into the task at creation |
 | `description` | string | no | the full instruction for the agent |
 | `acceptance_criteria` | string | no | what done looks like, in prose |
 | `agent` | string | no | agent to use; defaults to `build` |

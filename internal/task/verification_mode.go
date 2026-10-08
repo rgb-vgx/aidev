@@ -16,9 +16,10 @@ type VerificationMode string
 const (
 	// VerificationInPlace runs the checks in the worktree the agent worked
 	// in. The default, and what every task did before the mode existed.
-	// Its blind spot is what clean exists for: a file git ignores, or a
-	// file the agent created but never added, is present for the checks
-	// while being absent from what a commit would carry.
+	// Its blind spot is what clean exists for: a file git ignores is present
+	// for the checks while being absent from what a commit would carry. (A
+	// new file the agent never added is not such a file: the snapshot takes
+	// every new file git does not ignore.)
 	VerificationInPlace VerificationMode = "in_place"
 
 	// VerificationClean snapshots the post-agent tree, checks it out into

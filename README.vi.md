@@ -352,9 +352,10 @@ trên commit gốc không phân biệt được có làm hay không làm. `--pro
 thử nào sửa một trong số đó sẽ thất bại trước khi lệnh kiểm tra nào chạy. Tập
 tin git ignore, như `__pycache__` hay báo cáo do lệnh kiểm tra ghi ra, không bị
 tính.
-`--verify-mode clean` chạy các lệnh kiểm tra trong một bản checkout mới của kết
-quả, nên những tập tin agent để lại mà chưa track hoặc bị ignore không thể làm
-chúng pass. `--expect-fail-on-base` và `--verify-mode clean` từ chối các kho mã
+`--verify-mode clean` chạy các lệnh kiểm tra trong một bản checkout mới của thứ
+aidev sẽ commit, tức là mọi thay đổi và tập tin mới trừ tập tin git ignore, nên
+tập tin bị ignore không thể làm chúng pass. Agent không commit: aidev tự commit
+công việc khi nó pass. `--expect-fail-on-base` và `--verify-mode clean` từ chối các kho mã
 có ghim submodule.
 
 ## Chuyện gì xảy ra bên trong

@@ -900,8 +900,9 @@ func (r *run) verify(ctx context.Context) (Outcome, error) {
 	}
 
 	// In clean mode the checks run on a detached checkout of the snapshot —
-	// the exact tree a commit would carry — so a file git ignores, or a file
-	// the agent never added, cannot make them pass. Everything from snapshot
+	// the exact tree a commit would carry: every change and new file except
+	// those git ignores — so an ignored file cannot make them pass. The agent
+	// does not commit; the snapshot takes its work as it lies. Everything from snapshot
 	// to checkout is plumbing: if any of it breaks, the failure kind says so
 	// (FailureWorktree) instead of pretending a check failed.
 	workingDir := r.worktree.Path

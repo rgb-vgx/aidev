@@ -370,8 +370,9 @@ on the base cannot tell the work from no work. `--protect` names paths the agent
 must not change, such as the test files that specify the work; an attempt that
 changes one fails before any check runs. Files git ignores, such as a
 `__pycache__` or a report the checks write, do not count. `--verify-mode clean` runs the checks in
-a fresh checkout of the result, so files the agent left untracked or ignored
-cannot make them pass. `--expect-fail-on-base` and `--verify-mode clean` refuse
+a fresh checkout of what aidev would commit, which is every change and new file
+except those git ignores, so an ignored file cannot make them pass. The agent
+does not commit: aidev commits the work itself once it passes. `--expect-fail-on-base` and `--verify-mode clean` refuse
 repositories that pin submodules.
 
 ## What happens under the hood

@@ -331,7 +331,7 @@ func projectVerifyMode(ctx context.Context, env *Env, args []string) error {
 	if updated.VerificationMode == task.VerificationClean {
 		fmt.Fprintf(env.Stdout,
 			"Every task created from now on verifies in a fresh checkout of its result:\n"+
-				"files git ignores, or files the agent never added, cannot make the checks pass.\n"+
+				"files git ignores cannot make the checks pass (the agent's other changes are all there).\n"+
 				"Tasks already created keep the mode they were created with.\n")
 	}
 	return nil
