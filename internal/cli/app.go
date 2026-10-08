@@ -125,10 +125,15 @@ func connectApp(ctx context.Context, cfg config.Config, logger *slog.Logger) (*a
 		}
 	}
 
+	orchestrator := worker.New(db, gitManager, backend, cfg, logger)
+	// A cancel from the CLI or the MCP server waits for the run to stop, so
+	// "cancelled" means stopped; `aidev task cancel --wait` overrides it.
+	orchestrator.CancelWait = defaultCancelWait
+
 	return &app{
 		cfg:          cfg,
 		store:        db,
-		orchestrator: worker.New(db, gitManager, backend, cfg, logger),
+		orchestrator: orchestrator,
 		close: func() {
 			// Flush first: the spans describe work the database rows also
 			// describe, and a detached context is used so that a cancelled
@@ -174,3 +179,8 @@ func requireCurrentSchema(ctx context.Context, db *store.Store) error {
 func opencodeDBDir(cfg config.Config) string {
 	return filepath.Join(cfg.WorkspaceRoot, "opencode-db")
 }
+
+// defaultCancelWait bounds how long a cancel waits for the run to stop: the
+// run notices within its 2 s status poll, and its processes get a 5 s grace
+// before SIGKILL, so a runner still there after this is not going to stop.
+const defaultCancelWait = 15 * time.Second

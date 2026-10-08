@@ -4,12 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
 	"aidev/internal/event"
 	"aidev/internal/logging"
+	"aidev/internal/procexec"
 	"aidev/internal/store"
 	"aidev/internal/task"
 )
@@ -115,6 +119,7 @@ func (o *Orchestrator) Cancel(ctx context.Context, idOrRef, reason string) (Outc
 
 	var t task.Task
 	var err error
+	var owner string
 	for attempt := 1; ; attempt++ {
 		t, err = o.Store.ResolveTask(ctx, idOrRef)
 		if err != nil {
@@ -126,6 +131,12 @@ func (o *Orchestrator) Cancel(ctx context.Context, idOrRef, reason string) (Outc
 
 		err = o.Store.InTx(ctx, func(tx *store.Store) error {
 			if err := tx.TransitionTask(ctx, t.ID, t.Status, task.StatusCancelled); err != nil {
+				return err
+			}
+			// Who held the run, read before the attempt is closed: the
+			// process a waiting Cancel then watches stop.
+			owner, err = runningLeaseOwner(ctx, tx, t.ID)
+			if err != nil {
 				return err
 			}
 			if err := finishOpenAttempts(ctx, tx, t.ID, task.AttemptCancelled, task.FailureCancelled, reason); err != nil {
@@ -157,10 +168,125 @@ func (o *Orchestrator) Cancel(ctx context.Context, idOrRef, reason string) (Outc
 	// polling remains the path for runs in other processes.
 	o.stopLocalRun(t.ID)
 
-	return Outcome{
+	out := Outcome{
 		Task:    t,
 		Message: fmt.Sprintf("%s cancelled (was %s); any worktree was kept for inspection", t.Identifier(), previous),
-	}, nil
+	}
+	if owner == "" || o.CancelWait <= 0 {
+		return out, nil
+	}
+
+	// Wait for the runner, so "cancelled" means stopped: a status change
+	// alone said nothing about the agent, or about the applications its
+	// commands started, still running (TASK-000092).
+	stop := o.waitForRunner(ctx, t.ID, owner, o.CancelWait)
+	out.Runner = &stop
+	if err := appendEvent(context.WithoutCancel(ctx), o.Store, t.ID, nil, event.TypeRunStopped, map[string]any{
+		"runner":    owner,
+		"observed":  stop.Observed,
+		"stopped":   stop.Stopped,
+		"waited_ms": stop.Waited.Milliseconds(),
+	}); err != nil {
+		o.Logger.WarnContext(ctx, "could not record whether the runner stopped", "error", err.Error())
+	}
+	out.Message = fmt.Sprintf("%s cancelled (was %s); %s; any worktree was kept for inspection",
+		t.Identifier(), previous, stop.describe())
+	return out, nil
+}
+
+// RunnerStop is what a Cancel that waited found about the process running the
+// task.
+type RunnerStop struct {
+	// Owner is the lease owner, hostname:pid:uuid.
+	Owner string
+	PID   int
+	// Observed is false when the runner could not be watched — it runs on
+	// another machine — so Stopped says nothing.
+	Observed bool
+	Stopped  bool
+	Waited   time.Duration
+}
+
+// describe words the finding for a Cancel's message.
+func (s RunnerStop) describe() string {
+	switch {
+	case !s.Observed:
+		return fmt.Sprintf("its runner (%s) is on another machine, so this cancel cannot see it stop", s.Owner)
+	case s.Stopped:
+		return fmt.Sprintf("its runner (pid %d) stopped after %s, with the processes its agent and checks started",
+			s.PID, s.Waited.Round(10*time.Millisecond))
+	default:
+		return fmt.Sprintf("but its runner (pid %d) is still running after %s: it may be hung, or an aidev "+
+			"older than this one that does not stop on a cancel. Stop it with `kill -TERM %d`",
+			s.PID, s.Waited.Round(10*time.Millisecond), s.PID)
+	}
+}
+
+// waitForRunner waits up to limit for the process named by owner to stop.
+// A runner in this very process is watched through its registration; one in
+// another process on this machine through its pid.
+func (o *Orchestrator) waitForRunner(ctx context.Context, taskID uuid.UUID, owner string, limit time.Duration) RunnerStop {
+	stop := RunnerStop{Owner: owner}
+	host, pid, ok := parseLeaseOwner(owner)
+	thisHost, _ := os.Hostname()
+	if !ok || host != thisHost {
+		return stop
+	}
+	stop.PID, stop.Observed = pid, true
+
+	running := func() bool { return procexec.ProcessRunning(pid) }
+	if owner == processLeaseOwner() {
+		running = func() bool { return o.hasLocalRun(taskID) }
+	}
+	start := time.Now()
+	for running() {
+		if time.Since(start) >= limit || ctx.Err() != nil {
+			stop.Waited = time.Since(start)
+			return stop
+		}
+		time.Sleep(runnerPollInterval)
+	}
+	stop.Stopped, stop.Waited = true, time.Since(start)
+	return stop
+}
+
+// runnerPollInterval is how often waitForRunner looks again.
+const runnerPollInterval = 50 * time.Millisecond
+
+// parseLeaseOwner splits hostname:pid:uuid.
+func parseLeaseOwner(owner string) (host string, pid int, ok bool) {
+	parts := strings.Split(owner, ":")
+	if len(parts) < 3 {
+		return "", 0, false
+	}
+	pid, err := strconv.Atoi(parts[len(parts)-2])
+	if err != nil || pid <= 0 {
+		return "", 0, false
+	}
+	return strings.Join(parts[:len(parts)-2], ":"), pid, true
+}
+
+// hasLocalRun reports whether this orchestrator is running the task.
+func (o *Orchestrator) hasLocalRun(id uuid.UUID) bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	_, ok := o.runs[id]
+	return ok
+}
+
+// runningLeaseOwner returns the lease owner of the task's open attempt, or ""
+// when no attempt is running.
+func runningLeaseOwner(ctx context.Context, tx *store.Store, taskID uuid.UUID) (string, error) {
+	attempts, err := tx.ListAttempts(ctx, taskID)
+	if err != nil {
+		return "", err
+	}
+	for _, a := range attempts {
+		if a.Status == task.AttemptRunning {
+			return a.LeaseOwner, nil
+		}
+	}
+	return "", nil
 }
 
 // RecoveredTask is one task a recover pass found and what it did about it.

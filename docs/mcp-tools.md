@@ -117,9 +117,9 @@ Creates a task. Does **not** run it.
 | `repo_path` | string | **yes** | absolute path to the git repository |
 | `title` | string | **yes** | one short line stating what to do |
 | `verification` | string[] | **yes** | commands aidev runs itself to decide the outcome |
-| `protected_paths` | string[] | no | glob paths the agent must not change (`.env*`, `migrations/*`, `ci`); an attempt that changes a matching path fails verification before any check runs |
+| `protected_paths` | string[] | no | glob paths the agent must not change (`.env*`, `migrations/*`, `ci`); an attempt that changes a matching path fails verification before any check runs; files git ignores (a `__pycache__`, a report the checks write) do not count |
 | `setup_steps` | string[] | no | commands that run before verification to prepare the checkout (`npm ci`); same argv rules as `verification`; a setup command that fails fails the task before any check runs |
-| `verification_mode` | string | no | where verification runs: `in_place` (in the agent's worktree) or `clean` (a fresh checkout of the result, so ignored or uncommitted files cannot make the checks pass); empty takes the project's default; frozen into the task at creation |
+| `verification_mode` | string | no | where verification runs: `in_place` (in the agent's worktree) or `clean` (a fresh checkout of what aidev would commit — every change and new file except those git ignores — so an ignored file cannot make the checks pass; the agent does not need to commit); empty takes the project's default; frozen into the task at creation |
 | `description` | string | no | the full instruction for the agent |
 | `acceptance_criteria` | string | no | what done looks like, in prose |
 | `agent` | string | no | agent to use; defaults to `build` |
@@ -378,6 +378,10 @@ case-insensitive. No side effects. Errors: no such task, with a pointer to
 ### Output
 
 `task` and a `message` saying what happened, including that a worktree was kept.
+When the task was running, the tool waits up to 15 seconds for the process
+running it to stop, with every process its agent and checks started, and the
+`message` says whether it did; a runner still running is named with how to stop
+it.
 
 ### Errors
 
@@ -386,7 +390,8 @@ No such task; the task has already finished.
 ### Side effects
 
 Moves the task to `CANCELLED`, closes any open attempt, marks any active worktree
-`RETAINED`, appends `task.cancelled`. Work in progress is never discarded.
+`RETAINED`, appends `task.cancelled`, and — when it waited for a running task —
+`task.run_stopped`. Work in progress is never discarded.
 
 ---
 
@@ -439,6 +444,10 @@ appending `task.approval_granted` or `task.approval_denied` with `decided_by`,
   what happens to that branch is a human's call.
 - **No configuration surface.** A planner cannot change `workspace_root`, the model,
   the agent command, or a timeout default.
+- **Nothing that widens what the agent can reach.** The directories outside the
+  repository an agent may read are set by a person at the CLI (`aidev project
+  read-dirs`), never through a tool: a planner must not widen its own agent's
+  reach.
 - **No project or event writes.** Projects are added by a person (`aidev project
   add`, or a first `aidev task create`); the MCP server registers one only when
   `mcp.auto_register_projects` allows it. The event log is append-only by

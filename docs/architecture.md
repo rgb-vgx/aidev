@@ -413,6 +413,23 @@ children, but verification commands routinely do — `go test` starts compilers 
 test binaries — so killing only the parent would leave them running. The test for
 this was verified to fail when the kill is changed to pid-only.
 
+A process group is not the whole tree: a descendant that starts its own session
+leaves it. A test that starts an application under `xvfb-run` does exactly that,
+and on TASK-000092 the application outlived the cancel. The agent, and every
+setup and verification command, therefore also get an environment variable whose *name* is random per run
+(`AIDEVTREE_<hex>=1`; not `AIDEV_`, which the agent backends strip), which every descendant inherits whichever group or
+session it moved to; stopping a run also signals each process of this user whose
+`/proc/<pid>/environ` carries it, SIGTERM first and SIGKILL after the same grace.
+It matches a marker aidev placed, never a process name. Unique names, not values,
+mean a run started from inside another (aidev's own tests run aidev) carries both
+markers. Finding them is a scan of `/proc` (about 6 ms with 500 processes), which
+is why git plumbing, which never changes session, does not pay for it. Without
+`/proc` (macOS) the group is all that is reached.
+
+`aidev task cancel` then waits — 15 seconds by default, `--wait` to change it — for
+the process running the task, named by the attempt's lease owner, to exit, records
+`task.run_stopped`, and names a runner that did not stop.
+
 ### One JSON contract, two surfaces
 
 The CLI's `--json` output and the MCP tools' structured results are the same shapes,

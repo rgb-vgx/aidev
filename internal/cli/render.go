@@ -286,8 +286,14 @@ func writeNextSteps(w io.Writer, outcome worker.Outcome) {
 			fmt.Fprintf(w, "  git diff %s..%s\n", baseBranchGuess(outcome), outcome.Worktree.Branch)
 		}
 	case task.StatusFailed, task.StatusCancelled:
-		if outcome.Worktree != nil && outcome.Worktree.Status == task.WorktreeRetained {
-			fmt.Fprintf(w, "\nthe work was kept for inspection\n  cd %s\n", outcome.Worktree.Path)
+		if wt := outcome.Worktree; wt != nil && wt.Status == task.WorktreeRetained {
+			fmt.Fprintf(w, "\nthe work was kept for inspection\n  cd %s\n", wt.Path)
+			// The branch still points at the base, which reads as "nothing
+			// was saved" unless it is said why: the agent does not commit,
+			// and aidev commits only what passed verification (TASK-000093).
+			if wt.HeadCommit == "" || wt.HeadCommit == wt.BaseCommit {
+				fmt.Fprintf(w, "  the agent's changes are there, uncommitted: aidev commits the work only once it passes verification\n")
+			}
 		}
 		fmt.Fprintf(w, "\nfull output: aidev task result %s --logs\n", outcome.Task.Identifier())
 	case task.StatusWaitingApproval:

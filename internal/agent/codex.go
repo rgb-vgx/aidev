@@ -150,6 +150,9 @@ func (c *Codex) Run(ctx context.Context, req Request) (Result, error) {
 		// The agent executes instructions we do not control; it must not see
 		// aidev's own configuration (AIDEV_CONFIG → database URL).
 		DropEnv: []string{"AIDEV_"},
+		// The agent's commands may start applications in their own session;
+		// stopping the run stops those too.
+		FollowSessions: true,
 		// Parse while the process runs, so events survive even when the
 		// capture cap discards the tail of a very chatty run.
 		Tee: scanner,

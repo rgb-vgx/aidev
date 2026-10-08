@@ -5,8 +5,10 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"aidev/internal/store"
 	"aidev/internal/task"
@@ -30,6 +32,7 @@ func runProject(ctx context.Context, env *Env, args []string) error {
 		"submodules":  {"show or set how task worktrees treat this repository's submodules", projectSubmodules},
 		"approval":    {"show or set whether every task of this repository needs approval first", projectApproval},
 		"verify-mode": {"show or set where new tasks verify: in the agent's worktree or a clean checkout", projectVerifyMode},
+		"read-dirs":   {"show or set directories outside the repository the agent may read", projectReadDirs},
 	}
 
 	usage := func() {
@@ -89,6 +92,9 @@ func projectList(ctx context.Context, env *Env, args []string) error {
 	for _, p := range projects {
 		fmt.Fprintf(env.Stdout, "%s\n  branch %s  submodules %s  approval %s  verify %s\n",
 			p.RepoPath, p.DefaultBranch, p.Submodules, onOff(p.RequiresApproval), p.VerificationMode)
+		if len(p.ReadDirs) > 0 {
+			fmt.Fprintf(env.Stdout, "  read dirs %s\n", strings.Join(p.ReadDirs, ", "))
+		}
 	}
 	return nil
 }
@@ -331,8 +337,130 @@ func projectVerifyMode(ctx context.Context, env *Env, args []string) error {
 	if updated.VerificationMode == task.VerificationClean {
 		fmt.Fprintf(env.Stdout,
 			"Every task created from now on verifies in a fresh checkout of its result:\n"+
-				"files git ignores, or files the agent never added, cannot make the checks pass.\n"+
+				"files git ignores cannot make the checks pass (the agent's other changes are all there).\n"+
 				"Tasks already created keep the mode they were created with.\n")
 	}
 	return nil
+}
+
+// projectReadDirs shows or sets the directories outside the repository that
+// the agent of this project's tasks may read — an installed program's files,
+// say (TASK-000091 needed /opt/kingsoft). Everything else outside the
+// worktree stays denied, and a denial no longer ends the agent's session.
+//
+// Like approval and verify-mode it is the operator's setting, CLI only: the
+// party creating tasks must not widen what its own agent can reach. And it
+// says "read", not "read-only": nothing in OpenCode stopped a write to such a
+// directory in a measured run, so the filesystem is what keeps it unwritten.
+func projectReadDirs(ctx context.Context, env *Env, args []string) error {
+	fs := flag.NewFlagSet("project read-dirs", flag.ContinueOnError)
+	fs.SetOutput(env.Stderr)
+	repo := fs.String("repo", ".", "path inside the repository")
+	clear := fs.Bool("clear", false, "let the agent read nothing outside its worktree")
+	positionals, err := parseInterspersed(fs, args)
+	if err != nil {
+		return usagef("aidev project read-dirs: %v", err)
+	}
+	if *clear && len(positionals) > 0 {
+		return usagef("aidev project read-dirs: --clear takes no directories")
+	}
+
+	app, err := openApp(ctx)
+	if err != nil {
+		return err
+	}
+	defer app.close()
+
+	repository, err := app.orchestrator.Git.OpenRepository(ctx, *repo)
+	if err != nil {
+		return err
+	}
+	project, err := app.store.GetProjectByPath(ctx, repository.Path)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return fmt.Errorf("aidev does not know %s yet; register it with aidev project add %s",
+				repository.Path, repository.Path)
+		}
+		return err
+	}
+
+	if !*clear && len(positionals) == 0 {
+		writeReadDirs(env, project.RepoPath, project.ReadDirs)
+		return nil
+	}
+
+	var dirs []string
+	for _, raw := range positionals {
+		dir, err := checkReadDir(raw, repository.Path, app.cfg.WorkspaceRoot, os.Getenv("AIDEV_CONFIG"))
+		if err != nil {
+			return err
+		}
+		dirs = append(dirs, dir)
+	}
+	updated, err := app.store.SetProjectReadDirs(ctx, project.ID, dirs)
+	if err != nil {
+		return err
+	}
+	writeReadDirs(env, updated.RepoPath, updated.ReadDirs)
+	for _, dir := range updated.ReadDirs {
+		if userCanWrite(dir) {
+			fmt.Fprintf(env.Stdout, "warning: you can write to %s, so the agent can too; aidev lets it read there "+
+				"but cannot make it read-only\n", dir)
+		}
+	}
+	return nil
+}
+
+func writeReadDirs(env *Env, repo string, dirs []string) {
+	if len(dirs) == 0 {
+		fmt.Fprintf(env.Stdout, "%s: the agent reads nothing outside its worktree\n", repo)
+		return
+	}
+	fmt.Fprintf(env.Stdout, "%s: the agent may read\n", repo)
+	for _, dir := range dirs {
+		fmt.Fprintf(env.Stdout, "  %s\n", dir)
+	}
+}
+
+// checkReadDir resolves a directory the agent is to be allowed to read and
+// refuses the ones that would undo the worktree: the root, anything that
+// overlaps the repository's checkout (the agent would reach the person's
+// working tree) or aidev's workspace (other tasks' worktrees and sessions),
+// and anything holding aidev's configuration, which names the database.
+func checkReadDir(raw, repoPath, workspaceRoot, configPath string) (string, error) {
+	abs, err := filepath.Abs(raw)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", fmt.Errorf("%s is not a directory: %w", raw, err)
+	}
+	info, err := os.Stat(resolved)
+	if err != nil || !info.IsDir() {
+		return "", fmt.Errorf("%s is not a directory", raw)
+	}
+	if resolved == string(filepath.Separator) {
+		return "", fmt.Errorf("%s is the root directory: reading it would give the agent the whole machine", raw)
+	}
+	overlaps := func(a, b string) bool { return pathWithin(a, b) || pathWithin(b, a) }
+	if repoPath != "" && overlaps(resolved, repoPath) {
+		return "", fmt.Errorf("%s overlaps the repository's checkout %s: the agent would reach your working tree", raw, repoPath)
+	}
+	if workspaceRoot != "" && overlaps(resolved, workspaceRoot) {
+		return "", fmt.Errorf("%s overlaps aidev's workspace %s, which holds other tasks' worktrees and sessions", raw, workspaceRoot)
+	}
+	if configPath != "" && pathWithin(configPath, resolved) {
+		return "", fmt.Errorf("%s holds aidev's configuration (%s), which names the database and its password", raw, configPath)
+	}
+	return resolved, nil
+}
+
+// pathWithin reports whether path is dir or inside it.
+func pathWithin(path, dir string) bool {
+	rel, err := filepath.Rel(filepath.Clean(dir), filepath.Clean(path))
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }

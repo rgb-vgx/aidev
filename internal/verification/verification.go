@@ -238,6 +238,9 @@ func (r *Runner) runStep(ctx context.Context, req Request, index int, phase task
 		// Verification commands come from the task (agent-authored in the
 		// delegation flow); they must not see aidev's own configuration.
 		DropEnv: []string{"AIDEV_"},
+		// A check may start an application in its own session (xvfb-run);
+		// it must not outlive the check any more than a child in the group.
+		FollowSessions: true,
 	})
 
 	run := task.VerificationRun{

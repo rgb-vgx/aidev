@@ -9,7 +9,7 @@ import (
 	"aidev/internal/task"
 )
 
-const projectColumns = `id, name, repo_path, default_branch, submodules, requires_approval, verification_mode, created_at, updated_at`
+const projectColumns = `id, name, repo_path, default_branch, submodules, requires_approval, verification_mode, created_at, updated_at, read_dirs`
 
 // EnsureProject registers repoPath as a project, or returns the existing
 // project for that path unchanged.
@@ -142,6 +142,26 @@ func (s *Store) SetProjectVerificationMode(ctx context.Context, id uuid.UUID, mo
 	return p, nil
 }
 
+// SetProjectReadDirs replaces the directories outside the repository that the
+// project's agent may read, and returns the project as it now stands. Like the
+// approval policy it is its own call with no MCP counterpart: the party
+// creating tasks must not widen what its own agent can reach.
+func (s *Store) SetProjectReadDirs(ctx context.Context, id uuid.UUID, dirs []string) (task.Project, error) {
+	if dirs == nil {
+		dirs = []string{}
+	}
+	row := s.db.QueryRow(ctx, `
+		UPDATE projects SET read_dirs = $2, updated_at = now()
+		WHERE id = $1
+		RETURNING `+projectColumns, id, dirs)
+
+	p, err := scanProject(row)
+	if err != nil {
+		return task.Project{}, fmt.Errorf("set read dirs for project %s: %w", id, err)
+	}
+	return p, nil
+}
+
 // scanner is satisfied by both pgx.Row and pgx.Rows.
 type scanner interface {
 	Scan(dest ...any) error
@@ -150,7 +170,7 @@ type scanner interface {
 func scanProject(row scanner) (task.Project, error) {
 	var p task.Project
 	err := row.Scan(&p.ID, &p.Name, &p.RepoPath, &p.DefaultBranch, &p.Submodules, &p.RequiresApproval,
-		&p.VerificationMode, &p.CreatedAt, &p.UpdatedAt)
+		&p.VerificationMode, &p.CreatedAt, &p.UpdatedAt, &p.ReadDirs)
 	if err != nil {
 		return task.Project{}, classify(err)
 	}

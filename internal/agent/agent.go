@@ -45,6 +45,11 @@ type Request struct {
 	// MaxOutputBytes bounds each captured stream. Required.
 	MaxOutputBytes int
 
+	// ReadDirs are directories outside WorkingDir the agent may read
+	// (`aidev project read-dirs`). Everything else outside WorkingDir is
+	// denied — where the backend can enforce it, as OpenCode can.
+	ReadDirs []string
+
 	// SessionID asks the backend to continue an existing session.
 	//
 	// Recorded and plumbed through but never set by the MVP: Phase 0 confirmed

@@ -9,6 +9,45 @@ curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh
 
 ## Unreleased
 
+- **A denied reach outside the worktree no longer ends the agent's session.**
+  OpenCode's default for a tool call outside its directory is `ask`, which a
+  headless run answers by rejecting the call and ending the session —
+  TASK-000091 lost its run to one read of `/opt/kingsoft`. aidev now runs
+  OpenCode with that permission denied instead: the agent gets a failed tool
+  call and carries on (measured, research §7m).
+
+- **`aidev project read-dirs [DIR...] [--clear]`** lets a repository's agent
+  read named directories outside it, such as an installed program's files. CLI
+  only, like approval and verify-mode. It refuses the root, the repository, the
+  workspace and aidev's configuration, and warns about a directory you can
+  write to: it grants reading, it cannot make a directory read-only (an
+  OpenCode edit rule did not stop a write). Migration `0021_read_dirs`; plugin
+  0.5.4 teaches the delegate skill about it.
+
+- **A failed attempt says where its work is.** The agent does not commit (its
+  prompt tells it not to): aidev commits the work itself once it passes, so a
+  failed attempt's branch still points at the base. `task result` now says the
+  agent's changes are in the worktree, uncommitted, and why. The README, the
+  CLI help and the reference wrongly said that `--verify-mode clean` leaves out
+  untracked or uncommitted files; it leaves out only files git ignores, and a
+  test now pins that clean mode verifies and commits new untracked files.
+
+- **A cancel stops the whole run and says so.** TASK-000092 was cancelled while
+  WPS, started by the agent's test command in its own session, kept running:
+  stopping a run reached only the agent's process group. The agent and every
+  setup and verification command now carry a per-run environment marker, and
+  stopping one also stops each process carrying it, wherever it moved (Linux). `aidev task cancel`
+  waits for the process running the task to stop (`--wait`, 15 s by default),
+  records `task.run_stopped`, and names a runner that did not stop, with how to
+  stop it; the command then exits 1. Migration `0020_run_stopped`.
+
+- **Protected paths no longer count files git ignores.** TASK-000093 was refused
+  for `__pycache__/` and `tests/wps/out/` "changing" under `tests/**`: both
+  ignored, both written by the checks the agent ran, none of it work the agent
+  did. A protected path, and the "tests changed" report, now judge only what a
+  commit would carry. A verification runner shadowed by an ignored file (a
+  `.venv` the agent made) is still intercepted.
+
 - **A refused tool call names what was refused.** When an agent ran a command in
   its worktree that read a path outside it, the result said "a tool call for
   <the worktree> was refused", naming the one place the agent was allowed to be.

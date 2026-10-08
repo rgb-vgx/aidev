@@ -318,7 +318,7 @@ aidev task result <task> [--logs] [--json]
 aidev task run-log <task> [--path] [--all]  # the log a detached run wrote
 aidev task diff <task>                    # what a task changed
 aidev task events <task> [--payload] [--after SEQ] [--json]
-aidev task cancel <task> [--reason R] [--json]
+aidev task cancel <task> [--reason R] [--wait 15s] [--json]
 aidev task approve <task> [--deny] [--by WHO] [--reason R] [--json]
 aidev task recover [--dry-run] [--json]   # cancel tasks whose lease expired
 aidev task delete <task>                  # delete a finished task and its history
@@ -330,6 +330,7 @@ aidev project add   [path]                        # đăng ký một repository 
 aidev project list  [--json]                      # các repository mà aidev biết
 aidev project approval [on|off] [--repo .]        # chặn mọi task của repo chờ người duyệt (chỉ ở CLI)
 aidev project verify-mode [in_place|clean] [--repo .]  # nơi các task mới verify (chỉ ở CLI)
+aidev project read-dirs [DIR...] [--clear] [--repo .]  # thư mục agent được đọc (chỉ ở CLI)
 ```
 
 `<task>` là mã tham chiếu (`TASK-000001`, không phân biệt chữ hoa chữ thường) hoặc UUID.
@@ -349,10 +350,13 @@ Ba cờ giúp các lệnh kiểm tra của task khó pass một cách tình cờ
 bắt đầu và làm task thất bại nếu chúng đã pass ở đó, vì lệnh kiểm tra pass ngay
 trên commit gốc không phân biệt được có làm hay không làm. `--protect` nêu các
 đường dẫn agent không được sửa, chẳng hạn các tập tin test mô tả công việc; lần
-thử nào sửa một trong số đó sẽ thất bại trước khi lệnh kiểm tra nào chạy.
-`--verify-mode clean` chạy các lệnh kiểm tra trong một bản checkout mới của kết
-quả, nên những tập tin agent để lại mà chưa track hoặc bị ignore không thể làm
-chúng pass. `--expect-fail-on-base` và `--verify-mode clean` từ chối các kho mã
+thử nào sửa một trong số đó sẽ thất bại trước khi lệnh kiểm tra nào chạy. Tập
+tin git ignore, như `__pycache__` hay báo cáo do lệnh kiểm tra ghi ra, không bị
+tính.
+`--verify-mode clean` chạy các lệnh kiểm tra trong một bản checkout mới của thứ
+aidev sẽ commit, tức là mọi thay đổi và tập tin mới trừ tập tin git ignore, nên
+tập tin bị ignore không thể làm chúng pass. Agent không commit: aidev tự commit
+công việc khi nó pass. `--expect-fail-on-base` và `--verify-mode clean` từ chối các kho mã
 có ghim submodule.
 
 ## Chuyện gì xảy ra bên trong
@@ -420,7 +424,7 @@ aidev gọi `opencode run --dir <worktree> --format json -- <prompt>` rồi đ�
 luồng event phân tách bằng xuống dòng. Bạn không bao giờ tự gõ lệnh đó; biết nó là việc của
 aidev, không phải của planner.
 
-Ba hành vi đã đo đạc đáng biết trước task đầu tiên của bạn:
+Bốn hành vi đã đo đạc đáng biết trước task đầu tiên của bạn:
 
 - **Một task lâu đúng bằng thời gian mô hình chạy.** Phần việc của chính aidev trong
   một lần chạy (worktree, diff, verification, mọi lần ghi cơ sở dữ liệu) được đo chỉ
@@ -430,6 +434,12 @@ Ba hành vi đã đo đạc đáng biết trước task đầu tiên của bạn
 - **OpenCode ghi tập tin mà không hỏi**, ngay cả khi không có cờ `--auto`. Đó
   là lý do mọi task chạy trong một worktree riêng và aidev từ chối đường dẫn worktree
   nằm bên trong kho mã của bạn.
+- **Chạm ra ngoài worktree thì bị từ chối, chứ không làm hỏng phiên.** OpenCode
+  hỏi trước khi một tool call chạm vào thư mục nằm ngoài thư mục của nó, và một
+  lần chạy headless không trả lời được thì kết thúc phiên. aidev từ chối các lời
+  gọi đó, nên agent nhận một tool call thất bại rồi làm tiếp. Muốn cho agent của
+  một repository đọc một thư mục bên ngoài, như một chương trình đã cài, hãy dùng
+  `aidev project read-dirs <dir>`.
 - **Chạy đồng thời cần mỗi task một database OpenCode riêng.** OpenCode giữ mọi
   phiên trong một tập tin SQLite dùng chung, và các lần chạy cùng lúc trên đó chết
   ngẫu nhiên với lỗi `database is locked`. Vì vậy aidev cho mỗi task một tập tin
@@ -592,7 +602,7 @@ Bộ test làm nhiều hơn việc tăng độ phủ: một số test tồn tạ
 - Việc thu thập diff lộ ra các tập tin mới và không stage bất cứ gì trong worktree.
 - Worktree của lần thử thất bại được giữ lại; công việc của lần thành công được commit trước.
 - Hủy một task giữa chừng vẫn ghi nhận việc hủy, thay vì để hàng đó kẹt ở `RUNNING`.
-- Việc hủy diệt toàn bộ nhóm tiến trình, nên các tiến trình con của lệnh verification không sống sót sau nó.
+- Việc hủy diệt toàn bộ nhóm tiến trình, nên các tiến trình con của lệnh verification không sống sót sau nó, và mọi tiến trình mang dấu của lần chạy, nên tiến trình đã tách sang session riêng cũng vậy.
 
 Một số điều trong đó đã được xác nhận bằng cách cố tình phá hỏng phần cài đặt rồi xem
 test thất bại, chứ không phải bằng cách tin rằng test xanh là đã có bảo đảm thật.

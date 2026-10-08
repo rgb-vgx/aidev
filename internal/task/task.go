@@ -55,6 +55,11 @@ type Project struct {
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
+
+	// ReadDirs are directories outside the repository the agent may read
+	// (`aidev project read-dirs`), set only from the CLI. Not read-only: what
+	// keeps them unwritten is the filesystem, not aidev. Read at run time.
+	ReadDirs []string
 }
 
 // Task is a unit of work delegated to an agent and verified by aidev.

@@ -549,6 +549,7 @@ func (r *run) runAgent(ctx context.Context) error {
 		Model:          resolveModel(r.task, r.o.Config.Routing),
 		Timeout:        r.task.EffectiveTimeout(r.o.Config.DefaultTaskTimeout),
 		MaxOutputBytes: r.o.Config.MaxOutputBytes,
+		ReadDirs:       r.projectReadDirs(ctx),
 	}
 	// A retry continues the failed attempt's agent session, in the same
 	// directory it was created in, so the agent keeps what it learned.
@@ -556,13 +557,19 @@ func (r *run) runAgent(ctx context.Context) error {
 		req.SessionID = r.retry.sessionID
 	}
 
-	r.emit(ctx, event.TypeWorkerStarted, map[string]any{
+	started := map[string]any{
 		"backend":       r.o.Backend.Name(),
 		"agent":         r.task.Agent,
 		"working_dir":   r.worktree.Path,
 		"timeout":       req.Timeout.String(),
 		"prompt_length": len(prompt),
-	})
+	}
+	// What the agent may read outside its worktree is part of the record of
+	// what it was allowed to do.
+	if len(req.ReadDirs) > 0 {
+		started["read_dirs"] = req.ReadDirs
+	}
+	r.emit(ctx, event.TypeWorkerStarted, started)
 
 	// The version lookup runs alongside the agent: `opencode --version` takes
 	// about 0.4s, twice aidev's own share of a run, and the agent takes
@@ -843,8 +850,12 @@ func (r *run) verify(ctx context.Context) (Outcome, error) {
 	}
 
 	// A runner the agent changed is not independent evidence, so verification
-	// does not run at all when one is found.
-	changed, err := r.worktree.ChangedPaths(ctx)
+	// does not run at all when one is found. Interception looks at every
+	// change, ignored files included, because a shadowing runner hides there;
+	// the test report and the protected-path decision look only at what a
+	// commit would carry, because that is the work — not the __pycache__ and
+	// reports the checks themselves leave behind (TASK-000093).
+	changes, err := r.worktree.ChangedPaths(ctx)
 	if err != nil {
 		span.SetAttributes(attribute.Bool("aidev.verification.passed", false))
 		return r.fail(ctx, task.FailureInternal,
@@ -856,7 +867,7 @@ func (r *run) verify(ctx context.Context) (Outcome, error) {
 	// that. The classifier only reports — it never decides the outcome
 	// (research §7b tier 1); refusing a run for touching a test path is the
 	// separate protected_paths decision (tier 2).
-	if paths := verification.TestPaths(changed); len(paths) > 0 {
+	if paths := verification.TestPaths(changes.Committable); len(paths) > 0 {
 		r.testsModified = paths
 		r.emit(ctx, event.TypeVerificationTestsModified, map[string]any{"paths": paths})
 	}
@@ -870,8 +881,8 @@ func (r *run) verify(ctx context.Context) (Outcome, error) {
 	allSteps = append(allSteps, r.task.SetupSteps...)
 	allSteps = append(allSteps, r.task.Verification...)
 
-	intercepted := verification.Interceptions(allSteps, changed)
-	violated, err := verification.Violations(r.task.ProtectedPaths, changed)
+	intercepted := verification.Interceptions(allSteps, changes.All())
+	violated, err := verification.Violations(r.task.ProtectedPaths, changes.Committable)
 	if err != nil {
 		// A stored pattern that cannot be evaluated means the guard the task's
 		// creator asked for is gone: fail closed rather than run checks that
@@ -896,8 +907,9 @@ func (r *run) verify(ctx context.Context) (Outcome, error) {
 	}
 
 	// In clean mode the checks run on a detached checkout of the snapshot —
-	// the exact tree a commit would carry — so a file git ignores, or a file
-	// the agent never added, cannot make them pass. Everything from snapshot
+	// the exact tree a commit would carry: every change and new file except
+	// those git ignores — so an ignored file cannot make them pass. The agent
+	// does not commit; the snapshot takes its work as it lies. Everything from snapshot
 	// to checkout is plumbing: if any of it breaks, the failure kind says so
 	// (FailureWorktree) instead of pretending a check failed.
 	workingDir := r.worktree.Path
@@ -1422,4 +1434,17 @@ func (r *run) lookupAgentVersion(ctx context.Context) func() string {
 		done <- version
 	}()
 	return func() string { return <-done }
+}
+
+// projectReadDirs is what the project lets the agent read outside its
+// worktree, read when the attempt starts so a change applies to the next
+// attempt. A failure to read it gives the agent nothing outside its worktree:
+// the safe answer, logged.
+func (r *run) projectReadDirs(ctx context.Context) []string {
+	project, err := r.o.Store.GetProject(ctx, r.task.ProjectID)
+	if err != nil {
+		r.log.WarnContext(ctx, "could not read the project's read dirs; the agent reads nothing outside its worktree", "error", err.Error())
+		return nil
+	}
+	return project.ReadDirs
 }

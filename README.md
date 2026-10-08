@@ -338,7 +338,7 @@ aidev task result <task> [--logs] [--json]
 aidev task run-log <task> [--path] [--all]  # the log a detached run wrote
 aidev task diff <task>                    # what a task changed
 aidev task events <task> [--payload] [--after SEQ] [--json]
-aidev task cancel <task> [--reason R] [--json]
+aidev task cancel <task> [--reason R] [--wait 15s] [--json]
 aidev task approve <task> [--deny] [--by WHO] [--reason R] [--json]
 aidev task recover [--dry-run] [--json]   # cancel tasks whose lease expired
 aidev task delete <task>                  # delete a finished task and its history
@@ -350,6 +350,7 @@ aidev project add   [path]                        # register a repository for MC
 aidev project list  [--json]                      # repositories aidev knows
 aidev project approval [on|off] [--repo .]        # gate every task of the repo (operator only)
 aidev project verify-mode [in_place|clean] [--repo .]  # where new tasks verify (operator only)
+aidev project read-dirs [DIR...] [--clear] [--repo .]  # directories the agent may read (operator only)
 ```
 
 `<task>` is either the reference (`TASK-000001`, case-insensitive) or the UUID.
@@ -368,9 +369,11 @@ Three flags make a task's checks harder to pass by accident.
 starts and fails the task if they already pass there, because checks that pass
 on the base cannot tell the work from no work. `--protect` names paths the agent
 must not change, such as the test files that specify the work; an attempt that
-changes one fails before any check runs. `--verify-mode clean` runs the checks in
-a fresh checkout of the result, so files the agent left untracked or ignored
-cannot make them pass. `--expect-fail-on-base` and `--verify-mode clean` refuse
+changes one fails before any check runs. Files git ignores, such as a
+`__pycache__` or a report the checks write, do not count. `--verify-mode clean` runs the checks in
+a fresh checkout of what aidev would commit, which is every change and new file
+except those git ignores, so an ignored file cannot make them pass. The agent
+does not commit: aidev commits the work itself once it passes. `--expect-fail-on-base` and `--verify-mode clean` refuse
 repositories that pin submodules.
 
 ## What happens under the hood
@@ -438,7 +441,7 @@ aidev invokes `opencode run --dir <worktree> --format json -- <prompt>` and read
 the newline-delimited event stream. You never write that command yourself; knowing
 it is aidev's job, not the planner's.
 
-Three measured behaviours worth knowing before your first task:
+Four measured behaviours worth knowing before your first task:
 
 - **A task takes as long as the model does.** aidev's own share of a run
   (worktree, diff, verification, every database write) measured 0.2 seconds
@@ -448,6 +451,11 @@ Three measured behaviours worth knowing before your first task:
 - **OpenCode writes files without asking**, even without its `--auto` flag. That
   is why every task runs in a dedicated worktree and why aidev refuses a worktree
   path that would land inside your repository.
+- **A reach outside the worktree is denied, not fatal.** OpenCode asks before a
+  tool call touches a directory outside its own, and a headless run that cannot
+  answer ends the session. aidev denies such calls instead, so the agent gets a
+  failed tool call and carries on. To let a repository's agent read a directory
+  outside it, such as an installed program, use `aidev project read-dirs <dir>`.
 - **Concurrent runs need their own OpenCode database.** OpenCode keeps every
   session in one shared SQLite file, and runs started side by side on it die at
   random with `database is locked`. aidev therefore gives each task its own,
@@ -617,7 +625,8 @@ invariants:
 - Cancelling a task mid-run still records the cancellation, rather than leaving the
   row in `RUNNING`.
 - Cancellation kills the whole process group, so a verification command's children
-  do not outlive it.
+  do not outlive it, and every process carrying the run's marker, so neither does
+  one that moved to its own session.
 
 Several of these were confirmed by deliberately breaking the implementation and
 watching the test fail, not by trusting a green test.
