@@ -193,6 +193,10 @@ func (o *OpenCode) Run(ctx context.Context, req Request) (Result, error) {
 		// aidev's own configuration (AIDEV_CONFIG → database URL).
 		DropEnv:  []string{"AIDEV_"},
 		ExtraEnv: extraEnv,
+		// The agent's commands may start applications in their own session
+		// (a test that runs an app under xvfb-run); stopping the run stops
+		// those too (TASK-000092).
+		FollowSessions: true,
 		// Parse while the process runs, so events survive even when the capture
 		// cap discards the tail of a very chatty run.
 		Tee: scanner,

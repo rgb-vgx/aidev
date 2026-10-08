@@ -12,7 +12,7 @@ import (
 // still builds elsewhere rather than silently pretending to have group cleanup.
 func setProcessGroup(*exec.Cmd) {}
 
-func terminateGroup(cmd *exec.Cmd) error {
+func terminateGroup(cmd *exec.Cmd, _ string) error {
 	if cmd.Process == nil {
 		return nil
 	}
@@ -22,11 +22,11 @@ func terminateGroup(cmd *exec.Cmd) error {
 // killGroupAfter is the escalation after terminateGroup. Without process
 // groups there is nothing to signal but the process itself, which WaitDelay has
 // already killed by the time this runs.
-func killGroupAfter(cmd *exec.Cmd, _ time.Time) error {
+func killGroupAfter(cmd *exec.Cmd, _ string, _ time.Time) error {
 	return nil
 }
 
 // groupAlive is the existence probe that drives the reap. Without process
 // groups there is only the direct child, which Wait has already reaped, so
 // nothing can be left over.
-func groupAlive(*exec.Cmd) bool { return false }
+func groupAlive(*exec.Cmd, string) bool { return false }

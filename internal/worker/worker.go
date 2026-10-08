@@ -51,6 +51,12 @@ type Orchestrator struct {
 	// made by another process. Zero means the default.
 	CancelPoll time.Duration
 
+	// CancelWait, when positive, makes Cancel wait up to that long for the
+	// process running the task to stop, record task.run_stopped, and say in
+	// its outcome whether it did. Zero returns as soon as the status changed,
+	// which is what an embedded orchestrator (and the tests) want.
+	CancelWait time.Duration
+
 	// runs maps a task ID to the cancel func of the run currently executing
 	// it on this process, so that Cancel stops a local run without waiting
 	// for the status poll. It is created on first use so that the zero value
@@ -91,6 +97,10 @@ type Outcome struct {
 	// run is judged as usual. Empty when the attempt left the tests alone or
 	// never reached verification.
 	TestsModified []string
+
+	// Runner is set by a Cancel that waited for the process running the task:
+	// what it found. Nil when it did not wait or nothing was running.
+	Runner *RunnerStop
 
 	// Message is a one-line human summary of the outcome.
 	Message string

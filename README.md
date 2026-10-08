@@ -338,7 +338,7 @@ aidev task result <task> [--logs] [--json]
 aidev task run-log <task> [--path] [--all]  # the log a detached run wrote
 aidev task diff <task>                    # what a task changed
 aidev task events <task> [--payload] [--after SEQ] [--json]
-aidev task cancel <task> [--reason R] [--json]
+aidev task cancel <task> [--reason R] [--wait 15s] [--json]
 aidev task approve <task> [--deny] [--by WHO] [--reason R] [--json]
 aidev task recover [--dry-run] [--json]   # cancel tasks whose lease expired
 aidev task delete <task>                  # delete a finished task and its history
@@ -618,7 +618,8 @@ invariants:
 - Cancelling a task mid-run still records the cancellation, rather than leaving the
   row in `RUNNING`.
 - Cancellation kills the whole process group, so a verification command's children
-  do not outlive it.
+  do not outlive it, and every process carrying the run's marker, so neither does
+  one that moved to its own session.
 
 Several of these were confirmed by deliberately breaking the implementation and
 watching the test fail, not by trusting a green test.

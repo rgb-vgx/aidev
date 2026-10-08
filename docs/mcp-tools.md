@@ -378,6 +378,10 @@ case-insensitive. No side effects. Errors: no such task, with a pointer to
 ### Output
 
 `task` and a `message` saying what happened, including that a worktree was kept.
+When the task was running, the tool waits up to 15 seconds for the process
+running it to stop, with every process its agent and checks started, and the
+`message` says whether it did; a runner still running is named with how to stop
+it.
 
 ### Errors
 
@@ -386,7 +390,8 @@ No such task; the task has already finished.
 ### Side effects
 
 Moves the task to `CANCELLED`, closes any open attempt, marks any active worktree
-`RETAINED`, appends `task.cancelled`. Work in progress is never discarded.
+`RETAINED`, appends `task.cancelled`, and — when it waited for a running task —
+`task.run_stopped`. Work in progress is never discarded.
 
 ---
 

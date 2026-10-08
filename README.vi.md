@@ -318,7 +318,7 @@ aidev task result <task> [--logs] [--json]
 aidev task run-log <task> [--path] [--all]  # the log a detached run wrote
 aidev task diff <task>                    # what a task changed
 aidev task events <task> [--payload] [--after SEQ] [--json]
-aidev task cancel <task> [--reason R] [--json]
+aidev task cancel <task> [--reason R] [--wait 15s] [--json]
 aidev task approve <task> [--deny] [--by WHO] [--reason R] [--json]
 aidev task recover [--dry-run] [--json]   # cancel tasks whose lease expired
 aidev task delete <task>                  # delete a finished task and its history
@@ -594,7 +594,7 @@ Bộ test làm nhiều hơn việc tăng độ phủ: một số test tồn tạ
 - Việc thu thập diff lộ ra các tập tin mới và không stage bất cứ gì trong worktree.
 - Worktree của lần thử thất bại được giữ lại; công việc của lần thành công được commit trước.
 - Hủy một task giữa chừng vẫn ghi nhận việc hủy, thay vì để hàng đó kẹt ở `RUNNING`.
-- Việc hủy diệt toàn bộ nhóm tiến trình, nên các tiến trình con của lệnh verification không sống sót sau nó.
+- Việc hủy diệt toàn bộ nhóm tiến trình, nên các tiến trình con của lệnh verification không sống sót sau nó, và mọi tiến trình mang dấu của lần chạy, nên tiến trình đã tách sang session riêng cũng vậy.
 
 Một số điều trong đó đã được xác nhận bằng cách cố tình phá hỏng phần cài đặt rồi xem
 test thất bại, chứ không phải bằng cách tin rằng test xanh là đã có bảo đảm thật.

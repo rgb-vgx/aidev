@@ -642,10 +642,14 @@ func taskCancel(ctx context.Context, env *Env, args []string) error {
 	fs := flag.NewFlagSet("task cancel", flag.ContinueOnError)
 	fs.SetOutput(env.Stderr)
 	reason := fs.String("reason", "cancelled from the command line", "why it is being cancelled")
+	wait := fs.Duration("wait", defaultCancelWait, "how long to wait for a running task's process to stop (0 returns at once)")
 	asJSON := fs.Bool("json", false, "print as JSON")
 	positionals, err := parseInterspersed(fs, args)
 	if err != nil {
 		return usagef("aidev task cancel: %v", err)
+	}
+	if *wait < 0 {
+		return usagef("aidev task cancel: --wait must not be negative")
 	}
 	identifier, err := oneIdentifier("cancel", positionals)
 	if err != nil {
@@ -658,14 +662,23 @@ func taskCancel(ctx context.Context, env *Env, args []string) error {
 	}
 	defer app.close()
 
+	app.orchestrator.CancelWait = *wait
 	outcome, err := app.orchestrator.Cancel(ctx, identifier, *reason)
 	if err != nil {
 		return err
 	}
 	if *asJSON {
-		return writeJSON(env.Stdout, buildResultView(outcome, nil, false))
+		if err := writeJSON(env.Stdout, buildResultView(outcome, nil, false)); err != nil {
+			return err
+		}
+	} else {
+		fmt.Fprintln(env.Stdout, outcome.Message)
 	}
-	fmt.Fprintln(env.Stdout, outcome.Message)
+	// The task is cancelled either way; a runner still running is the one
+	// thing the caller has to act on, so it is the exit status too.
+	if r := outcome.Runner; r != nil && r.Observed && !r.Stopped {
+		return fmt.Errorf("%s is cancelled, but its runner (pid %d) is still running", outcome.Task.Identifier(), r.PID)
+	}
 	return nil
 }
 

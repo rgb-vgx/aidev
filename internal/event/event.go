@@ -86,6 +86,12 @@ const (
 	// verification found, not whether anyone took the work.
 	TypeTaskApplied     Type = "task.applied"
 	TypeTaskApplyUndone Type = "task.apply_undone"
+
+	// TypeRunStopped is written by a cancel after it waited for the run it
+	// cancelled: whether the process running the task (the runner) stopped,
+	// and how long that took. A runner that did not stop is named, so the
+	// person knows what is still running.
+	TypeRunStopped Type = "task.run_stopped"
 )
 
 // AllTypes lists every event type aidev emits. The migration's CHECK constraint
@@ -105,6 +111,7 @@ func AllTypes() []Type {
 		TypeApprovalRequired, TypeApprovalGranted, TypeApprovalDenied,
 		TypeContainmentBreach, TypeSharedRefsChanged,
 		TypeTaskApplied, TypeTaskApplyUndone,
+		TypeRunStopped,
 	}
 }
 

@@ -9,6 +9,15 @@ curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh
 
 ## Unreleased
 
+- **A cancel stops the whole run and says so.** TASK-000092 was cancelled while
+  WPS, started by the agent's test command in its own session, kept running:
+  stopping a run reached only the agent's process group. The agent and every
+  setup and verification command now carry a per-run environment marker, and
+  stopping one also stops each process carrying it, wherever it moved (Linux). `aidev task cancel`
+  waits for the process running the task to stop (`--wait`, 15 s by default),
+  records `task.run_stopped`, and names a runner that did not stop, with how to
+  stop it; the command then exits 1. Migration `0020_run_stopped`.
+
 - **Protected paths no longer count files git ignores.** TASK-000093 was refused
   for `__pycache__/` and `tests/wps/out/` "changing" under `tests/**`: both
   ignored, both written by the checks the agent ran, none of it work the agent

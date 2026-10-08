@@ -11,6 +11,8 @@ package procexec
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -74,6 +76,17 @@ type Spec struct {
 	//
 	// OTEL_* is the exception: see stripTelemetryEnv.
 	ExtraEnv []string
+
+	// FollowSessions also stops the run's descendants that left its process
+	// group — a new session, as an application started under xvfb-run gets
+	// (TASK-000092) — when the run is cancelled or ends with them still
+	// running. Each descendant is found by a random environment marker the
+	// run gives the child, which costs a /proc scan (about 6 ms with 500
+	// processes) at the end of the run, so it is set where code aidev does not
+	// control runs: the agent, and setup and verification commands. Git
+	// plumbing leaves it off. Linux only; elsewhere the group is all that is
+	// reached.
+	FollowSessions bool
 
 	// DropEnv entries are variable-name prefixes; every inherited variable
 	// whose name starts with one of them is removed before the process
@@ -202,7 +215,16 @@ func Run(ctx context.Context, spec Spec) (Result, error) {
 
 	cmd := exec.CommandContext(runCtx, spec.Command, spec.Args...)
 	cmd.Dir = spec.Dir
+	// With FollowSessions, every descendant inherits the run's tag, so the
+	// ones that leave the process group (a new session, as an app under
+	// xvfb-run gets) can still be found and stopped with the rest. Random per
+	// run: it names this run's processes and nothing else.
 	cmd.Env = append(dropEnv(stripTelemetryEnv(os.Environ()), spec.DropEnv), spec.ExtraEnv...)
+	tag := ""
+	if spec.FollowSessions {
+		tag = newRunTag()
+		cmd.Env = append(cmd.Env, tag+"=1")
+	}
 
 	// No stdin. A subprocess that reads stdin would block forever here, and
 	// Phase 0 showed tools behave correctly when it is closed.
@@ -225,7 +247,7 @@ func Run(ctx context.Context, spec Spec) (Result, error) {
 	var terminatedAt atomic.Int64
 	cmd.Cancel = func() error {
 		terminatedAt.Store(time.Now().UnixNano())
-		return terminateGroup(cmd)
+		return terminateGroup(cmd, tag)
 	}
 
 	// After cancellation, allow a grace period before the process is killed
@@ -250,15 +272,15 @@ func Run(ctx context.Context, spec Spec) (Result, error) {
 	// now), so an exit-0 run whose helpers held the pipes, or hid behind
 	// redirected output, used to return with those helpers still running. Invariant
 	// 6 has no exception for commands that succeeded.
-	leftovers := groupAlive(cmd)
+	leftovers := groupAlive(cmd, tag)
 	var reapErr error
 	if at := terminatedAt.Load(); at != 0 {
 		// The group already got SIGTERM when cancellation landed. It gets the
 		// rest of the same grace period, then SIGKILL.
-		reapErr = killGroupAfter(cmd, time.Unix(0, at).Add(killGrace))
+		reapErr = killGroupAfter(cmd, tag, time.Unix(0, at).Add(killGrace))
 	} else if leftovers {
-		_ = terminateGroup(cmd)
-		reapErr = killGroupAfter(cmd, time.Now().Add(killGrace))
+		_ = terminateGroup(cmd, tag)
+		reapErr = killGroupAfter(cmd, tag, time.Now().Add(killGrace))
 	}
 	result.OrphansKilled = leftovers && reapErr == nil
 
@@ -407,4 +429,20 @@ func quote(s string) string {
 		return `"` + strings.ReplaceAll(s, `"`, `\"`) + `"`
 	}
 	return s
+}
+
+// runTagPrefix starts the environment variable that marks a run's processes.
+// Deliberately not AIDEV_: the agent backends drop every AIDEV_ variable so
+// that aidev's configuration never reaches the agent, and that rule would
+// strip an outer run's marker from a run started inside it. The marker is a
+// random name with the value 1; it reveals nothing.
+const runTagPrefix = "AIDEVTREE_"
+
+// newRunTag returns a fresh marker name. The name, not the value, is unique,
+// so a run started from inside another run (aidev's own tests run aidev)
+// carries both markers rather than replacing the outer one.
+func newRunTag() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	return runTagPrefix + hex.EncodeToString(b[:])
 }
