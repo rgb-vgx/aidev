@@ -569,6 +569,32 @@ patch over the output cap ended silently; the MCP result did not fill the new
 `c289031`). The pattern of earlier delegations holds: a green specification proves the
 specification, and the review supplies what it left out.
 
+## 7m. A refused reach outside the worktree, and how to make it survivable **[OBSERVED]**
+
+2026-10-09, OpenCode 1.18.35, `opencode/muse-spark-1.3-contributor-free`, headless `opencode run`
+in a fresh git repository, one prompt: read a file outside the directory, then — whatever happened —
+create `done.txt`. TASK-000091 (Axiom-Office) had lost its whole run to such a read of `/opt/kingsoft`.
+
+| Run | `external_directory` | What the agent got | Session | `done.txt` |
+|---|---|---|---|---|
+| A | default (`ask`) | `The user rejected permission to use this specific tool call.` | ended at `tool-calls` | missing |
+| B | `deny` | `The user has specified a rule which prevents you from using this specific tool call…` | went on, ended at `stop` | written |
+| C | `{"<dir>/**": "allow"}` | the read was allowed | went on | written |
+| D | `{"*": "deny", "/usr/share/doc/**": "allow"}`, file three levels down | read it | went on | written |
+| E | that, plus `"edit": {"<dir>/**": "deny"}`, then a write into `<dir>` | **the write succeeded** | went on | written |
+
+- Under `ask`, a headless run cannot answer and the rejection ends the session; under `deny` the same
+  call is a failed tool call the agent reads and works around. So aidev runs OpenCode with
+  `external_directory` denied (`OPENCODE_PERMISSION`, which OpenCode merges into the user's
+  configuration — `opencode agent list` shows the rules appended, later ones winning, and OpenCode
+  re-appends the allow for its own `tool-output` after them).
+- `**` matches any depth (D); a single `*` matches one level, as §7g found for `/tmp/opencode/*`.
+- An `edit` rule did not stop a write (E). An allowed directory is readable *and* writable as far as
+  the agent's tools go; only the filesystem keeps it unwritten. Hence `aidev project read-dirs`, not
+  "read-only", and the warning when the person can write to the directory.
+- `OPENCODE_CONFIG_CONTENT` works too but replaces any configuration a user set through it;
+  `OPENCODE_PERMISSION` touches permissions only.
+
 ## 7b. Phase 2 probes: git and OpenCode mechanics
 
 Measured later than the rest, when the execution core was designed. Same rules:

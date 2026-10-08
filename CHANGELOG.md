@@ -9,6 +9,21 @@ curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh
 
 ## Unreleased
 
+- **A denied reach outside the worktree no longer ends the agent's session.**
+  OpenCode's default for a tool call outside its directory is `ask`, which a
+  headless run answers by rejecting the call and ending the session —
+  TASK-000091 lost its run to one read of `/opt/kingsoft`. aidev now runs
+  OpenCode with that permission denied instead: the agent gets a failed tool
+  call and carries on (measured, research §7m).
+
+- **`aidev project read-dirs [DIR...] [--clear]`** lets a repository's agent
+  read named directories outside it, such as an installed program's files. CLI
+  only, like approval and verify-mode. It refuses the root, the repository, the
+  workspace and aidev's configuration, and warns about a directory you can
+  write to: it grants reading, it cannot make a directory read-only (an
+  OpenCode edit rule did not stop a write). Migration `0021_read_dirs`; plugin
+  0.5.4 teaches the delegate skill about it.
+
 - **A failed attempt says where its work is.** The agent does not commit (its
   prompt tells it not to): aidev commits the work itself once it passes, so a
   failed attempt's branch still points at the base. `task result` now says the

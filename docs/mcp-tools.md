@@ -444,6 +444,10 @@ appending `task.approval_granted` or `task.approval_denied` with `decided_by`,
   what happens to that branch is a human's call.
 - **No configuration surface.** A planner cannot change `workspace_root`, the model,
   the agent command, or a timeout default.
+- **Nothing that widens what the agent can reach.** The directories outside the
+  repository an agent may read are set by a person at the CLI (`aidev project
+  read-dirs`), never through a tool: a planner must not widen its own agent's
+  reach.
 - **No project or event writes.** Projects are added by a person (`aidev project
   add`, or a first `aidev task create`); the MCP server registers one only when
   `mcp.auto_register_projects` allows it. The event log is append-only by

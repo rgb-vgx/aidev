@@ -182,6 +182,7 @@ func (o *OpenCode) Run(ctx context.Context, req Request) (Result, error) {
 	} else if db != "" {
 		extraEnv = append(extraEnv, "OPENCODE_DB="+db)
 	}
+	extraEnv = append(extraEnv, "OPENCODE_PERMISSION="+externalDirectoryPermission(req.ReadDirs))
 
 	spec := procexec.Spec{
 		Command:        o.command(),
@@ -518,4 +519,34 @@ func currentDir() (string, error) {
 		return "", fmt.Errorf("determine current directory: %w", err)
 	}
 	return dir, nil
+}
+
+// externalDirectoryPermission is the OPENCODE_PERMISSION aidev runs OpenCode
+// with: every directory outside the working directory denied, except the ones
+// the project lets the agent read.
+//
+// The default is "ask", and a headless run cannot answer a question: it
+// rejects the call, and the rejection ends the session (TASK-000091 lost its
+// run to one read of /opt/kingsoft). A rule that denies comes back to the
+// agent as a failed tool call instead, and the session goes on — measured on
+// OpenCode 1.18.35 (docs/research.md §7m). OPENCODE_PERMISSION is merged into
+// the user's configuration, later rules winning, so this only changes the
+// rules it names. OpenCode's own /tmp/opencode/* keeps the allow it has by
+// default; each read dir is allowed as itself and everything under it ("**";
+// a single "*" matches one level only).
+func externalDirectoryPermission(readDirs []string) string {
+	rules := map[string]string{"*": "deny", "/tmp/opencode/*": "allow"}
+	for _, dir := range readDirs {
+		dir = strings.TrimRight(filepath.Clean(dir), "/")
+		if dir == "" {
+			continue
+		}
+		rules[dir] = "allow"
+		rules[dir+"/**"] = "allow"
+	}
+	// Map order would not matter to OpenCode's last-match rule for these
+	// patterns, except "*": it must come before the allows. JSON objects are
+	// written in key order by encoding/json, and "*" sorts before "/".
+	encoded, _ := json.Marshal(map[string]any{"external_directory": rules})
+	return string(encoded)
 }

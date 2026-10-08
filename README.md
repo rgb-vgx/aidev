@@ -350,6 +350,7 @@ aidev project add   [path]                        # register a repository for MC
 aidev project list  [--json]                      # repositories aidev knows
 aidev project approval [on|off] [--repo .]        # gate every task of the repo (operator only)
 aidev project verify-mode [in_place|clean] [--repo .]  # where new tasks verify (operator only)
+aidev project read-dirs [DIR...] [--clear] [--repo .]  # directories the agent may read (operator only)
 ```
 
 `<task>` is either the reference (`TASK-000001`, case-insensitive) or the UUID.
@@ -440,7 +441,7 @@ aidev invokes `opencode run --dir <worktree> --format json -- <prompt>` and read
 the newline-delimited event stream. You never write that command yourself; knowing
 it is aidev's job, not the planner's.
 
-Three measured behaviours worth knowing before your first task:
+Four measured behaviours worth knowing before your first task:
 
 - **A task takes as long as the model does.** aidev's own share of a run
   (worktree, diff, verification, every database write) measured 0.2 seconds
@@ -450,6 +451,11 @@ Three measured behaviours worth knowing before your first task:
 - **OpenCode writes files without asking**, even without its `--auto` flag. That
   is why every task runs in a dedicated worktree and why aidev refuses a worktree
   path that would land inside your repository.
+- **A reach outside the worktree is denied, not fatal.** OpenCode asks before a
+  tool call touches a directory outside its own, and a headless run that cannot
+  answer ends the session. aidev denies such calls instead, so the agent gets a
+  failed tool call and carries on. To let a repository's agent read a directory
+  outside it, such as an installed program, use `aidev project read-dirs <dir>`.
 - **Concurrent runs need their own OpenCode database.** OpenCode keeps every
   session in one shared SQLite file, and runs started side by side on it die at
   random with `database is locked`. aidev therefore gives each task its own,

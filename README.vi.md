@@ -330,6 +330,7 @@ aidev project add   [path]                        # đăng ký một repository 
 aidev project list  [--json]                      # các repository mà aidev biết
 aidev project approval [on|off] [--repo .]        # chặn mọi task của repo chờ người duyệt (chỉ ở CLI)
 aidev project verify-mode [in_place|clean] [--repo .]  # nơi các task mới verify (chỉ ở CLI)
+aidev project read-dirs [DIR...] [--clear] [--repo .]  # thư mục agent được đọc (chỉ ở CLI)
 ```
 
 `<task>` là mã tham chiếu (`TASK-000001`, không phân biệt chữ hoa chữ thường) hoặc UUID.
@@ -423,7 +424,7 @@ aidev gọi `opencode run --dir <worktree> --format json -- <prompt>` rồi đ�
 luồng event phân tách bằng xuống dòng. Bạn không bao giờ tự gõ lệnh đó; biết nó là việc của
 aidev, không phải của planner.
 
-Ba hành vi đã đo đạc đáng biết trước task đầu tiên của bạn:
+Bốn hành vi đã đo đạc đáng biết trước task đầu tiên của bạn:
 
 - **Một task lâu đúng bằng thời gian mô hình chạy.** Phần việc của chính aidev trong
   một lần chạy (worktree, diff, verification, mọi lần ghi cơ sở dữ liệu) được đo chỉ
@@ -433,6 +434,12 @@ Ba hành vi đã đo đạc đáng biết trước task đầu tiên của bạn
 - **OpenCode ghi tập tin mà không hỏi**, ngay cả khi không có cờ `--auto`. Đó
   là lý do mọi task chạy trong một worktree riêng và aidev từ chối đường dẫn worktree
   nằm bên trong kho mã của bạn.
+- **Chạm ra ngoài worktree thì bị từ chối, chứ không làm hỏng phiên.** OpenCode
+  hỏi trước khi một tool call chạm vào thư mục nằm ngoài thư mục của nó, và một
+  lần chạy headless không trả lời được thì kết thúc phiên. aidev từ chối các lời
+  gọi đó, nên agent nhận một tool call thất bại rồi làm tiếp. Muốn cho agent của
+  một repository đọc một thư mục bên ngoài, như một chương trình đã cài, hãy dùng
+  `aidev project read-dirs <dir>`.
 - **Chạy đồng thời cần mỗi task một database OpenCode riêng.** OpenCode giữ mọi
   phiên trong một tập tin SQLite dùng chung, và các lần chạy cùng lúc trên đó chết
   ngẫu nhiên với lỗi `database is locked`. Vì vậy aidev cho mỗi task một tập tin

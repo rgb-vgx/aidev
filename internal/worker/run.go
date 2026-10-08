@@ -549,6 +549,7 @@ func (r *run) runAgent(ctx context.Context) error {
 		Model:          resolveModel(r.task, r.o.Config.Routing),
 		Timeout:        r.task.EffectiveTimeout(r.o.Config.DefaultTaskTimeout),
 		MaxOutputBytes: r.o.Config.MaxOutputBytes,
+		ReadDirs:       r.projectReadDirs(ctx),
 	}
 	// A retry continues the failed attempt's agent session, in the same
 	// directory it was created in, so the agent keeps what it learned.
@@ -556,13 +557,19 @@ func (r *run) runAgent(ctx context.Context) error {
 		req.SessionID = r.retry.sessionID
 	}
 
-	r.emit(ctx, event.TypeWorkerStarted, map[string]any{
+	started := map[string]any{
 		"backend":       r.o.Backend.Name(),
 		"agent":         r.task.Agent,
 		"working_dir":   r.worktree.Path,
 		"timeout":       req.Timeout.String(),
 		"prompt_length": len(prompt),
-	})
+	}
+	// What the agent may read outside its worktree is part of the record of
+	// what it was allowed to do.
+	if len(req.ReadDirs) > 0 {
+		started["read_dirs"] = req.ReadDirs
+	}
+	r.emit(ctx, event.TypeWorkerStarted, started)
 
 	// The version lookup runs alongside the agent: `opencode --version` takes
 	// about 0.4s, twice aidev's own share of a run, and the agent takes
@@ -1427,4 +1434,17 @@ func (r *run) lookupAgentVersion(ctx context.Context) func() string {
 		done <- version
 	}()
 	return func() string { return <-done }
+}
+
+// projectReadDirs is what the project lets the agent read outside its
+// worktree, read when the attempt starts so a change applies to the next
+// attempt. A failure to read it gives the agent nothing outside its worktree:
+// the safe answer, logged.
+func (r *run) projectReadDirs(ctx context.Context) []string {
+	project, err := r.o.Store.GetProject(ctx, r.task.ProjectID)
+	if err != nil {
+		r.log.WarnContext(ctx, "could not read the project's read dirs; the agent reads nothing outside its worktree", "error", err.Error())
+		return nil
+	}
+	return project.ReadDirs
 }
