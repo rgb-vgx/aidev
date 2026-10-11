@@ -53,7 +53,7 @@ func TestCoverageNamesChangedLinesNoTestRan(t *testing.T) {
 
 	created := h.createTask(func(in *worker.CreateTaskInput) {
 		in.Verification = goTest()
-		in.Coverage = true
+		in.Coverage = boolPtr(true)
 	})
 	out, err := h.orchestrator.RunTask(h.ctx, created.Ref)
 	if err != nil {
@@ -130,7 +130,7 @@ func TestCoverageThatCannotBeMeasuredIsANote(t *testing.T) {
 	}
 	created := h.createTask(func(in *worker.CreateTaskInput) {
 		in.Verification = []task.VerificationStep{{Command: "true"}}
-		in.Coverage = true
+		in.Coverage = boolPtr(true)
 	})
 	out, err := h.orchestrator.RunTask(h.ctx, created.Ref)
 	if err != nil || out.Task.Status != task.StatusSucceeded {
@@ -179,5 +179,185 @@ func TestMCPCoverage(t *testing.T) {
 	c := result.Result.Coverage
 	if c == nil || c.NotRun < 1 || len(c.Files) != 1 || c.Files[0].Path != "calc/calc.go" {
 		t.Errorf("result.coverage = %+v, want calc/calc.go with lines not run", c)
+	}
+}
+
+// boolPtr boxes a coverage choice: a nil *bool takes the project's default,
+// a non-nil one freezes that value into the task.
+func boolPtr(v bool) *bool { return &v }
+
+// The project row is a template for tasks created after it changes, never a
+// leash on tasks that already exist: each task freezes its own coverage
+// setting at creation, so the goalposts cannot move under a task, and an
+// explicit off at creation beats a project that has it on.
+func TestProjectCoverageIsFrozenIntoEachTask(t *testing.T) {
+	h := newHarness(t, nil)
+
+	// The first task registers the project with coverage off by default.
+	first := h.createTask(nil)
+	if first.Coverage {
+		t.Fatal("first task coverage = true, want the off default")
+	}
+
+	repo, err := h.git.OpenRepository(h.ctx, h.repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := h.store.GetProjectByPath(h.ctx, repo.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.store.SetProjectCoverage(h.ctx, project.ID, true); err != nil {
+		t.Fatalf("SetProjectCoverage: %v", err)
+	}
+
+	// A task created after the switch inherits it…
+	second := h.createTask(nil)
+	if !second.Coverage {
+		t.Error("inherited coverage = false, want true from the project template")
+	}
+	// …the first keeps what it was created with, reloaded from the store so
+	// the assertion is about the row, not the value returned earlier.
+	reloaded, err := h.store.GetTask(h.ctx, first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Coverage {
+		t.Error("first task coverage after the project switched = true, want it frozen at false")
+	}
+
+	// An explicit off at creation beats the template.
+	explicit := h.createTask(func(in *worker.CreateTaskInput) { in.Coverage = boolPtr(false) })
+	if explicit.Coverage {
+		t.Error("explicit coverage = true, want the caller's off to win over the template")
+	}
+
+	// Switching back does not rewrite what already exists.
+	if _, err := h.store.SetProjectCoverage(h.ctx, project.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err = h.store.GetTask(h.ctx, second.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reloaded.Coverage {
+		t.Error("second task coverage after switching back = false, want it frozen at true")
+	}
+
+	// The audit log records the setting with the task.
+	if cov := h.eventPayload(second.ID, "task.created")["coverage"]; cov != true {
+		t.Errorf("task.created coverage = %v, want true", cov)
+	}
+}
+
+// `aidev project coverage` is where the template for new tasks is set. Like
+// approval it prints the current state with no argument — the common
+// question is "do this project's tasks report coverage?" — and setting it
+// must survive to the project list, which is where an operator sees every
+// repository at once.
+func TestProjectCoverageShowSetAndList(t *testing.T) {
+	h := newHarness(t, nil)
+
+	// The project does not exist until its first task registers it.
+	if _, stderr, err := h.runCLI(t, "project", "coverage", "--repo", h.repoPath); err == nil {
+		t.Errorf("coverage on an unknown repository succeeded; stderr: %s", stderr)
+	}
+
+	h.createTask(nil)
+
+	stdout, stderr, err := h.runCLI(t, "project", "coverage", "--repo", h.repoPath)
+	if err != nil {
+		t.Fatalf("project coverage: %v\nstderr: %s", err, stderr)
+	}
+	if strings.TrimSpace(stdout) != "off" {
+		t.Errorf("initial coverage = %q, want off", strings.TrimSpace(stdout))
+	}
+
+	stdout, stderr, err = h.runCLI(t, "project", "coverage", "--repo", h.repoPath, "on")
+	if err != nil {
+		t.Fatalf("project coverage on: %v\nstderr: %s", err, stderr)
+	}
+	if !strings.Contains(stdout, "coverage on") {
+		t.Errorf("set output = %q, want it to confirm the new setting", stdout)
+	}
+	// The output must say the change applies to new tasks only: a reader
+	// who believes existing tasks moved would misread their results.
+	if !strings.Contains(stdout, "already created") {
+		t.Errorf("set output does not say existing tasks keep their setting:\n%s", stdout)
+	}
+
+	stdout, stderr, err = h.runCLI(t, "project", "list")
+	if err != nil {
+		t.Fatalf("project list: %v\nstderr: %s", err, stderr)
+	}
+	if !strings.Contains(stdout, "coverage on") {
+		t.Errorf("project list does not show the coverage setting:\n%s", stdout)
+	}
+
+	// An unknown word is refused without changing anything.
+	if _, _, err := h.runCLI(t, "project", "coverage", "--repo", h.repoPath, "maybe"); err == nil {
+		t.Error("an unknown word was accepted as a coverage setting")
+	}
+	stdout, _, err = h.runCLI(t, "project", "coverage", "--repo", h.repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(stdout) != "on" {
+		t.Errorf("coverage after a rejected value = %q, want on to be unchanged", strings.TrimSpace(stdout))
+	}
+}
+
+// The create flags must make the tri-state obvious: --coverage turns the
+// report on for the task, --no-coverage turns it off against a project that
+// has it on, and neither takes the project's default.
+func TestTaskCreateCoverageFlags(t *testing.T) {
+	h := newHarness(t, nil)
+
+	_, stderr, _ := h.runCLI(t, "task", "create", "-h")
+	for _, want := range []string{"-coverage", "-no-coverage"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("task create help does not mention %s:\n%s", want, stderr)
+		}
+	}
+
+	// Register the project through a first task, then turn its default on.
+	h.createTask(nil)
+	repo, err := h.git.OpenRepository(h.ctx, h.repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := h.store.GetProjectByPath(h.ctx, repo.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.store.SetProjectCoverage(h.ctx, project.ID, true); err != nil {
+		t.Fatalf("SetProjectCoverage: %v", err)
+	}
+
+	stdout, stderr, err := h.runCLI(t, "task", "create",
+		"--repo", h.repoPath,
+		"--title", "Create the marker file",
+		"--verify", "test -f marker.txt",
+		"--no-coverage",
+		"--json")
+	if err != nil {
+		t.Fatalf("task create --no-coverage: %v\nstderr: %s", err, stderr)
+	}
+	var off struct {
+		Coverage bool `json:"coverage"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &off); err != nil {
+		t.Fatalf("the created task is not JSON: %v\n%s", err, stdout)
+	}
+	if off.Coverage {
+		t.Errorf("coverage = true, want --no-coverage to beat the project's on default")
+	}
+
+	if _, _, err := h.runCLI(t, "task", "create",
+		"--repo", h.repoPath,
+		"--title", "Create the marker file",
+		"--verify", "test -f marker.txt",
+		"--coverage", "--no-coverage"); err == nil {
+		t.Error("--coverage with --no-coverage was accepted; the two contradict each other")
 	}
 }

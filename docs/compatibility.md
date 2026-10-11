@@ -53,6 +53,9 @@ every release so far:
 - A project registered from now on defaults to `clean` verification (migration
   `0023_clean_verify_default`); a repository pinning submodules still defaults
   to `in_place`, and projects already registered keep the mode they have.
+- A project can turn the coverage report on for all of its tasks (migration
+  `0024_project_coverage`); the report stays off unless the operator turns it
+  on, and tasks already created keep the setting they were created with.
 
 ## Versions
 

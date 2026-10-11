@@ -328,7 +328,7 @@ aidev migrate [--json]                # apply pending migrations
 aidev task create --title T --verify CMD [--repo .] [--description D]
                   [--acceptance A] [--agent build] [--model M] [--priority N]
                   [--hardness TRIVIAL|STANDARD|HARD] [--max-retries N]
-                  [--setup CMD] [--protect GLOB] [--expect-fail-on-base] [--coverage]
+                   [--setup CMD] [--protect GLOB] [--expect-fail-on-base] [--coverage|--no-coverage]
                   [--verify-mode in_place|clean] [--requires-approval]
                   [--base-ref REF] [--timeout 30m] [--json]
 aidev task list   [--status S,S] [--repo .] [--limit N] [--unapplied] [--json]
@@ -350,6 +350,7 @@ aidev project add   [path]                        # register a repository for MC
 aidev project list  [--json]                      # repositories aidev knows
 aidev project approval [on|off] [--repo .]        # gate every task of the repo (operator only)
 aidev project verify-mode [in_place|clean] [--repo .]  # where new tasks verify (operator only)
+aidev project coverage [on|off] [--repo .]          # report which changed Go lines no test ran for new tasks (operator only)
 aidev project read-dirs [DIR...] [--clear] [--repo .]  # directories the agent may read (operator only)
 ```
 
@@ -380,6 +381,12 @@ A repository registered from now on verifies `clean` unless it pins
 submodules, which clean verification refuses: those default to `in_place`
 instead. `aidev project verify-mode` shows or changes a project's default, and
 projects already registered keep the mode they have.
+
+`--coverage` reports, once verification passes, which of the task's changed Go
+lines no test ran — a report only, it never decides the outcome. A project
+with `aidev project coverage on` turns the report on for every task created
+from then on; `--no-coverage` turns it off for one task against such a
+project, and tasks already created keep the setting they were created with.
 
 ## What happens under the hood
 

@@ -53,6 +53,14 @@ type Project struct {
 	// (aidev project verify-mode), like RequiresApproval.
 	VerificationMode VerificationMode
 
+	// Coverage is the default for whether this project's tasks report, once
+	// verification passes, which changed Go lines the tests ran. It is a
+	// template like VerificationMode: each task freezes its own copy at
+	// creation, so changing this later does not move the goalposts under
+	// tasks that already exist. Set only from the CLI
+	// (aidev project coverage), like RequiresApproval.
+	Coverage bool
+
 	CreatedAt time.Time
 	UpdatedAt time.Time
 

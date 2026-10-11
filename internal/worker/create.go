@@ -58,7 +58,10 @@ type CreateTaskInput struct {
 	ExpectFailOnBase bool
 	// Coverage reports, once verification passes, which changed Go lines
 	// the tests ran (task.coverage_reported). It never decides the outcome.
-	Coverage bool
+	// A nil choice takes the project's default; it is resolved and frozen
+	// into the task row here, so later changes to the project default cannot
+	// move the goalposts under this task.
+	Coverage *bool
 	BaseRef  string
 	Timeout  time.Duration
 }
@@ -174,6 +177,15 @@ func (o *Orchestrator) CreateTask(ctx context.Context, in CreateTaskInput) (task
 		}
 	}
 
+	// Resolve the coverage report now and freeze it into the task: an
+	// explicit choice wins, otherwise the project's default applies as of
+	// this moment. Later changes to the project row affect only tasks
+	// created after them, so the report stays a pure function of the task.
+	coverage := project.Coverage
+	if in.Coverage != nil {
+		coverage = *in.Coverage
+	}
+
 	// Clean verification cannot honour submodules: the detached checkout of
 	// the snapshot would contain empty directories, and the checks would run
 	// against sources that are not there. The base check of an
@@ -218,7 +230,7 @@ func (o *Orchestrator) CreateTask(ctx context.Context, in CreateTaskInput) (task
 		MaxRetries:         in.MaxRetries,
 		RequiresApproval:   in.RequiresApproval,
 		ExpectFailOnBase:   in.ExpectFailOnBase,
-		Coverage:           in.Coverage,
+		Coverage:           coverage,
 		BaseRef:            in.BaseRef,
 		BaseCommitAtCreate: baseAtCreate,
 		Timeout:            in.Timeout,

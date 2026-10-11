@@ -48,6 +48,7 @@ A git repository aidev may run tasks against.
 | `default_branch` | base for task branches when a task does not name one |
 | `requires_approval` | project approval policy: every task stops for a human first; set only via `aidev project approval` (migration 0008) |
 | `verification_mode` | default where new tasks verify: `clean`, or `in_place` for a repository pinning submodules, which clean verification refuses (migration 0011; migration 0023 changed the default from `in_place` to `clean`); a template only — each task freezes its own copy at creation, set only via `aidev project verify-mode` |
+| `coverage` | default for whether new tasks report, once verification passes, which changed Go lines the tests ran; off unless the operator turns it on (migration 0024); a template only — each task freezes its own copy at creation, set only via `aidev project coverage` |
 
 `repo_path` is unique so that registering the same repository twice is idempotent.
 `EnsureProject` does insert-or-select in a single statement, so two callers racing
@@ -68,6 +69,7 @@ The unit of delegated work.
 | `protected_paths` | JSONB array of glob patterns (default `[]`); an attempt changing a matching path fails verification before any check runs (migration 0010) |
 | `setup_steps` | JSONB array of argv commands (default `[]`) that run before verification to prepare the checkout; a failing one fails the task before any check runs (migration 0011) |
 | `verification_mode` | where this task's verification runs: `in_place` or `clean`, frozen at creation from the caller's choice or the project's default (migration 0011) |
+| `coverage` | whether this task reports, once verification passes, which changed Go lines the tests ran (`task.coverage_reported`); frozen at creation from the caller's choice or the project's default (migration 0022 added the report, migration 0024 the project default) |
 | `max_retries` | how many more attempts a run may make when one fails in a way another try can fix — the checks ran and failed, or the agent stopped early (0 to 10; migration 0017 added the retry itself) |
 | `requires_approval` | the task's own gate (the creator's ask); OR'd at run time with the project's policy, never overwritten by it |
 | `expect_fail_on_base` | when true the verification commands run on the base commit before the agent starts, and a pass there fails the attempt with kind VERIFICATION without ever calling the agent (migration 0012) |

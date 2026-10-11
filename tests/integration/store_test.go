@@ -149,6 +149,59 @@ func TestProjectApprovalPolicyIsStickyAcrossEnsureProject(t *testing.T) {
 	}
 }
 
+// The coverage default is the operator's (CLI only, migration 0024). It must
+// default off, survive the EnsureProject every task creation runs, and report
+// an unknown project rather than silently doing nothing.
+func TestProjectCoverageIsStickyAcrossEnsureProject(t *testing.T) {
+	db, ctx := openStore(t)
+
+	path := "/tmp/aidev-coverage-" + uuid.NewString()
+	created, err := db.EnsureProject(ctx, "aidev", path, "main", task.VerificationClean)
+	if err != nil {
+		t.Fatalf("EnsureProject: %v", err)
+	}
+	if created.Coverage {
+		t.Error("a new project reports coverage, want the report off by default")
+	}
+
+	// The column default itself: a row written without the setting must
+	// still come back off, or migration 0024 did not do what it says.
+	rawID := uuid.Must(uuid.NewV7())
+	rawPath := "/tmp/aidev-coverage-raw-" + uuid.NewString()
+	if _, err := db.Pool().Exec(ctx,
+		`INSERT INTO projects (id, name, repo_path, default_branch) VALUES ($1, $2, $3, $4)`,
+		rawID, "aidev", rawPath, "main"); err != nil {
+		t.Fatalf("insert without coverage: %v", err)
+	}
+	raw, err := db.GetProject(ctx, rawID)
+	if err != nil {
+		t.Fatalf("GetProject: %v", err)
+	}
+	if raw.Coverage {
+		t.Error("column default reports coverage, want off")
+	}
+
+	updated, err := db.SetProjectCoverage(ctx, created.ID, true)
+	if err != nil {
+		t.Fatalf("SetProjectCoverage: %v", err)
+	}
+	if !updated.Coverage {
+		t.Error("after setting, coverage = false, want true")
+	}
+
+	again, err := db.EnsureProject(ctx, "aidev", path, "main", task.VerificationClean)
+	if err != nil {
+		t.Fatalf("second EnsureProject: %v", err)
+	}
+	if !again.Coverage {
+		t.Error("EnsureProject reset the coverage setting; an operator's choice must survive it")
+	}
+
+	if _, err := db.SetProjectCoverage(ctx, uuid.Must(uuid.NewV7()), true); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("SetProjectCoverage for an unknown project = %v, want ErrNotFound", err)
+	}
+}
+
 // A newly registered project verifies in a clean checkout — a file git
 // ignores cannot make its checks pass there — unless the registration says
 // the repository pins submodules, which clean verification refuses. The mode

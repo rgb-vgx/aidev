@@ -9,7 +9,7 @@ import (
 	"aidev/internal/task"
 )
 
-const projectColumns = `id, name, repo_path, default_branch, submodules, requires_approval, verification_mode, created_at, updated_at, read_dirs`
+const projectColumns = `id, name, repo_path, default_branch, submodules, requires_approval, verification_mode, created_at, updated_at, read_dirs, coverage`
 
 // EnsureProject registers repoPath as a project, or returns the existing
 // project for that path unchanged.
@@ -172,6 +172,27 @@ func (s *Store) SetProjectReadDirs(ctx context.Context, id uuid.UUID, dirs []str
 	return p, nil
 }
 
+// SetProjectCoverage switches whether this project's new tasks report, once
+// verification passes, which changed Go lines the tests ran, and returns the
+// project as it now stands.
+//
+// Like SetProjectRequiresApproval it is its own call with no MCP counterpart:
+// the project row is a template read at task creation, and the party creating
+// tasks must not be able to rewrite the template other tasks will inherit.
+// Tasks already created keep the setting frozen into their own row.
+func (s *Store) SetProjectCoverage(ctx context.Context, id uuid.UUID, enabled bool) (task.Project, error) {
+	row := s.db.QueryRow(ctx, `
+		UPDATE projects SET coverage = $2, updated_at = now()
+		WHERE id = $1
+		RETURNING `+projectColumns, id, enabled)
+
+	p, err := scanProject(row)
+	if err != nil {
+		return task.Project{}, fmt.Errorf("set coverage for project %s: %w", id, err)
+	}
+	return p, nil
+}
+
 // scanner is satisfied by both pgx.Row and pgx.Rows.
 type scanner interface {
 	Scan(dest ...any) error
@@ -180,7 +201,7 @@ type scanner interface {
 func scanProject(row scanner) (task.Project, error) {
 	var p task.Project
 	err := row.Scan(&p.ID, &p.Name, &p.RepoPath, &p.DefaultBranch, &p.Submodules, &p.RequiresApproval,
-		&p.VerificationMode, &p.CreatedAt, &p.UpdatedAt, &p.ReadDirs)
+		&p.VerificationMode, &p.CreatedAt, &p.UpdatedAt, &p.ReadDirs, &p.Coverage)
 	if err != nil {
 		return task.Project{}, classify(err)
 	}

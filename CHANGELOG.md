@@ -9,6 +9,21 @@ curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh
 
 ## Unreleased
 
+- **A project can turn the coverage report on for all of its tasks.** `--coverage`
+  reports, once verification passes, which of the changed Go lines the tests ran —
+  but it only happens when whoever creates the task remembers the flag, and the
+  problem it exists for (a green specification that never executes the changed
+  code) is exactly the one that goes unnoticed when nobody remembers.
+  `aidev project coverage on` turns the report on for every task created from then
+  on (operator only, like `verify-mode`); each task freezes its own copy at
+  creation, so a later change never moves the goalposts under existing tasks.
+  `aidev task create --coverage` turns it on for one task, `--no-coverage` turns
+  it off for one task against a project that has it on, and neither takes the
+  project's default (MCP `coverage` is now tri-state the same way: empty takes
+  the default). `aidev project list` shows the setting. Migration
+  `0024_project_coverage` (additive: one column with a default, no existing row
+  is touched).
+
 - **A new project verifies in a clean checkout unless its repository pins
   submodules.** A verification pass must not be makeable by a file git ignores
   (a `.venv` the agent built, a vendored dependency, a cached build output), so
