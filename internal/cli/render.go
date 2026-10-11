@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"aidev/internal/coverage"
 	"aidev/internal/task"
 	"aidev/internal/worker"
 )
@@ -242,6 +243,8 @@ func writeResult(env *Env, outcome worker.Outcome, runs []task.VerificationRun, 
 		writeBaseMoved(w, outcome)
 	}
 
+	writeCoverage(w, outcome.Coverage)
+
 	writeNextSteps(w, outcome)
 }
 
@@ -359,4 +362,39 @@ func agentLabel(r task.WorkerRun) string {
 		return r.Backend
 	}
 	return r.Backend + " " + r.AgentVersion
+}
+
+// writeCoverage reports which changed Go lines the tests ran, for a task that
+// asked. It is a report: the outcome above is the verdict.
+func writeCoverage(w io.Writer, c *coverage.Result) {
+	if c == nil {
+		return
+	}
+	if c.Error != "" {
+		fmt.Fprintf(w, "\ncoverage could not be measured: %s\n", c.Error)
+		return
+	}
+	if c.Changed == 0 {
+		fmt.Fprintf(w, "\ncoverage: no changed Go line is executable code\n")
+		return
+	}
+	fmt.Fprintf(w, "\ncoverage of the changed Go lines: %d of %d run by the tests\n", c.Changed-c.NotRun, c.Changed)
+	if c.NotRun == 0 {
+		return
+	}
+	fmt.Fprintf(w, "  not run by the tests:\n")
+	for _, f := range c.Files {
+		if f.NotRun == 0 {
+			continue
+		}
+		parts := make([]string, 0, len(f.NotRunLines))
+		for _, r := range f.NotRunLines {
+			if r.From == r.To {
+				parts = append(parts, fmt.Sprintf("%d", r.From))
+			} else {
+				parts = append(parts, fmt.Sprintf("%d-%d", r.From, r.To))
+			}
+		}
+		fmt.Fprintf(w, "    %s %s\n", f.Path, strings.Join(parts, ", "))
+	}
 }

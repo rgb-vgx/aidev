@@ -308,7 +308,7 @@ aidev migrate [--json]                # apply pending migrations
 aidev task create --title T --verify CMD [--repo .] [--description D]
                   [--acceptance A] [--agent build] [--model M] [--priority N]
                   [--hardness TRIVIAL|STANDARD|HARD] [--max-retries N]
-                  [--setup CMD] [--protect GLOB] [--expect-fail-on-base]
+                  [--setup CMD] [--protect GLOB] [--expect-fail-on-base] [--coverage]
                   [--verify-mode in_place|clean] [--requires-approval]
                   [--base-ref REF] [--timeout 30m] [--json]
 aidev task list   [--status S,S] [--repo .] [--limit N] [--unapplied] [--json]

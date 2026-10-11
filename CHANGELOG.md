@@ -9,6 +9,14 @@ curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh
 
 ## Unreleased
 
+- **`--coverage` shows which changed Go lines no test ran.** Every dogfood
+  round found defects in code the green specification never executed. With
+  `aidev task create --coverage` (MCP `coverage`), once verification passes aidev
+  runs the tests of the changed packages with a coverage profile, module by
+  module, and `task result` says "coverage of the changed Go lines: N of M run by
+  the tests" and lists the lines not run. A report only; it never changes the
+  outcome. Migration `0022_coverage`; plugin 0.5.5 has the delegate skill ask
+  for it on Go changes and the review skill start from it.
 - docs/compatibility.md says what 0.x means in practice: which interfaces to
   rely on, how a change is announced, and what the migrations have promised.
 - **Work taken with plain git counts as taken.** A planner often merges,

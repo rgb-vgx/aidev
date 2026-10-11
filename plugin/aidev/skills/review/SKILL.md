@@ -36,7 +36,9 @@ git diff <base_ref> <branch>
 
 ## 3. Judgment: what the tests did not exercise
 
-Read the whole diff, not only the summary. Look for:
+Read the whole diff, not only the summary. Start where `result.coverage` points,
+when the task asked for it: changed lines no test ran are where a green
+specification says nothing, and where earlier reviews found the defects. Look for:
 
 - behaviour the tests pass by accident, or inputs they never try (empty, very
   large, odd characters, a second call, concurrent calls);

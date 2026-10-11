@@ -125,6 +125,10 @@ type Task struct {
 	// and the agent is never called. For tasks whose point is to fix a bug.
 	ExpectFailOnBase bool
 
+	// Coverage asks for a report, once verification passes, of which changed
+	// Go lines the tests ran (task.coverage_reported). Never decides.
+	Coverage bool
+
 	// BaseRef is the git ref the task's worktree branches from. Empty means the
 	// project's default branch.
 	BaseRef string
@@ -164,7 +168,11 @@ type NewTaskInput struct {
 	MaxRetries       int
 	RequiresApproval bool
 	ExpectFailOnBase bool
-	BaseRef          string
+
+	// Coverage asks for a report, once verification passes, of which changed
+	// Go lines the tests ran (task.coverage_reported). Never decides.
+	Coverage bool
+	BaseRef  string
 	// BaseCommitAtCreate is resolved by the caller, which has the repository;
 	// this package does not touch git.
 	BaseCommitAtCreate string
@@ -325,6 +333,7 @@ func New(input NewTaskInput, defaultAgent string) (Task, error) {
 		MaxRetries:         input.MaxRetries,
 		RequiresApproval:   input.RequiresApproval,
 		ExpectFailOnBase:   input.ExpectFailOnBase,
+		Coverage:           input.Coverage,
 		BaseRef:            strings.TrimSpace(input.BaseRef),
 		BaseCommitAtCreate: strings.TrimSpace(input.BaseCommitAtCreate),
 		Timeout:            input.Timeout,

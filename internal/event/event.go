@@ -92,6 +92,12 @@ const (
 	// and how long that took. A runner that did not stop is named, so the
 	// person knows what is still running.
 	TypeRunStopped Type = "task.run_stopped"
+
+	// TypeCoverageReported records, for a task created with coverage, which
+	// of the Go lines it changed the tests ran: changed and not_run counts,
+	// the files and line ranges, or the error that kept it from being
+	// measured. A report; it never decides the outcome.
+	TypeCoverageReported Type = "task.coverage_reported"
 )
 
 // AllTypes lists every event type aidev emits. The migration's CHECK constraint
@@ -112,6 +118,7 @@ func AllTypes() []Type {
 		TypeContainmentBreach, TypeSharedRefsChanged,
 		TypeTaskApplied, TypeTaskApplyUndone,
 		TypeRunStopped,
+		TypeCoverageReported,
 	}
 }
 

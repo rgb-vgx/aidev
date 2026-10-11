@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"aidev/internal/coverage"
 	"aidev/internal/event"
 	"aidev/internal/task"
 )
@@ -253,4 +254,29 @@ func scanEvent(row scanner) (event.Event, error) {
 	e.Type = parsed
 	e.Payload = payload
 	return e, nil
+}
+
+// CoverageReport returns the newest task.coverage_reported of an attempt,
+// or nil when the attempt has none (the task did not ask for coverage, or
+// verification did not pass).
+func (s *Store) CoverageReport(ctx context.Context, taskID, attemptID uuid.UUID) (*coverage.Result, error) {
+	var payload []byte
+	err := s.db.QueryRow(ctx, `
+		SELECT payload
+		FROM events
+		WHERE task_id = $1 AND attempt_id = $2 AND type = $3
+		ORDER BY seq DESC
+		LIMIT 1`,
+		taskID, attemptID, event.TypeCoverageReported).Scan(&payload)
+	if err != nil {
+		if errors.Is(classify(err), ErrNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("coverage for attempt %s: %w", attemptID, classify(err))
+	}
+	var result coverage.Result
+	if err := json.Unmarshal(payload, &result); err != nil {
+		return nil, fmt.Errorf("coverage for attempt %s: payload is not decodable: %w", attemptID, err)
+	}
+	return &result, nil
 }

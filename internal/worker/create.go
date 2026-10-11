@@ -56,8 +56,11 @@ type CreateTaskInput struct {
 	// before the agent is called, and fails the task when they already pass
 	// there: such commands cannot tell before from after (research B3).
 	ExpectFailOnBase bool
-	BaseRef          string
-	Timeout          time.Duration
+	// Coverage reports, once verification passes, which changed Go lines
+	// the tests ran (task.coverage_reported). It never decides the outcome.
+	Coverage bool
+	BaseRef  string
+	Timeout  time.Duration
 }
 
 // CreateTask validates and persists a task.
@@ -203,6 +206,7 @@ func (o *Orchestrator) CreateTask(ctx context.Context, in CreateTaskInput) (task
 		MaxRetries:         in.MaxRetries,
 		RequiresApproval:   in.RequiresApproval,
 		ExpectFailOnBase:   in.ExpectFailOnBase,
+		Coverage:           in.Coverage,
 		BaseRef:            in.BaseRef,
 		BaseCommitAtCreate: baseAtCreate,
 		Timeout:            in.Timeout,
@@ -229,6 +233,7 @@ func (o *Orchestrator) CreateTask(ctx context.Context, in CreateTaskInput) (task
 			"priority":            stored.Priority,
 			"requires_approval":   stored.RequiresApproval,
 			"expect_fail_on_base": stored.ExpectFailOnBase,
+			"coverage":            stored.Coverage,
 			"verification":        commands,
 			"verification_mode":   string(stored.VerificationMode),
 			"repo_path":           repo.Path,

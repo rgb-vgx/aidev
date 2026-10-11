@@ -12,6 +12,7 @@ import (
 
 	"aidev/internal/agent"
 	"aidev/internal/config"
+	"aidev/internal/coverage"
 	"aidev/internal/store"
 	"aidev/internal/task"
 	"aidev/internal/view"
@@ -121,6 +122,7 @@ type CreateTaskInput struct {
 	RequiresApproval   bool   `json:"requires_approval,omitempty" jsonschema:"when true the task will not run until a human approves it"`
 	MaxRetries         int    `json:"max_retries,omitempty" jsonschema:"how many more attempts aidev may make, 0 to 10, when an attempt fails in a way another try can fix (the checks ran and failed, or the agent stopped early). Each retry continues in the same worktree and agent session with the failure output in the prompt; defaults to 0, no retry"`
 	ExpectFailOnBase   bool   `json:"expect_fail_on_base,omitempty" jsonschema:"when true the verification commands run on the base commit before the agent starts; if they already pass there they cannot distinguish before from after, so the attempt fails with kind VERIFICATION and the agent is never called (for bug-fix tasks)"`
+	Coverage           bool   `json:"coverage,omitempty" jsonschema:"when true, once verification passes aidev runs the Go tests of the packages the task changed with coverage and reports which changed lines no test ran; a report only, it never decides the outcome"`
 	BaseRef            string `json:"base_ref,omitempty" jsonschema:"git ref the task's branch starts from; defaults to the repository's current branch"`
 	TimeoutSeconds     int    `json:"timeout_seconds,omitempty" jsonschema:"bound this task's agent run; defaults to the configured timeout"`
 	Hardness           string `json:"hardness,omitempty" jsonschema:"how hard the task is: TRIVIAL, STANDARD or HARD, case-insensitive; picks the model from agent.routing in conf.json unless model is given"`
@@ -171,6 +173,7 @@ func (s *Server) createTask(ctx context.Context, _ *sdk.CallToolRequest, in Crea
 		VerificationMode:         in.VerificationMode,
 		RequiresApproval:         in.RequiresApproval,
 		ExpectFailOnBase:         in.ExpectFailOnBase,
+		Coverage:                 in.Coverage,
 		MaxRetries:               in.MaxRetries,
 		BaseRef:                  in.BaseRef,
 		Hardness:                 in.Hardness,
@@ -635,12 +638,13 @@ func (s *Server) buildResult(ctx context.Context, st *store.Store, taskID uuid.U
 	}
 
 	var (
-		attempt       *task.TaskAttempt
-		workerRun     *task.WorkerRun
-		worktree      *task.Worktree
-		approval      *task.Approval
-		runs          []task.VerificationRun
-		testsModified []string
+		attempt        *task.TaskAttempt
+		workerRun      *task.WorkerRun
+		worktree       *task.Worktree
+		approval       *task.Approval
+		runs           []task.VerificationRun
+		testsModified  []string
+		coverageResult *coverage.Result
 	)
 
 	latest, err := st.LatestAttempt(ctx, taskID)
@@ -658,6 +662,9 @@ func (s *Server) buildResult(ctx context.Context, st *store.Store, taskID uuid.U
 		// to the reader and must not decide whether the result can be shown.
 		if tests, err := st.TestsModifiedPaths(ctx, taskID, latest.ID); err == nil {
 			testsModified = tests
+		}
+		if cov, err := st.CoverageReport(ctx, taskID, latest.ID); err == nil {
+			coverageResult = cov
 		}
 	case errors.Is(err, store.ErrNotFound):
 		// Never run: the absent sections say so.
@@ -689,6 +696,7 @@ func (s *Server) buildResult(ctx context.Context, st *store.Store, taskID uuid.U
 		result.Task.ApplyCommit = apply.Commit
 	}
 	result.Apply = view.NewApply(apply)
+	result.Coverage = coverageResult
 	// The same history `aidev task result` shows: after a retry, what the
 	// earlier attempts ran into. Best-effort, like the reads above.
 	if attempt != nil {
