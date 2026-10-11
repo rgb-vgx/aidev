@@ -382,7 +382,8 @@ Không có gì được hợp nhất, và không có gì bao giờ được comm
 
 Listing của một task đã thành công cho biết kết quả của nó đã được áp dụng hay
 chưa (`aidev task list --unapplied` chỉ liệt kê các task `SUCCEEDED` còn đang
-chờ được áp dụng).
+chờ được áp dụng). Việc được nhận bằng git thường thay vì `aidev task apply`
+(merge, cherry-pick, rebase) cũng được nhận ra, và hiện là landed.
 
 Một task được tạo với `--max-retries N` (MCP: `max_retries`) có thêm tối đa N lần
 thử khi các lệnh kiểm tra thất bại hoặc agent dừng sớm. Mỗi lần thử lại tiếp tục

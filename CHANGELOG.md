@@ -9,6 +9,15 @@ curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh
 
 ## Unreleased
 
+- **Work taken with plain git counts as taken.** A planner often merges,
+  cherry-picks or rebases a task's commit instead of running `aidev task apply`,
+  and such a task stayed "waiting" forever: in Axiom-Office four of the six
+  tasks `task list --unapplied` named were already on main. A SUCCEEDED task
+  never applied through aidev whose commits are on the repository's default
+  branch (an ancestor, or an equivalent patch per `git cherry`) is now
+  `landed`, shown as `[landed in main]`, and left out of `--unapplied` and MCP
+  `needs_apply`.
+
 - **A denied reach outside the worktree no longer ends the agent's session.**
   OpenCode's default for a tool call outside its directory is `ask`, which a
   headless run answers by rejecting the call and ending the session —
