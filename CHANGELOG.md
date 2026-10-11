@@ -7,7 +7,15 @@ with:
 curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh
 ```
 
-## Unreleased
+## v0.10.0
+
+Upgrading from v0.9.0: install the new binary, run `aidev migrate` (migrations
+`0023_clean_verify_default` and `0024_project_coverage`, both additive: an older
+binary keeps working on the migrated database), run `claude plugin update
+aidev@aidev` (plugin 0.5.6) and restart Claude Code.
+
+Three changes to how a task is judged: what the guard refuses, what the result
+reports, and where verification runs.
 
 - **A verification step that would run an edited test is refused, whatever
   runner names it.** The interception guard modelled only a command that loads
