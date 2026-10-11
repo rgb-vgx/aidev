@@ -9,6 +9,8 @@ curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh
 
 ## Unreleased
 
+- docs/compatibility.md says what 0.x means in practice: which interfaces to
+  rely on, how a change is announced, and what the migrations have promised.
 - **Work taken with plain git counts as taken.** A planner often merges,
   cherry-picks or rebases a task's commit instead of running `aidev task apply`,
   and such a task stayed "waiting" forever: in Axiom-Office four of the six
