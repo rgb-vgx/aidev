@@ -19,7 +19,8 @@ type Interception struct {
 }
 
 // Interceptions reports each step whose runner can be loaded from a changed
-// path. Order is by StepIndex, then Path, so the report is stable.
+// path, or whose test runner would execute a changed test file. Order is by
+// StepIndex, then Path, so the report is stable.
 func Interceptions(steps []task.VerificationStep, changed []string) []Interception {
 	var out []Interception
 	for i, s := range steps {
@@ -54,6 +55,12 @@ func matchesForStep(step task.VerificationStep, changed []string) []string {
 		if script, ok := shellScript(step.Args); ok {
 			out = append(out, matchRunner(script, changed)...)
 		}
+	case base == "go":
+		out = append(out, goMatches(step.Args, changed)...)
+	case base == "node":
+		out = append(out, nodeMatches(step.Args, changed)...)
+	case base == "pytest" || base == "py.test":
+		out = append(out, pytestMatches(step.Args, changed)...)
 	}
 	return uniqueSorted(out)
 }
@@ -213,11 +220,28 @@ func pythonMatches(args []string, changed []string) []string {
 					return nil
 				case 'm':
 					module := cluster[j+1:]
+					var rest []string
 					if module == "" {
 						if i+1 >= len(args) {
 							return nil
 						}
 						module = args[i+1]
+						rest = args[i+2:]
+					} else {
+						rest = args[i+1:]
+					}
+					if top, _, _ := strings.Cut(module, "."); top == "pytest" {
+						// A pytest run collects the worktree's tests on top of
+						// loading pytest itself, so `python -m pytest` with a
+						// changed tests/test_x.py judges with the agent's test.
+						// Isolation (-I/-P) only keeps the working directory off
+						// sys.path for the pytest module; collection still walks
+						// it (measured: `python3 -P -m pytest --collect-only`
+						// listed tests/test_x.py, pytest 9.1.1).
+						if isolated {
+							return pytestMatches(rest, changed)
+						}
+						return uniqueSorted(append(matchModule(module, changed), pytestMatches(rest, changed)...))
 					}
 					if isolated {
 						return nil

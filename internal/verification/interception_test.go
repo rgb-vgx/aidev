@@ -186,6 +186,57 @@ func TestInterceptions(t *testing.T) {
 			step("sh", "-"), []string{"-"}, nil},
 		{"bash +o takes a value, like -o",
 			step("bash", "+o", "posix", "ci.sh"), []string{"ci.sh", "posix"}, []string{"ci.sh"}},
+
+		// A test runner invoked by name collects the tests its arguments
+		// select, and a changed test it would execute is the judge the agent
+		// wrote — like a shadowed module. Found live on TASK-000112
+		// (Axiom-Office): `python3 tests/wps/test_install_jsaddon.py` was
+		// refused while `node --test tests/wps/test_addin.mjs` ran, same
+		// agent, same attempt, same edited-the-test situation.
+		{"go test ./... runs every changed _test.go",
+			step("go", "test", "./..."), []string{"internal/foo/foo_test.go"}, []string{"internal/foo/foo_test.go"}},
+		{"go test selects a package subtree",
+			step("go", "test", "./internal/foo/..."), []string{"internal/foo/bar_test.go"}, []string{"internal/foo/bar_test.go"}},
+		{"go test with no operands runs the working directory",
+			step("go", "test"), []string{"foo_test.go"}, []string{"foo_test.go"}},
+		{"go test flags are not packages",
+			step("go", "test", "-race", "./..."), []string{"x_test.go"}, []string{"x_test.go"}},
+		{"go test flag values are not packages",
+			step("go", "test", "-run", "TestFoo", "./..."), []string{"internal/foo/foo_test.go"}, []string{"internal/foo/foo_test.go"}},
+		{"go build executes no tests",
+			step("go", "build", "./..."), []string{"internal/foo/foo_test.go"}, nil},
+		{"go vet executes no tests",
+			step("go", "vet", "./..."), []string{"internal/foo/foo_test.go"}, nil},
+		{"go test outside the selected packages",
+			step("go", "test", "./internal/foo/..."), []string{"tests/integration/x_test.go"}, nil},
+		{"node --test with no operands searches the working directory",
+			step("node", "--test"), []string{"tests/x.test.mjs"}, []string{"tests/x.test.mjs"}},
+		{"node --test with a directory runs everything beneath it",
+			step("node", "--test", "tests/"), []string{"tests/a.mjs"}, []string{"tests/a.mjs"}},
+		{"node --test with a file runs that file",
+			step("node", "--test", "tests/a.mjs"), []string{"tests/a.mjs"}, []string{"tests/a.mjs"}},
+		{"node --test with a file does not run its neighbours",
+			step("node", "--test", "tests/a.mjs"), []string{"tests/b.mjs"}, nil},
+		{"node --test does not run a plain source file",
+			step("node", "--test"), []string{"src/plain.mjs"}, nil},
+		{"node --test does not execute a fixture",
+			step("node", "--test"), []string{"testdata/fixture.json"}, nil},
+		{"pytest with no operands collects from the rootdir",
+			step("pytest"), []string{"tests/test_x.py"}, []string{"tests/test_x.py"}},
+		{"pytest flags are not collection paths",
+			step("pytest", "-q", "tests/"), []string{"tests/test_x.py"}, []string{"tests/test_x.py"}},
+		{"py.test collects like pytest",
+			step("py.test", "tests/"), []string{"tests/test_x.py"}, []string{"tests/test_x.py"}},
+		{"pytest with a file does not collect its neighbours",
+			step("pytest", "tests/test_x.py"), []string{"tests/test_y.py"}, nil},
+		{"pytest with no operands does not run plain source",
+			step("pytest"), []string{"src/plain.py"}, nil},
+		{"python -m pytest collects the worktree's tests",
+			step("python3", "-m", "pytest"), []string{"tests/test_x.py"}, []string{"tests/test_x.py"}},
+		{"python -m pytest with a file does not collect its neighbours",
+			step("python3", "-m", "pytest", "tests/test_x.py"), []string{"tests/test_y.py"}, nil},
+		{"a changed conftest.py judges the tests it is loaded for",
+			step("pytest", "tests/"), []string{"conftest.py"}, []string{"conftest.py"}},
 	}
 
 	for _, tc := range cases {

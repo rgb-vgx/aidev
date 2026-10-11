@@ -854,8 +854,10 @@ agent committed. And files matching `.gitignore` never appear in either.
 Before running verification, aidev lists every path that differs from the base commit —
 including committed and ignored ones — and refuses to run a step whose runner can be
 loaded from one of them: a command given as a relative path, the script an interpreter
-(`sh`, `bash`, `python`) is handed, or the top-level module of `python -m`. The attempt
-fails as `VERIFICATION` without running anything, and the worktree is kept.
+(`sh`, `bash`, `python`) is handed, the top-level module of `python -m`, or a test file
+a runner the step names would collect (`go test`, `node --test`, `pytest`/`py.test`,
+`python -m pytest`). The attempt fails as `VERIFICATION` without running anything, and
+the worktree is kept.
 
 Review of TASK-000027 found the first implementation checked an interpreter's arguments but
 not the interpreter: `./.venv/bin/python -m pytest` was never matched against `.venv/`, though
@@ -868,10 +870,29 @@ code, is refused when the agent changed `mypkg`: aidev cannot tell a project mod
 shadowing one by name. The refusal is loud and names the path, so the planner can choose a
 runner the agent does not write (`python -m pytest`). A silent pass would not be visible at all.
 
-This guards the judge, not the exam. Tests, a `Makefile`, `conftest.py`, and project code
-are the work under review; changing them is what tasks are for, and whether the tests still
-test anything is the reviewer's question. Not covered: code passed with `-c` (`python -c`,
-`sh -c`), whose imports aidev cannot see; interpreters other than `sh`/`bash`/`python`; and
+This guards the judge, not the exam. Project code is the work under review;
+changing it is what tasks are for. A collected test file is the judge, so a
+step that would execute one the agent changed is refused — but only the test
+source itself, under a deliberately narrower classifier than the tests-changed
+report: a fixture under `testdata/` is read, not executed (the go tool ignores
+a directory named testdata — measured, `go help test`), and a `Makefile` stays
+the project's, like its tests. Whether the tests still test anything is the
+reviewer's question.
+
+Observed live on 2026-10-11, TASK-000112 (Axiom-Office): `python3
+tests/wps/test_install_jsaddon.py` was refused while `node --test
+tests/wps/test_addin.mjs` ran, same agent, same attempt, same
+edited-the-test situation. The protection depended on which language the tests
+happened to be written in, which is not a policy anyone chose — hence the
+runner coverage above.
+
+One trade-off is accepted deliberately, and the runner coverage widens it. A
+task that edits a test and the code it covers now fails: the refusal is loud
+and names the path, so the planner can verify with something that is not the
+edited test. An in-place-style silent pass would not be visible at all (§5).
+Not covered: code passed with `-c` (`python -c`,
+`sh -c`), whose imports aidev cannot see; interpreters other than `sh`/`bash`/`python`
+(`node` is covered only under `--test`, not for a script operand); and
 modules beside a script shadowing its imports.
 
 ## 7f. Auto mode through 9router with muse-spark **[OBSERVED]**

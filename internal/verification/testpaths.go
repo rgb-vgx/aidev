@@ -94,3 +94,38 @@ func isTestPath(p string) bool {
 	}
 	return false
 }
+
+// isTestSource classifies one changed path for the interception guard, which
+// *refuses* a verification step that would run a test the agent changed
+// (matchesForStep in interception.go, runners.go). It is deliberately narrower
+// than isTestPath: the report only names, so it can afford to err toward
+// naming anything a runner could plausibly read; a refusal blocks the run, so
+// this predicate names only files a runner executes, never the fixtures
+// beside them. The two deliberately disagree on:
+//
+//   - a path under testdata/: the go tool ignores a directory named testdata
+//     (measured: `go help test`, go1.26.8), making it available to hold
+//     ancillary data the tests read. Editing a fixture edits the exam's
+//     input, not the judge.
+//   - Makefile/makefile: a changed Makefile changes what a `make test` step
+//     runs, but refusing it would reverse the recorded decision that a
+//     Makefile is the project's, like its tests (interception_test.go).
+//
+// Everything isTestSource accepts, isTestPath accepts: the guard never refuses
+// on a path the report would not even name.
+func isTestSource(p string) bool {
+	if !isTestPath(p) {
+		return false
+	}
+	cleaned := path.Clean(filepath.ToSlash(p))
+	for seg := range strings.SplitSeq(path.Dir(cleaned), "/") {
+		if seg == "testdata" {
+			return false
+		}
+	}
+	switch path.Base(cleaned) {
+	case "testdata", "Makefile", "makefile":
+		return false
+	}
+	return true
+}

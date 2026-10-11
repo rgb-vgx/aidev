@@ -9,6 +9,21 @@ curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh
 
 ## Unreleased
 
+- **A verification step that would run an edited test is refused, whatever
+  runner names it.** The interception guard modelled only a command that loads
+  a file directly, so `python3 tests/wps/test_install_jsaddon.py` was refused
+  while `node --test tests/wps/test_addin.mjs` ran, same agent, same attempt
+  (TASK-000112, Axiom-Office). It now models the runners that collect test
+  files: `go test` (package patterns, `./...` the whole module, none the
+  working directory), `node --test` (files or directories, none the working
+  directory recursively), and `pytest`/`py.test`/`python -m pytest` (paths to
+  collect, none the rootdir, with a changed `conftest.py` counting when it is
+  loaded for a collected test). The refusal uses a narrower classifier than
+  the tests-changed report: a fixture under `testdata/` and the `Makefile`
+  never refuse. A task that edits a test and the code it covers now fails, and
+  that is the accepted cost — the remedy is to verify with something that is
+  not the edited test.
+
 - **A project can turn the coverage report on for all of its tasks.** `--coverage`
   reports, once verification passes, which of the changed Go lines the tests ran —
   but it only happens when whoever creates the task remembers the flag, and the

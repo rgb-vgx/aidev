@@ -36,6 +36,40 @@ func TestTestPathsClassifiesTestFiles(t *testing.T) {
 	}
 }
 
+// isTestSource is the refusal half of the classifier: everything it accepts,
+// isTestPath accepts too, but a fixture and the Makefile — which the report
+// names — never refuse a step.
+func TestTestSourceIsNarrowerThanTestPath(t *testing.T) {
+	cases := []struct {
+		path   string
+		wide   bool
+		narrow bool
+		why    string
+	}{
+		{"internal/foo/foo_test.go", true, true, "a Go test is executed by go test"},
+		{"tests/test_x.py", true, true, "a pytest file is collected by pytest"},
+		{"tests/x.test.mjs", true, true, "a node test is run by node --test"},
+		{"conftest.py", true, true, "pytest loads it for the tests below it"},
+		{"testdata/fixture.json", true, false, "a fixture is read, not executed"},
+		{"testdata/", true, false, "a fixture directory is read, not executed"},
+		{"Makefile", true, false, "the project's, like its tests: reported, never refused"},
+		{"makefile", true, false, "the project's, like its tests: reported, never refused"},
+		{"src/plain.py", false, false, "production code"},
+		{"pytest.py", false, false, "a module name, not a test"},
+	}
+	for _, tc := range cases {
+		if got := isTestPath(tc.path); got != tc.wide {
+			t.Errorf("isTestPath(%q) = %v, want %v (%s)", tc.path, got, tc.wide, tc.why)
+		}
+		if got := isTestSource(tc.path); got != tc.narrow {
+			t.Errorf("isTestSource(%q) = %v, want %v (%s)", tc.path, got, tc.narrow, tc.why)
+		}
+		if isTestSource(tc.path) && !isTestPath(tc.path) {
+			t.Errorf("isTestSource(%q) accepts what isTestPath rejects: the guard must never refuse what the report would not name", tc.path)
+		}
+	}
+}
+
 // The report is sorted and deduplicated whatever order git answered in, so a
 // reviewer comparing two runs sees stable output.
 func TestTestPathsIsSortedAndFiltered(t *testing.T) {
