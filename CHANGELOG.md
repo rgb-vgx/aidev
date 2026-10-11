@@ -17,6 +17,12 @@ curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh
   branch (an ancestor, or an equivalent patch per `git cherry`) is now
   `landed`, shown as `[landed in main]`, and left out of `--unapplied` and MCP
   `needs_apply`.
+- **Creating a branch while a task runs no longer fails it as CONTAINMENT.**
+  TASK-000094 failed because VS Code wrote `branch.<name>.vscode-merge-base` to
+  the shared config when the planner created a branch mid-run. A config change
+  is now judged by the keys that moved: per-branch tracking and editor
+  bookkeeping are a warning (`config_keys` on `task.shared_refs_changed`); any
+  other key still fails the attempt, and the breach names it.
 
 - **A denied reach outside the worktree no longer ends the agent's session.**
   OpenCode's default for a tool call outside its directory is `ask`, which a
