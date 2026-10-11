@@ -9,6 +9,23 @@ curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh
 
 ## Unreleased
 
+- docs/compatibility.md says what 0.x means in practice: which interfaces to
+  rely on, how a change is announced, and what the migrations have promised.
+- **Work taken with plain git counts as taken.** A planner often merges,
+  cherry-picks or rebases a task's commit instead of running `aidev task apply`,
+  and such a task stayed "waiting" forever: in Axiom-Office four of the six
+  tasks `task list --unapplied` named were already on main. A SUCCEEDED task
+  never applied through aidev whose commits are on the repository's default
+  branch (an ancestor, or an equivalent patch per `git cherry`) is now
+  `landed`, shown as `[landed in main]`, and left out of `--unapplied` and MCP
+  `needs_apply`.
+- **Creating a branch while a task runs no longer fails it as CONTAINMENT.**
+  TASK-000094 failed because VS Code wrote `branch.<name>.vscode-merge-base` to
+  the shared config when the planner created a branch mid-run. A config change
+  is now judged by the keys that moved: per-branch tracking and editor
+  bookkeeping are a warning (`config_keys` on `task.shared_refs_changed`); any
+  other key still fails the attempt, and the breach names it.
+
 - **A denied reach outside the worktree no longer ends the agent's session.**
   OpenCode's default for a tool call outside its directory is `ask`, which a
   headless run answers by rejecting the call and ending the session —

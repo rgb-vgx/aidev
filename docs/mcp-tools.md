@@ -339,12 +339,12 @@ None.
 | `repo_path` | string | no | only tasks for this repository |
 | `statuses` | string[] | no | `PENDING`, `READY`, `RUNNING`, `VERIFYING`, `SUCCEEDED`, `FAILED`, `CANCELLED`, `WAITING_APPROVAL` |
 | `limit` | integer | no | default 50, maximum 500 |
-| `needs_apply` | boolean | no | only `SUCCEEDED` tasks whose verified result has not been applied: never applied, or applied and then undone |
+| `needs_apply` | boolean | no | only `SUCCEEDED` tasks whose verified result has not been applied: never applied, or applied and then undone; a task whose work is already on the default branch, taken with git (`apply_state` `landed`), is not listed |
 
 ### Output
 
 `tasks` newest first, and `count`. Each item carries `repo_path` and, when the
-task was ever applied, `apply_state` (`applied` or `undone`) with `apply_into`
+task was ever applied, `apply_state` (`applied`, `undone`, or `landed` when the work reached the default branch through plain git) with `apply_into`
 and `apply_commit`.
 
 ### Errors

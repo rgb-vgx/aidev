@@ -336,6 +336,17 @@ starts, while a foreign ref moving only warns (docs/research.md §7i.2). This is
 detection after the fact, not a sandbox: the security model states the trust that
 follows from that.
 
+A config change is judged by the keys that moved, read with `git config --file
+--list` (no includes followed, nothing run). Per-branch bookkeeping —
+`branch.<name>.remote`, `.merge`, `.rebase`, `.pushRemote`, `.description`, and
+the metadata editors attach to branches (`vscode-*`, `gk-*`, `github-pr-*`) —
+is written by other parties while a task runs and can run nothing, so it is only
+warned about. TASK-000094 failed as `CONTAINMENT` because VS Code wrote
+`branch.<name>.vscode-merge-base` when the planner created a branch in the main
+repository mid-run. Every other key, unknown ones and `branch.<name>.mergeoptions`
+(it picks a merge strategy, an executable) included, still fails the attempt, and
+a config git cannot parse is treated as dangerous.
+
 ### Submodules are a worktree each, read-only, and off by default
 
 A repository that keeps its sources in git submodules gets a task worktree whose
