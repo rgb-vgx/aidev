@@ -7,6 +7,19 @@ with:
 curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh
 ```
 
+## Unreleased
+
+- **A new project verifies in a clean checkout unless its repository pins
+  submodules.** A verification pass must not be makeable by a file git ignores
+  (a `.venv` the agent built, a vendored dependency, a cached build output), so
+  tasks for a newly registered repository now verify in a fresh checkout of
+  the tree a commit would carry. Clean verification refuses a repository
+  pinning submodules, so those projects still default to `in_place`. Projects
+  already registered keep the mode they have; `aidev project verify-mode` shows
+  or changes it, and `aidev project add` says which default it chose and why.
+  Migration `0023_clean_verify_default` (additive: only the column default
+  changes, no existing row is touched).
+
 ## v0.9.0
 
 Upgrading from v0.8.0: install the new binary, run `aidev migrate` (migrations

@@ -80,8 +80,8 @@ func TestProjectVerifyModeShowSetAndList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("project verify-mode: %v\nstderr: %s", err, stderr)
 	}
-	if strings.TrimSpace(stdout) != "in_place" {
-		t.Errorf("initial verify-mode = %q, want in_place", strings.TrimSpace(stdout))
+	if strings.TrimSpace(stdout) != "clean" {
+		t.Errorf("initial verify-mode = %q, want clean", strings.TrimSpace(stdout))
 	}
 
 	stdout, stderr, err = h.runCLI(t, "project", "verify-mode", "--repo", h.repoPath, "clean")

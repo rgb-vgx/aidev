@@ -359,6 +359,11 @@ tập tin bị ignore không thể làm chúng pass. Agent không commit: aidev 
 công việc khi nó pass. `--expect-fail-on-base` và `--verify-mode clean` từ chối các kho mã
 có ghim submodule.
 
+Một repository đăng ký từ nay sẽ verify ở `clean` trừ khi nó ghim submodule,
+thứ mà clean verification từ chối: những kho đó mặc định dùng `in_place` thay
+thế. `aidev project verify-mode` xem hoặc đổi mặc định của một dự án, và các dự
+án đã đăng ký giữ nguyên mode của chúng.
+
 ## Chuyện gì xảy ra bên trong
 
 ```text

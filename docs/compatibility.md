@@ -50,6 +50,9 @@ every release so far:
   0020 and 0021 were applied while v0.8.0-2 was still installed (`aidev doctor`,
   `task list` and `project list` all worked).
 - A migration that is not additive will say so in its release's upgrade note.
+- A project registered from now on defaults to `clean` verification (migration
+  `0023_clean_verify_default`); a repository pinning submodules still defaults
+  to `in_place`, and projects already registered keep the mode they have.
 
 ## Versions
 

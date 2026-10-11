@@ -136,13 +136,33 @@ func projectAdd(ctx context.Context, env *Env, args []string) error {
 		return err
 	}
 
+	// The default is computed from the repository, never from flags: a
+	// planner must not be able to choose a project's settings.
+	pins, err := app.orchestrator.Git.PinsSubmodules(ctx, repository)
+	if err != nil {
+		return err
+	}
+	mode := task.VerificationClean
+	if pins {
+		mode = task.VerificationInPlace
+	}
 	project, err := app.store.EnsureProject(ctx, filepath.Base(repository.Path), repository.Path,
-		app.orchestrator.Git.CurrentBranch(ctx, repository))
+		app.orchestrator.Git.CurrentBranch(ctx, repository), mode)
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(env.Stdout, "registered %s (branch %s)\n", project.RepoPath, project.DefaultBranch)
 	fmt.Fprintf(env.Stdout, "Tasks for it may now be created through MCP as well as the CLI.\n")
+	if project.VerificationMode == task.VerificationClean {
+		fmt.Fprintf(env.Stdout,
+			"Tasks for this repository will verify in a fresh checkout of their result,\n"+
+				"so files git ignores cannot make the checks pass.\n")
+	} else {
+		fmt.Fprintf(env.Stdout,
+			"This repository pins submodules, which clean verification does not support,\n"+
+				"so tasks for it will verify in the agent's worktree instead. Change it with\n"+
+				"aidev project verify-mode clean --repo %s.\n", project.RepoPath)
+	}
 	return nil
 }
 

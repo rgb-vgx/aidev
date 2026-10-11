@@ -163,6 +163,35 @@ func (m *Manager) removeSubmoduleWorktree(ctx context.Context, w *Worktree, path
 	return nil
 }
 
+// PinsSubmodules reports whether the repository pins submodules: its index
+// records a gitlink entry (mode 160000), or it has a .gitmodules file.
+//
+// The question is asked at registration, not at verification: clean
+// verification refuses a tree holding a gitlink, so a new project's default
+// must not pick a mode that cannot run on its own repository.
+func (m *Manager) PinsSubmodules(ctx context.Context, repo Repository) (bool, error) {
+	if _, err := os.Stat(filepath.Join(repo.Path, ".gitmodules")); err == nil {
+		return true, nil
+	}
+
+	res, err := m.run(ctx, repo.Path, nil, "ls-files", "-z", "--stage")
+	if err != nil {
+		return false, err
+	}
+	if !res.Succeeded() {
+		return false, fmt.Errorf("list gitlinks in %s: %s", repo.Path, firstLine(res.Stderr))
+	}
+	for _, entry := range strings.Split(res.Stdout, "\x00") {
+		// "<mode> <object> <stage>\t<path>"
+		meta, _, ok := strings.Cut(entry, "\t")
+		if !ok || !strings.HasPrefix(meta, "160000 ") {
+			continue
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
 // pinnedSubmodules reports the gitlinks a commit records, with the local
 // repository each one lives in.
 //

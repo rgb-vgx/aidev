@@ -376,6 +376,11 @@ except those git ignores, so an ignored file cannot make them pass. The agent
 does not commit: aidev commits the work itself once it passes. `--expect-fail-on-base` and `--verify-mode clean` refuse
 repositories that pin submodules.
 
+A repository registered from now on verifies `clean` unless it pins
+submodules, which clean verification refuses: those default to `in_place`
+instead. `aidev project verify-mode` shows or changes a project's default, and
+projects already registered keep the mode they have.
+
 ## What happens under the hood
 
 ```text

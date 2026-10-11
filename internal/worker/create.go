@@ -135,7 +135,19 @@ func (o *Orchestrator) CreateTask(ctx context.Context, in CreateTaskInput) (task
 				ErrProjectNotRegistered, repo.Path, repo.Path)
 		}
 	} else {
-		project, err = o.Store.EnsureProject(ctx, filepath.Base(repo.Path), repo.Path, o.Git.CurrentBranch(ctx, repo))
+		// The default is computed from the repository, never from the
+		// caller's input: a planner creating tasks must not choose the
+		// settings its own tasks will inherit.
+		var pins bool
+		pins, err = o.Git.PinsSubmodules(ctx, repo)
+		if err != nil {
+			return task.Task{}, err
+		}
+		mode := task.VerificationClean
+		if pins {
+			mode = task.VerificationInPlace
+		}
+		project, err = o.Store.EnsureProject(ctx, filepath.Base(repo.Path), repo.Path, o.Git.CurrentBranch(ctx, repo), mode)
 	}
 	if err != nil {
 		return task.Task{}, err

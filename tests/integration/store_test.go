@@ -18,7 +18,7 @@ import (
 
 func seedProject(t *testing.T, ctx context.Context, db *store.Store) task.Project {
 	t.Helper()
-	p, err := db.EnsureProject(ctx, "probe", "/tmp/aidev-probe-"+uuid.NewString(), "main")
+	p, err := db.EnsureProject(ctx, "probe", "/tmp/aidev-probe-"+uuid.NewString(), "main", task.VerificationClean)
 	if err != nil {
 		t.Fatalf("EnsureProject: %v", err)
 	}
@@ -51,11 +51,11 @@ func TestEnsureProjectIsIdempotent(t *testing.T) {
 	db, ctx := openStore(t)
 
 	path := "/tmp/aidev-project-" + uuid.NewString()
-	first, err := db.EnsureProject(ctx, "aidev", path, "main")
+	first, err := db.EnsureProject(ctx, "aidev", path, "main", task.VerificationClean)
 	if err != nil {
 		t.Fatalf("first EnsureProject: %v", err)
 	}
-	second, err := db.EnsureProject(ctx, "aidev", path, "main")
+	second, err := db.EnsureProject(ctx, "aidev", path, "main", task.VerificationClean)
 	if err != nil {
 		t.Fatalf("second EnsureProject: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestProjectSubmoduleModeIsStickyAcrossEnsureProject(t *testing.T) {
 	db, ctx := openStore(t)
 
 	path := "/tmp/aidev-submodules-" + uuid.NewString()
-	created, err := db.EnsureProject(ctx, "aidev", path, "main")
+	created, err := db.EnsureProject(ctx, "aidev", path, "main", task.VerificationClean)
 	if err != nil {
 		t.Fatalf("EnsureProject: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestProjectSubmoduleModeIsStickyAcrossEnsureProject(t *testing.T) {
 		t.Errorf("after setting, submodules = %q, want %q", updated.Submodules, task.SubmodulesReadOnly)
 	}
 
-	again, err := db.EnsureProject(ctx, "aidev", path, "main")
+	again, err := db.EnsureProject(ctx, "aidev", path, "main", task.VerificationClean)
 	if err != nil {
 		t.Fatalf("second EnsureProject: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestProjectApprovalPolicyIsStickyAcrossEnsureProject(t *testing.T) {
 	db, ctx := openStore(t)
 
 	path := "/tmp/aidev-approval-" + uuid.NewString()
-	created, err := db.EnsureProject(ctx, "aidev", path, "main")
+	created, err := db.EnsureProject(ctx, "aidev", path, "main", task.VerificationClean)
 	if err != nil {
 		t.Fatalf("EnsureProject: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestProjectApprovalPolicyIsStickyAcrossEnsureProject(t *testing.T) {
 		t.Error("after setting, requires_approval = false, want true")
 	}
 
-	again, err := db.EnsureProject(ctx, "aidev", path, "main")
+	again, err := db.EnsureProject(ctx, "aidev", path, "main", task.VerificationClean)
 	if err != nil {
 		t.Fatalf("second EnsureProject: %v", err)
 	}
@@ -146,6 +146,98 @@ func TestProjectApprovalPolicyIsStickyAcrossEnsureProject(t *testing.T) {
 
 	if _, err := db.SetProjectRequiresApproval(ctx, uuid.Must(uuid.NewV7()), true); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("SetProjectRequiresApproval for an unknown project = %v, want ErrNotFound", err)
+	}
+}
+
+// A newly registered project verifies in a clean checkout — a file git
+// ignores cannot make its checks pass there — unless the registration says
+// the repository pins submodules, which clean verification refuses. The mode
+// is what the registration computed from the repository; an empty one reads
+// as the default, the way the column does.
+func TestNewProjectVerificationModeDefault(t *testing.T) {
+	db, ctx := openStore(t)
+
+	explicit, err := db.EnsureProject(ctx, "aidev", "/tmp/aidev-verify-clean-"+uuid.NewString(), "main", task.VerificationClean)
+	if err != nil {
+		t.Fatalf("EnsureProject clean: %v", err)
+	}
+	if explicit.VerificationMode != task.VerificationClean {
+		t.Errorf("verification mode = %q, want clean", explicit.VerificationMode)
+	}
+
+	blank, err := db.EnsureProject(ctx, "aidev", "/tmp/aidev-verify-blank-"+uuid.NewString(), "main", "")
+	if err != nil {
+		t.Fatalf("EnsureProject blank: %v", err)
+	}
+	if blank.VerificationMode != task.VerificationClean {
+		t.Errorf("blank mode = %q, want the clean default", blank.VerificationMode)
+	}
+
+	// The column default itself: a row written without the mode must still
+	// come back clean, or migration 0023 did not do what it says.
+	rawID := uuid.Must(uuid.NewV7())
+	rawPath := "/tmp/aidev-verify-raw-" + uuid.NewString()
+	if _, err := db.Pool().Exec(ctx,
+		`INSERT INTO projects (id, name, repo_path, default_branch) VALUES ($1, $2, $3, $4)`,
+		rawID, "aidev", rawPath, "main"); err != nil {
+		t.Fatalf("insert without a mode: %v", err)
+	}
+	raw, err := db.GetProject(ctx, rawID)
+	if err != nil {
+		t.Fatalf("GetProject: %v", err)
+	}
+	if raw.VerificationMode != task.VerificationClean {
+		t.Errorf("column default = %q, want clean", raw.VerificationMode)
+	}
+
+	pinned, err := db.EnsureProject(ctx, "aidev", "/tmp/aidev-verify-pinned-"+uuid.NewString(), "main", task.VerificationInPlace)
+	if err != nil {
+		t.Fatalf("EnsureProject in_place: %v", err)
+	}
+	if pinned.VerificationMode != task.VerificationInPlace {
+		t.Errorf("verification mode = %q, want in_place for a repository pinning submodules", pinned.VerificationMode)
+	}
+}
+
+// Re-registering a project must not rewrite its verification mode: the
+// registration runs on every task creation, and an operator's choice made
+// with `aidev project verify-mode` has to survive it, in both directions.
+func TestProjectVerificationModeIsStickyAcrossEnsureProject(t *testing.T) {
+	db, ctx := openStore(t)
+
+	path := "/tmp/aidev-verify-sticky-" + uuid.NewString()
+	created, err := db.EnsureProject(ctx, "aidev", path, "main", task.VerificationClean)
+	if err != nil {
+		t.Fatalf("EnsureProject: %v", err)
+	}
+	if created.VerificationMode != task.VerificationClean {
+		t.Fatalf("a new project verifies %q, want clean", created.VerificationMode)
+	}
+
+	if _, err := db.SetProjectVerificationMode(ctx, created.ID, task.VerificationInPlace); err != nil {
+		t.Fatalf("SetProjectVerificationMode: %v", err)
+	}
+	again, err := db.EnsureProject(ctx, "aidev", path, "main", task.VerificationClean)
+	if err != nil {
+		t.Fatalf("second EnsureProject: %v", err)
+	}
+	if again.VerificationMode != task.VerificationInPlace {
+		t.Errorf("EnsureProject reset verification mode to %q; an operator's setting must survive it",
+			again.VerificationMode)
+	}
+
+	// The other direction: re-registering with in_place must not move a
+	// project the operator left on clean either.
+	if _, err := db.SetProjectVerificationMode(ctx, created.ID, task.VerificationClean); err != nil {
+		t.Fatalf("SetProjectVerificationMode: %v", err)
+	}
+	third, err := db.EnsureProject(ctx, "aidev", path, "main", task.VerificationInPlace)
+	if err != nil {
+		t.Fatalf("third EnsureProject: %v", err)
+	}
+	if third.VerificationMode != task.VerificationClean {
+		t.Errorf("EnsureProject reset verification mode to %q; an operator's setting must survive it",
+			third.VerificationMode)
 	}
 }
 

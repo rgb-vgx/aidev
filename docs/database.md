@@ -47,7 +47,7 @@ A git repository aidev may run tasks against.
 | `repo_path` | **unique**, must be absolute (`CHECK repo_path LIKE '/%'`) |
 | `default_branch` | base for task branches when a task does not name one |
 | `requires_approval` | project approval policy: every task stops for a human first; set only via `aidev project approval` (migration 0008) |
-| `verification_mode` | default where new tasks verify: `in_place` or `clean` (migration 0011); a template only — each task freezes its own copy at creation, set only via `aidev project verify-mode` |
+| `verification_mode` | default where new tasks verify: `clean`, or `in_place` for a repository pinning submodules, which clean verification refuses (migration 0011; migration 0023 changed the default from `in_place` to `clean`); a template only — each task freezes its own copy at creation, set only via `aidev project verify-mode` |
 
 `repo_path` is unique so that registering the same repository twice is idempotent.
 `EnsureProject` does insert-or-select in a single statement, so two callers racing
