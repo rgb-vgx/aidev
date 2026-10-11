@@ -40,6 +40,12 @@ type SharedState struct {
 	// `git config` from inside it lands here (measured, research §7i).
 	Config string
 
+	// ConfigEntries are the config file's settings, key to values, so a
+	// change can be judged by which keys moved rather than by any byte of
+	// the file; nil when git could not read the file, in which case only the
+	// hash speaks and any change is treated as dangerous.
+	ConfigEntries map[string][]string
+
 	// Info hashes each file in the shared info directory by name. That
 	// directory holds info/attributes, which can attach an executable filter
 	// to every path, and info/exclude, which hides paths from status.
@@ -117,6 +123,13 @@ func (w *Worktree) SnapshotSharedState(ctx context.Context) (SharedState, error)
 	if err != nil {
 		return SharedState{}, err
 	}
+	// Read, never evaluated: --file without --includes follows no include,
+	// and listing runs nothing. A file git cannot parse leaves the entries
+	// nil, which the containment check reads as "judge by the hash".
+	var entries map[string][]string
+	if listRes, err := w.m.run(ctx, w.Path, nil, "config", "--file", filepath.Join(commonDir, "config"), "--list", "-z"); err == nil && listRes.Succeeded() {
+		entries = parseConfigList(listRes.Stdout)
+	}
 	info, err := hashFileTree(filepath.Join(commonDir, "info"), false)
 	if err != nil {
 		return SharedState{}, err
@@ -127,12 +140,13 @@ func (w *Worktree) SnapshotSharedState(ctx context.Context) (SharedState, error)
 	}
 
 	return SharedState{
-		CommonDir: commonDir,
-		Refs:      refs,
-		HeadRef:   headRef,
-		Config:    config,
-		Info:      info,
-		Hooks:     hooks,
+		CommonDir:     commonDir,
+		Refs:          refs,
+		HeadRef:       headRef,
+		Config:        config,
+		ConfigEntries: entries,
+		Info:          info,
+		Hooks:         hooks,
 	}, nil
 }
 
@@ -175,10 +189,13 @@ type RefChange struct {
 type SharedChanges struct {
 	CommonDirMoved bool
 	ConfigChanged  bool
-	InfoChanged    []string
-	HooksChanged   []string
-	RefChanges     map[string]RefChange
-	HeadMoved      bool
+	// ConfigKeys are the settings whose values differ, sorted; nil when
+	// either snapshot could not read the config, so the keys are unknown.
+	ConfigKeys   []string
+	InfoChanged  []string
+	HooksChanged []string
+	RefChanges   map[string]RefChange
+	HeadMoved    bool
 }
 
 // Diff reports what changed between two snapshots. It is pure: no git, no
@@ -190,6 +207,9 @@ func (b SharedState) Diff(after SharedState) SharedChanges {
 		ConfigChanged:  b.Config != after.Config,
 		HeadMoved:      b.HeadRef != after.HeadRef,
 		RefChanges:     map[string]RefChange{},
+	}
+	if out.ConfigChanged && b.ConfigEntries != nil && after.ConfigEntries != nil {
+		out.ConfigKeys = changedConfigKeys(b.ConfigEntries, after.ConfigEntries)
 	}
 	out.InfoChanged = changedKeys(b.Info, after.Info)
 	out.HooksChanged = changedKeys(b.Hooks, after.Hooks)
@@ -306,4 +326,68 @@ func hashFileTree(dir string, withMode bool) (map[string]string, error) {
 		out[entry.Name()] = hex.EncodeToString(sum.Sum(nil))
 	}
 	return out, nil
+}
+
+// parseConfigList reads `git config --list -z` output: entries separated by
+// NUL, each "key\nvalue", or a bare "key" for a setting with no value.
+func parseConfigList(out string) map[string][]string {
+	entries := map[string][]string{}
+	for _, entry := range strings.Split(out, "\x00") {
+		if entry == "" {
+			continue
+		}
+		key, value, _ := strings.Cut(entry, "\n")
+		key = strings.ToLower(key)
+		entries[key] = append(entries[key], value)
+	}
+	return entries
+}
+
+// changedConfigKeys returns the keys whose values differ between two parsed
+// configs, sorted.
+func changedConfigKeys(before, after map[string][]string) []string {
+	var out []string
+	for key, was := range before {
+		if now, ok := after[key]; !ok || strings.Join(now, "\x00") != strings.Join(was, "\x00") {
+			out = append(out, key)
+		}
+	}
+	for key := range after {
+		if _, ok := before[key]; !ok {
+			out = append(out, key)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// InertConfigKey reports whether a config setting is bookkeeping that cannot
+// change what git runs: a branch's upstream and rebase preference, its
+// description, and the metadata editors attach to branches (VS Code's
+// vscode-merge-base, GitLens' gk-*, GitHub's github-pr-*). These are written
+// by other parties while a task runs — creating a branch with VS Code open,
+// `git push -u` — and are no channel for a command. Everything else, unknown
+// keys included, is treated as able to run one: core.*, include*, filter.*,
+// diff.*, merge.*, alias.*, credential.*, url.*, remote.*, and a branch's
+// mergeoptions, which can choose a merge strategy and so an executable.
+func InertConfigKey(key string) bool {
+	key = strings.ToLower(key)
+	if !strings.HasPrefix(key, "branch.") {
+		return false
+	}
+	i := strings.LastIndexByte(key, '.')
+	if i <= len("branch.") {
+		return false
+	}
+	name := key[i+1:]
+	switch name {
+	case "remote", "merge", "rebase", "pushremote", "description":
+		return true
+	}
+	for _, editor := range []string{"vscode-", "gk-", "github-pr-"} {
+		if strings.HasPrefix(name, editor) {
+			return true
+		}
+	}
+	return false
 }

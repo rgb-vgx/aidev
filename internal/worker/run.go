@@ -671,18 +671,51 @@ func (r *run) checkContainment(ctx context.Context) error {
 		}
 	}
 	r.dropConcurrentBranches(ctx, foreign)
-	if len(foreign) > 0 {
-		r.emit(ctx, event.TypeSharedRefsChanged, map[string]any{
-			"refs": foreign,
-		})
+
+	// A config change is judged by the keys that moved. Branch tracking and
+	// editor bookkeeping are written by other parties while a task runs (VS
+	// Code on branch creation, `git push -u`) and run nothing, so they are a
+	// warning; any other key — or a change aidev cannot read key by key —
+	// is a breach (TASK-000094).
+	var dangerousKeys, inertKeys []string
+	configBreach := false
+	if changes.ConfigChanged {
+		if changes.ConfigKeys == nil && (r.sharedBefore.ConfigEntries == nil || after.ConfigEntries == nil) {
+			configBreach = true
+		}
+		for _, key := range changes.ConfigKeys {
+			if git.InertConfigKey(key) {
+				inertKeys = append(inertKeys, key)
+			} else {
+				dangerousKeys = append(dangerousKeys, key)
+			}
+		}
+		if len(dangerousKeys) > 0 {
+			configBreach = true
+		}
+	}
+
+	if len(foreign) > 0 || len(inertKeys) > 0 {
+		warning := map[string]any{}
+		if len(foreign) > 0 {
+			warning["refs"] = foreign
+		}
+		if len(inertKeys) > 0 {
+			warning["config_keys"] = inertKeys
+		}
+		r.emit(ctx, event.TypeSharedRefsChanged, warning)
 	}
 
 	var reasons []string
 	if changes.CommonDirMoved {
 		reasons = append(reasons, fmt.Sprintf("the worktree's gitdir moved from %q to %q", r.sharedBefore.CommonDir, after.CommonDir))
 	}
-	if changes.ConfigChanged {
-		reasons = append(reasons, "the shared config changed")
+	if configBreach {
+		if len(dangerousKeys) > 0 {
+			reasons = append(reasons, "the shared config changed: "+strings.Join(dangerousKeys, ", "))
+		} else {
+			reasons = append(reasons, "the shared config changed")
+		}
 	}
 	if len(changes.InfoChanged) > 0 {
 		reasons = append(reasons, "shared info files changed: "+strings.Join(changes.InfoChanged, ", "))
@@ -702,12 +735,15 @@ func (r *run) checkContainment(ctx context.Context) error {
 
 	payload := map[string]any{
 		"reasons":        reasons,
-		"config_changed": changes.ConfigChanged,
+		"config_changed": configBreach,
 		"head_before":    r.sharedBefore.HeadRef,
 		"head_after":     after.HeadRef,
 	}
 	// Only when there are some: an empty list in every breach event of a
 	// clean run would be noise.
+	if len(dangerousKeys) > 0 {
+		payload["config_keys"] = dangerousKeys
+	}
 	if len(changes.InfoChanged) > 0 {
 		payload["info_changed"] = changes.InfoChanged
 	}

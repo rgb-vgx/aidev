@@ -20,6 +20,11 @@ const (
 	ApplyApplied ApplyState = "applied"
 	// ApplyUndone means the newest event is task.apply_undone.
 	ApplyUndone ApplyState = "undone"
+	// ApplyLanded means no apply event exists but the task's work is already
+	// on the repository's default branch, taken with plain git — a merge, a
+	// cherry-pick, a rebase. Derived from git, not from the event log, and
+	// only for a SUCCEEDED task never applied through aidev.
+	ApplyLanded ApplyState = "landed"
 )
 
 // AllApplyStates lists every apply state.
@@ -28,13 +33,14 @@ func AllApplyStates() []ApplyState {
 		ApplyNever,
 		ApplyApplied,
 		ApplyUndone,
+		ApplyLanded,
 	}
 }
 
 // Valid reports whether s is a known apply state.
 func (s ApplyState) Valid() bool {
 	switch s {
-	case ApplyNever, ApplyApplied, ApplyUndone:
+	case ApplyNever, ApplyApplied, ApplyUndone, ApplyLanded:
 		return true
 	}
 	return false

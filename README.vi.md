@@ -382,7 +382,8 @@ Không có gì được hợp nhất, và không có gì bao giờ được comm
 
 Listing của một task đã thành công cho biết kết quả của nó đã được áp dụng hay
 chưa (`aidev task list --unapplied` chỉ liệt kê các task `SUCCEEDED` còn đang
-chờ được áp dụng).
+chờ được áp dụng). Việc được nhận bằng git thường thay vì `aidev task apply`
+(merge, cherry-pick, rebase) cũng được nhận ra, và hiện là landed.
 
 Một task được tạo với `--max-retries N` (MCP: `max_retries`) có thêm tối đa N lần
 thử khi các lệnh kiểm tra thất bại hoặc agent dừng sớm. Mỗi lần thử lại tiếp tục
@@ -707,5 +708,6 @@ chính aidev đo được 0,2 giây so với 9 tới 656 giây của agent. Hãy
 | [docs/research.md](docs/research.md) | Những gì Claude Code, OpenCode, git và PostgreSQL đã cài đặt thật sự làm, đã đo đạc, với các giả định và câu hỏi mở được đánh dấu |
 | [docs/architecture.md](docs/architecture.md) | Cách sắp xếp các gói, các quyết định thiết kế và cái giá của chúng, các khe mở rộng |
 | [docs/database.md](docs/database.md) | Lược đồ, các ràng buộc, vòng đời, đồng thời, các migration |
+| [docs/compatibility.md](docs/compatibility.md) | 0.x nghĩa là gì: nên dựa vào giao diện nào, thay đổi được báo ra sao, migration hứa những gì |
 | [docs/mcp-tools.md](docs/mcp-tools.md) | Mọi công cụ MCP: đầu vào, đầu ra, lỗi, tác dụng phụ, và những gì cố ý không lộ ra |
 | [AGENTS.md](AGENTS.md) | Các quy ước cho agent (và con người) đóng góp vào kho mã này |

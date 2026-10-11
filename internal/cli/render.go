@@ -22,6 +22,8 @@ func writeTaskLine(w io.Writer, t task.Task, repoPath string, apply task.Apply) 
 		marker = fmt.Sprintf("  [applied → %s]", apply.Into)
 	case task.ApplyUndone:
 		marker = "  [undone]"
+	case task.ApplyLanded:
+		marker = fmt.Sprintf("  [landed in %s]", apply.Into)
 	}
 	fmt.Fprintf(w, "%-12s  %-16s  %-6s  %-20s%s  %s\n",
 		t.Ref, t.Status, t.Agent, filepath.Base(repoPath), marker, truncate(t.Title, 60))
@@ -161,6 +163,8 @@ func writeApplyLine(w io.Writer, apply task.Apply) {
 		fmt.Fprintf(w, "  apply        applied to %s (%s)\n", apply.Into, shortCommit(apply.Commit))
 	case task.ApplyUndone:
 		fmt.Fprintf(w, "  apply        undone (reverted on %s as %s)\n", apply.Into, shortCommit(apply.Commit))
+	case task.ApplyLanded:
+		fmt.Fprintf(w, "  apply        landed in %s (taken with git, not aidev task apply)\n", apply.Into)
 	}
 }
 

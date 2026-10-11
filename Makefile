@@ -22,7 +22,7 @@ TEST_DB_URL ?= postgres://aidev:aidev@127.0.0.1:$(DB_PORT)/aidev_test?sslmode=di
 # conf/conf.example.json to conf/conf.json and edit it to match the database.
 AIDEV_CONFIG ?= $(CURDIR)/conf/conf.json
 
-.PHONY: help build install dist test test-integration test-e2e test-db-create fmt fmt-check vet lint check \
+.PHONY: help build install dist test test-integration test-e2e test-db-create fmt fmt-check cross vet lint check \
         db-up db-down db-reset db-logs migrate clean \
         langfuse-up langfuse-down langfuse-reset langfuse-logs langfuse-env langfuse-credentials \
         jaeger-up jaeger-down jaeger-env \
@@ -63,12 +63,16 @@ fmt-check: ## fail if any file needs formatting
 vet: ## run go vet
 	$(GO) vet ./...
 
+cross: ## vet the code for macOS and Windows too, so a platform-specific file cannot break those builds unseen
+	GOOS=darwin GOARCH=arm64 $(GO) vet ./...
+	GOOS=windows GOARCH=amd64 $(GO) vet ./...
+
 lint: ## run staticcheck when it is installed
 	@if command -v staticcheck >/dev/null 2>&1; then staticcheck ./...; \
 	elif [ -x "$$($(GO) env GOPATH)/bin/staticcheck" ]; then "$$($(GO) env GOPATH)/bin/staticcheck" ./...; \
 	else echo "staticcheck not installed; skipping (go install honnef.co/go/tools/cmd/staticcheck@latest)"; fi
 
-check: fmt-check vet lint test shim-test ## the gate: formatting, static analysis, tests
+check: fmt-check vet cross lint test shim-test ## the gate: formatting, static analysis (Linux, macOS, Windows), tests
 	@echo "all checks passed"
 
 # tools/anthropic-shim lets Claude Code's auto mode work through 9router with

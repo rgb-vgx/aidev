@@ -216,7 +216,7 @@ func (s *Server) getTask(ctx context.Context, _ *sdk.CallToolRequest, in TaskInp
 	}
 	if apply, err := st.ApplyState(ctx, t.ID); err != nil {
 		return nil, TaskOutput{}, err
-	} else if apply.State != task.ApplyNever {
+	} else if apply = s.resolveApply(ctx, t, apply); apply.State != task.ApplyNever {
 		v.ApplyState = apply.State.String()
 		v.ApplyInto = apply.Into
 		v.ApplyCommit = apply.Commit
@@ -282,6 +282,13 @@ func (s *Server) listTasks(ctx context.Context, _ *sdk.CallToolRequest, in ListT
 	}
 	views := make([]view.Task, 0, len(tasks))
 	for _, item := range tasks {
+		// The question needs_apply asks is what is still waiting: a task
+		// whose work is already on the default branch, taken with git, is
+		// not (worker.ResolveApply).
+		item.Apply = orchestrator.ResolveApply(ctx, item.Task, item.Apply)
+		if in.NeedsApply && item.Apply.State == task.ApplyLanded {
+			continue
+		}
 		v := view.NewTask(item.Task)
 		v.RepoPath = item.RepoPath
 		if item.Apply.State != task.ApplyNever {
@@ -678,7 +685,7 @@ func (s *Server) buildResult(ctx context.Context, st *store.Store, taskID uuid.U
 	// taken is a courtesy to the reader.
 	var apply task.Apply
 	if a, err := st.ApplyState(ctx, taskID); err == nil {
-		apply = a
+		apply = s.resolveApply(ctx, t, a)
 	}
 	if project, err := st.GetProject(ctx, t.ProjectID); err == nil {
 		result.Task.RepoPath = project.RepoPath
@@ -751,4 +758,14 @@ func (s *Server) startRun(orchestrator *worker.Orchestrator, st *store.Store, t 
 		run.err = s.awaitOutcome(s.baseCtx, st, t.ID, wait, logPath)
 	}()
 	return run, true, nil
+}
+
+// resolveApply completes an apply state with what git knows, through the
+// connected orchestrator (worker.ResolveApply); unchanged when there is none.
+func (s *Server) resolveApply(ctx context.Context, t task.Task, apply task.Apply) task.Apply {
+	orchestrator, _, err := s.connected(ctx)
+	if err != nil {
+		return apply
+	}
+	return orchestrator.ResolveApply(ctx, t, apply)
 }
