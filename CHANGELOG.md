@@ -7,7 +7,18 @@ with:
 curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh
 ```
 
-## Unreleased
+## v0.9.0
+
+Upgrading from v0.8.0: install the new binary, run `aidev migrate` (migrations
+`0020_run_stopped`, `0021_read_dirs` and `0022_coverage`, all additive: an older
+binary keeps working on the migrated database), run `claude plugin update
+aidev@aidev` (plugin 0.5.5) and restart Claude Code.
+
+Most of this release comes from running aidev on a second repository
+(Axiom-Office): three ways a correct attempt was failed (ignored files under a
+protected path, an editor writing the shared git config, a denied read ending
+the agent's session), a cancel that left an application running, and work taken
+with plain git that never counted as taken.
 
 - **`--coverage` shows which changed Go lines no test ran.** Every dogfood
   round found defects in code the green specification never executed. With
