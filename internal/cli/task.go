@@ -274,6 +274,7 @@ func taskList(ctx context.Context, env *Env, args []string) error {
 	if err != nil {
 		return err
 	}
+	tasks = resolveListApply(ctx, app.orchestrator, tasks, *unapplied)
 
 	if *asJSON {
 		views := make([]view.Task, 0, len(tasks))
@@ -357,6 +358,7 @@ func taskApplyAndRepo(ctx context.Context, app *app, t task.Task) (task.Apply, s
 	if err != nil {
 		return task.Apply{}, "", err
 	}
+	apply = app.orchestrator.ResolveApply(ctx, t, apply)
 	repoPath := ""
 	if project, err := app.store.GetProject(ctx, t.ProjectID); err == nil {
 		repoPath = project.RepoPath
@@ -800,3 +802,19 @@ func (e *exitError) Error() string { return fmt.Sprintf("exit status %d", e.code
 
 // Code reports the status main should exit with.
 func (e *exitError) Code() int { return e.code }
+
+// resolveListApply completes each listed task's apply state with what git
+// knows (worker.ResolveApply) and, for --unapplied, drops the tasks whose work
+// turned out to be on the default branch already: the question --unapplied
+// answers is what is still waiting to be taken.
+func resolveListApply(ctx context.Context, o *worker.Orchestrator, items []store.TaskListItem, unapplied bool) []store.TaskListItem {
+	out := items[:0]
+	for _, item := range items {
+		item.Apply = o.ResolveApply(ctx, item.Task, item.Apply)
+		if unapplied && item.Apply.State == task.ApplyLanded {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
+}

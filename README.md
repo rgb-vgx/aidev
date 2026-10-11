@@ -399,7 +399,8 @@ Nothing is merged, and nothing is ever committed to your working branch.
 
 A succeeded task's listing shows whether its result has been applied
 (`aidev task list --unapplied` lists only the `SUCCEEDED` tasks still waiting
-to be applied).
+to be applied). Work taken with plain git instead of `aidev task apply` (a
+merge, a cherry-pick, a rebase) is recognised too, and shown as landed.
 
 A task created with `--max-retries N` (MCP: `max_retries`) gets up to N more
 attempts when its checks fail or its agent stops early. Each retry continues in
