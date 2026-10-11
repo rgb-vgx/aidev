@@ -46,8 +46,9 @@ every release so far:
   (README, "Backing up and restoring").
 - Every migration so far is additive: a column with a default, a wider `CHECK`
   constraint. An older binary keeps working on a database migrated by a newer
-  one, because it checks only the migrations it knows; this was confirmed when
-  0019–0021 were applied to a database still served by an older binary.
+  one, because it checks only the migrations it knows; this was checked when
+  0020 and 0021 were applied while v0.8.0-2 was still installed (`aidev doctor`,
+  `task list` and `project list` all worked).
 - A migration that is not additive will say so in its release's upgrade note.
 
 ## Versions
