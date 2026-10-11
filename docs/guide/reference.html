@@ -187,7 +187,7 @@ aidev worktree remove TASK-000001 --force</code></pre>
 <tr><td><code>task.apply_undone</code></td><td>A person ran <code>aidev task undo</code>: the applied change was reverted by a new <code>commit</code> on <code>into</code>; <code>undid</code> names what it reverted.</td></tr>
 <tr><td><code>task.run_stopped</code></td><td><code>aidev task cancel</code> waited for the process running the task: <code>stopped</code> says whether it did, <code>runner</code> names it and <code>waited_ms</code> how long it took. A runner that is still running is named in the cancel's output with how to stop it.</td></tr>
 <tr><td><code>task.containment_breach</code></td><td>The agent modified state shared with the main repository; the attempt fails with kind CONTAINMENT.</td></tr>
-<tr><td><code>task.shared_refs_changed</code></td><td>A git ref outside the task's own branch moved during the run — a warning on its own, because it can be another task rather than the agent.</td></tr>
+<tr><td><code>task.shared_refs_changed</code></td><td>A git ref outside the task's own branch moved during the run, or the shared config changed only in per-branch bookkeeping (<code>config_keys</code>: upstream, rebase, description, editor metadata such as <code>vscode-merge-base</code>) — a warning on its own, because it can be another task, an editor or a person rather than the agent.</td></tr>
 </table>
 
 <pre><code>aidev task events TASK-000001 --payload
