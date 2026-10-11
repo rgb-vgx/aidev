@@ -763,5 +763,6 @@ and create the task again.
 | [docs/research.md](docs/research.md) | What the installed Claude Code, OpenCode, git and PostgreSQL actually do, measured, with assumptions and open questions marked |
 | [docs/architecture.md](docs/architecture.md) | Package layout, design decisions and their costs, extension seams |
 | [docs/database.md](docs/database.md) | Schema, constraints, lifecycle, concurrency, migrations |
+| [docs/compatibility.md](docs/compatibility.md) | What 0.x means: which interfaces to rely on, how a change is announced, what migrations promise |
 | [docs/mcp-tools.md](docs/mcp-tools.md) | Every MCP tool: input, output, errors, side effects, and what is deliberately not exposed |
 | [AGENTS.md](AGENTS.md) | Conventions for agents (and people) contributing to this repository |

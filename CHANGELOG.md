@@ -9,6 +9,9 @@ curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh
 
 ## Unreleased
 
+- docs/compatibility.md says what 0.x means in practice: which interfaces to
+  rely on, how a change is announced, and what the migrations have promised.
+
 - **A denied reach outside the worktree no longer ends the agent's session.**
   OpenCode's default for a tool call outside its directory is `ask`, which a
   headless run answers by rejecting the call and ending the session —
