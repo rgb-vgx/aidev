@@ -32,6 +32,7 @@ func runProject(ctx context.Context, env *Env, args []string) error {
 		"submodules":  {"show or set how task worktrees treat this repository's submodules", projectSubmodules},
 		"approval":    {"show or set whether every task of this repository needs approval first", projectApproval},
 		"verify-mode": {"show or set where new tasks verify: in the agent's worktree or a clean checkout", projectVerifyMode},
+		"coverage":    {"show or set whether new tasks report which changed Go lines no test ran", projectCoverage},
 		"read-dirs":   {"show or set directories outside the repository the agent may read", projectReadDirs},
 	}
 
@@ -90,8 +91,8 @@ func projectList(ctx context.Context, env *Env, args []string) error {
 		return nil
 	}
 	for _, p := range projects {
-		fmt.Fprintf(env.Stdout, "%s\n  branch %s  submodules %s  approval %s  verify %s\n",
-			p.RepoPath, p.DefaultBranch, p.Submodules, onOff(p.RequiresApproval), p.VerificationMode)
+		fmt.Fprintf(env.Stdout, "%s\n  branch %s  submodules %s  approval %s  verify %s  coverage %s\n",
+			p.RepoPath, p.DefaultBranch, p.Submodules, onOff(p.RequiresApproval), p.VerificationMode, onOff(p.Coverage))
 		if len(p.ReadDirs) > 0 {
 			fmt.Fprintf(env.Stdout, "  read dirs %s\n", strings.Join(p.ReadDirs, ", "))
 		}
@@ -136,13 +137,33 @@ func projectAdd(ctx context.Context, env *Env, args []string) error {
 		return err
 	}
 
+	// The default is computed from the repository, never from flags: a
+	// planner must not be able to choose a project's settings.
+	pins, err := app.orchestrator.Git.PinsSubmodules(ctx, repository)
+	if err != nil {
+		return err
+	}
+	mode := task.VerificationClean
+	if pins {
+		mode = task.VerificationInPlace
+	}
 	project, err := app.store.EnsureProject(ctx, filepath.Base(repository.Path), repository.Path,
-		app.orchestrator.Git.CurrentBranch(ctx, repository))
+		app.orchestrator.Git.CurrentBranch(ctx, repository), mode)
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(env.Stdout, "registered %s (branch %s)\n", project.RepoPath, project.DefaultBranch)
 	fmt.Fprintf(env.Stdout, "Tasks for it may now be created through MCP as well as the CLI.\n")
+	if project.VerificationMode == task.VerificationClean {
+		fmt.Fprintf(env.Stdout,
+			"Tasks for this repository will verify in a fresh checkout of their result,\n"+
+				"so files git ignores cannot make the checks pass.\n")
+	} else {
+		fmt.Fprintf(env.Stdout,
+			"This repository pins submodules, which clean verification does not support,\n"+
+				"so tasks for it will verify in the agent's worktree instead. Change it with\n"+
+				"aidev project verify-mode clean --repo %s.\n", project.RepoPath)
+	}
 	return nil
 }
 
@@ -339,6 +360,74 @@ func projectVerifyMode(ctx context.Context, env *Env, args []string) error {
 			"Every task created from now on verifies in a fresh checkout of its result:\n"+
 				"files git ignores cannot make the checks pass (the agent's other changes are all there).\n"+
 				"Tasks already created keep the mode they were created with.\n")
+	}
+	return nil
+}
+
+// projectCoverage reads or writes whether this project's new tasks report,
+// once verification passes, which changed Go lines the tests ran.
+//
+// The setting is a template, not policy: each task freezes its own copy at
+// creation, so changing it here never re-judges a task that already exists.
+// Like approval it has no MCP counterpart — the project row is read by the
+// party creating tasks, and that party must not be able to rewrite the
+// template other tasks inherit.
+func projectCoverage(ctx context.Context, env *Env, args []string) error {
+	fs := flag.NewFlagSet("project coverage", flag.ContinueOnError)
+	fs.SetOutput(env.Stderr)
+	repo := fs.String("repo", ".", "path inside the repository")
+	positionals, err := parseInterspersed(fs, args)
+	if err != nil {
+		return usagef("aidev project coverage: %v", err)
+	}
+	if len(positionals) > 1 {
+		return usagef("aidev project coverage: expected at most one of on or off, got %d", len(positionals))
+	}
+
+	app, err := openApp(ctx)
+	if err != nil {
+		return err
+	}
+	defer app.close()
+
+	repository, err := app.orchestrator.Git.OpenRepository(ctx, *repo)
+	if err != nil {
+		return err
+	}
+	project, err := app.store.GetProjectByPath(ctx, repository.Path)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return fmt.Errorf("aidev does not know %s yet; register it with aidev project add %s",
+				repository.Path, repository.Path)
+		}
+		return err
+	}
+
+	if len(positionals) == 0 {
+		fmt.Fprintf(env.Stdout, "%s\n", onOff(project.Coverage))
+		return nil
+	}
+
+	var enabled bool
+	switch positionals[0] {
+	case "on":
+		enabled = true
+	case "off":
+		enabled = false
+	default:
+		return usagef("aidev project coverage: expected on or off, got %q", positionals[0])
+	}
+
+	updated, err := app.store.SetProjectCoverage(ctx, project.ID, enabled)
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintf(env.Stdout, "%s: coverage %s\n", updated.RepoPath, onOff(updated.Coverage))
+	if updated.Coverage {
+		fmt.Fprintf(env.Stdout,
+			"Every task created from now on reports which changed Go lines no test ran,\n"+
+				"once verification passes. Tasks already created keep the setting they were created with.\n")
 	}
 	return nil
 }

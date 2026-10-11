@@ -58,7 +58,10 @@ type CreateTaskInput struct {
 	ExpectFailOnBase bool
 	// Coverage reports, once verification passes, which changed Go lines
 	// the tests ran (task.coverage_reported). It never decides the outcome.
-	Coverage bool
+	// A nil choice takes the project's default; it is resolved and frozen
+	// into the task row here, so later changes to the project default cannot
+	// move the goalposts under this task.
+	Coverage *bool
 	BaseRef  string
 	Timeout  time.Duration
 }
@@ -135,7 +138,19 @@ func (o *Orchestrator) CreateTask(ctx context.Context, in CreateTaskInput) (task
 				ErrProjectNotRegistered, repo.Path, repo.Path)
 		}
 	} else {
-		project, err = o.Store.EnsureProject(ctx, filepath.Base(repo.Path), repo.Path, o.Git.CurrentBranch(ctx, repo))
+		// The default is computed from the repository, never from the
+		// caller's input: a planner creating tasks must not choose the
+		// settings its own tasks will inherit.
+		var pins bool
+		pins, err = o.Git.PinsSubmodules(ctx, repo)
+		if err != nil {
+			return task.Task{}, err
+		}
+		mode := task.VerificationClean
+		if pins {
+			mode = task.VerificationInPlace
+		}
+		project, err = o.Store.EnsureProject(ctx, filepath.Base(repo.Path), repo.Path, o.Git.CurrentBranch(ctx, repo), mode)
 	}
 	if err != nil {
 		return task.Task{}, err
@@ -160,6 +175,15 @@ func (o *Orchestrator) CreateTask(ctx context.Context, in CreateTaskInput) (task
 		if err != nil {
 			return task.Task{}, err
 		}
+	}
+
+	// Resolve the coverage report now and freeze it into the task: an
+	// explicit choice wins, otherwise the project's default applies as of
+	// this moment. Later changes to the project row affect only tasks
+	// created after them, so the report stays a pure function of the task.
+	coverage := project.Coverage
+	if in.Coverage != nil {
+		coverage = *in.Coverage
 	}
 
 	// Clean verification cannot honour submodules: the detached checkout of
@@ -206,7 +230,7 @@ func (o *Orchestrator) CreateTask(ctx context.Context, in CreateTaskInput) (task
 		MaxRetries:         in.MaxRetries,
 		RequiresApproval:   in.RequiresApproval,
 		ExpectFailOnBase:   in.ExpectFailOnBase,
-		Coverage:           in.Coverage,
+		Coverage:           coverage,
 		BaseRef:            in.BaseRef,
 		BaseCommitAtCreate: baseAtCreate,
 		Timeout:            in.Timeout,

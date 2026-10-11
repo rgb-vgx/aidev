@@ -50,6 +50,12 @@ every release so far:
   0020 and 0021 were applied while v0.8.0-2 was still installed (`aidev doctor`,
   `task list` and `project list` all worked).
 - A migration that is not additive will say so in its release's upgrade note.
+- A project registered from now on defaults to `clean` verification (migration
+  `0023_clean_verify_default`); a repository pinning submodules still defaults
+  to `in_place`, and projects already registered keep the mode they have.
+- A project can turn the coverage report on for all of its tasks (migration
+  `0024_project_coverage`); the report stays off unless the operator turns it
+  on, and tasks already created keep the setting they were created with.
 
 ## Versions
 

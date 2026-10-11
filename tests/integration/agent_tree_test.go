@@ -33,7 +33,12 @@ func TestCommitLeavesOutWhatVerificationWrote(t *testing.T) {
 	h := newHarness(t, nil)
 	h.backend.Work = doTheWork
 
-	created := h.createTask(passesAndWrites)
+	// In-place: only there can the checks write into the worktree the
+	// commit is built from, which is what the warning is about.
+	created := h.createTask(func(in *worker.CreateTaskInput) {
+		passesAndWrites(in)
+		in.VerificationMode = "in_place"
+	})
 	outcome, err := h.orchestrator.RunTask(h.ctx, created.Ref)
 	if err != nil {
 		t.Fatalf("RunTask: %v", err)
@@ -92,6 +97,7 @@ func TestVerificationEditingATrackedFileIsReported(t *testing.T) {
 
 	created := h.createTask(func(in *worker.CreateTaskInput) {
 		in.Verification = []task.VerificationStep{shell("test -f marker.txt && echo '// formatted' >> main.go")}
+		in.VerificationMode = "in_place"
 	})
 	outcome, err := h.orchestrator.RunTask(h.ctx, created.Ref)
 	if err != nil {

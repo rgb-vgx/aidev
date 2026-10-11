@@ -220,7 +220,19 @@ func indexOf(haystack []string, needle string) int {
 // does, so the MCP server will accept tasks for it.
 func (h *harness) registerProject(path string) {
 	h.t.Helper()
-	if _, err := h.store.EnsureProject(h.ctx, filepath.Base(path), path, "main"); err != nil {
+	repo, err := h.git.OpenRepository(h.ctx, path)
+	if err != nil {
+		h.t.Fatalf("open repository %s: %v", path, err)
+	}
+	pins, err := h.git.PinsSubmodules(h.ctx, repo)
+	if err != nil {
+		h.t.Fatalf("detect submodules in %s: %v", path, err)
+	}
+	mode := task.VerificationClean
+	if pins {
+		mode = task.VerificationInPlace
+	}
+	if _, err := h.store.EnsureProject(h.ctx, filepath.Base(path), path, "main", mode); err != nil {
 		h.t.Fatalf("register project %s: %v", path, err)
 	}
 }

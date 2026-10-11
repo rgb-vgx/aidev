@@ -189,8 +189,8 @@ func TestProjectVerificationModeIsFrozenIntoEachTask(t *testing.T) {
 
 	// The first task registers the project with the default mode.
 	first := h.createTask(nil)
-	if first.VerificationMode != task.VerificationInPlace {
-		t.Fatalf("first task mode = %q, want the in_place default", first.VerificationMode)
+	if first.VerificationMode != task.VerificationClean {
+		t.Fatalf("first task mode = %q, want the clean default", first.VerificationMode)
 	}
 
 	repo, err := h.git.OpenRepository(h.ctx, h.repoPath)
@@ -201,14 +201,14 @@ func TestProjectVerificationModeIsFrozenIntoEachTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.store.SetProjectVerificationMode(h.ctx, project.ID, task.VerificationClean); err != nil {
+	if _, err := h.store.SetProjectVerificationMode(h.ctx, project.ID, task.VerificationInPlace); err != nil {
 		t.Fatalf("SetProjectVerificationMode: %v", err)
 	}
 
 	// A task created after the switch inherits it…
 	second := h.createTask(nil)
-	if second.VerificationMode != task.VerificationClean {
-		t.Errorf("inherited mode = %q, want clean from the project template", second.VerificationMode)
+	if second.VerificationMode != task.VerificationInPlace {
+		t.Errorf("inherited mode = %q, want in_place from the project template", second.VerificationMode)
 	}
 	// …the first keeps what it was created with, reloaded from the store so
 	// the assertion is about the row, not the value returned earlier.
@@ -216,32 +216,32 @@ func TestProjectVerificationModeIsFrozenIntoEachTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reloaded.VerificationMode != task.VerificationInPlace {
-		t.Errorf("first task mode after the project switched = %q, want it frozen at in_place", reloaded.VerificationMode)
+	if reloaded.VerificationMode != task.VerificationClean {
+		t.Errorf("first task mode after the project switched = %q, want it frozen at clean", reloaded.VerificationMode)
 	}
 
 	// An explicit choice at creation beats the template.
-	explicit := h.createTask(func(in *worker.CreateTaskInput) { in.VerificationMode = "in_place" })
-	if explicit.VerificationMode != task.VerificationInPlace {
+	explicit := h.createTask(func(in *worker.CreateTaskInput) { in.VerificationMode = "clean" })
+	if explicit.VerificationMode != task.VerificationClean {
 		t.Errorf("explicit mode = %q, want the caller's choice to win over the template", explicit.VerificationMode)
 	}
 
 	// Switching back does not rewrite what already exists.
-	if _, err := h.store.SetProjectVerificationMode(h.ctx, project.ID, task.VerificationInPlace); err != nil {
+	if _, err := h.store.SetProjectVerificationMode(h.ctx, project.ID, task.VerificationClean); err != nil {
 		t.Fatal(err)
 	}
 	reloaded, err = h.store.GetTask(h.ctx, second.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reloaded.VerificationMode != task.VerificationClean {
-		t.Errorf("second task mode after switching back = %q, want it frozen at clean", reloaded.VerificationMode)
+	if reloaded.VerificationMode != task.VerificationInPlace {
+		t.Errorf("second task mode after switching back = %q, want it frozen at in_place", reloaded.VerificationMode)
 	}
 
 	// The audit log records the mode with the task, so a reviewer of the
 	// history can see where the checks were meant to run.
-	if mode := h.eventPayload(second.ID, "task.created")["verification_mode"]; mode != "clean" {
-		t.Errorf("task.created verification_mode = %v, want clean", mode)
+	if mode := h.eventPayload(second.ID, "task.created")["verification_mode"]; mode != "in_place" {
+		t.Errorf("task.created verification_mode = %v, want in_place", mode)
 	}
 }
 

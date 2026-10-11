@@ -15,6 +15,15 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 # and 5433 are commonly already taken (docs/research.md 5).
 DB_PORT      ?= 5434
 DB_CONTAINER ?= $(or $(AIDEV_DB_CONTAINER),aidev-postgres)
+
+# Pinned, because compose otherwise names the project after the directory: a git
+# worktree — an aidev task's own checkout, where the task's setup steps run —
+# would be read as a second project, and `docker compose up -d` would then die
+# on a clash with the fixed container name instead of reaching the database that
+# is already up. Override to run a genuinely separate database; change
+# AIDEV_DB_PORT with it, since the port is fixed too.
+COMPOSE_PROJECT ?= aidev
+COMPOSE         := docker compose -p $(COMPOSE_PROJECT)
 DB_URL  ?= postgres://aidev:aidev@127.0.0.1:$(DB_PORT)/aidev?sslmode=disable
 TEST_DB_URL ?= postgres://aidev:aidev@127.0.0.1:$(DB_PORT)/aidev_test?sslmode=disable
 
@@ -90,7 +99,7 @@ shim-install: shim-test ## install anthropic-shim as a systemd user service on 1
 	systemctl --user restart anthropic-shim
 
 db-up: ## start PostgreSQL and wait for it to accept connections
-	docker compose up -d
+	$(COMPOSE) up -d
 	@printf 'waiting for postgres'
 	@for i in $$(seq 1 60); do \
 		if [ "$$(docker inspect -f '{{.State.Health.Status}}' $(DB_CONTAINER) 2>/dev/null)" = healthy ]; then echo " ready"; exit 0; fi; \
@@ -98,10 +107,10 @@ db-up: ## start PostgreSQL and wait for it to accept connections
 	done; echo " timed out"; exit 1
 
 db-down: ## stop PostgreSQL, keeping data
-	docker compose down
+	$(COMPOSE) down
 
 db-reset: ## destroy the database and its data, then start fresh
-	docker compose down -v
+	$(COMPOSE) down -v
 	$(MAKE) db-up
 
 # Jaeger: one container, shows a trace immediately, no credentials. It is the
@@ -197,7 +206,7 @@ langfuse-credentials: $(LANGFUSE_ENV) ## print the Langfuse UI login for the boo
 	echo "  password: $$LANGFUSE_INIT_USER_PASSWORD"
 
 db-logs: ## follow PostgreSQL logs
-	docker compose logs -f postgres
+	$(COMPOSE) logs -f postgres
 
 migrate: build ## apply pending migrations to the development database
 	AIDEV_CONFIG="$(AIDEV_CONFIG)" $(BIN) migrate
@@ -207,8 +216,8 @@ test-e2e: ## run the end-to-end test against the real opencode (slow, needs post
 		$(GO) test ./tests/e2e/ -count=1 -v -timeout 20m
 
 test-db-create: ## create the database used by integration tests
-	docker compose exec -T postgres psql -U aidev -d postgres -c "SELECT 1 FROM pg_database WHERE datname='aidev_test'" | grep -q 1 \
-		|| docker compose exec -T postgres createdb -U aidev aidev_test
+	$(COMPOSE) exec -T postgres psql -U aidev -d postgres -c "SELECT 1 FROM pg_database WHERE datname='aidev_test'" | grep -q 1 \
+		|| $(COMPOSE) exec -T postgres createdb -U aidev aidev_test
 
 clean: ## remove build output
 	rm -rf bin

@@ -9,22 +9,31 @@ import (
 	"aidev/internal/task"
 )
 
-const projectColumns = `id, name, repo_path, default_branch, submodules, requires_approval, verification_mode, created_at, updated_at, read_dirs`
+const projectColumns = `id, name, repo_path, default_branch, submodules, requires_approval, verification_mode, created_at, updated_at, read_dirs, coverage`
 
 // EnsureProject registers repoPath as a project, or returns the existing
 // project for that path unchanged.
 //
+// verificationMode is what a new row is created with: aidev computes it from
+// the repository (clean, unless the repository pins submodules, which clean
+// verification refuses), never from a task-creation caller. It touches only
+// the insert — an existing row keeps the mode it already holds, so an
+// operator's setting survives every later registration.
+//
 // The insert-or-select is done in one statement so that two callers racing to
 // register the same repository cannot produce a unique-violation for one of
 // them; whichever loses the insert reads the winner's row.
-func (s *Store) EnsureProject(ctx context.Context, name, repoPath, defaultBranch string) (task.Project, error) {
+func (s *Store) EnsureProject(ctx context.Context, name, repoPath, defaultBranch string, verificationMode task.VerificationMode) (task.Project, error) {
 	if defaultBranch == "" {
 		defaultBranch = "main"
 	}
+	if verificationMode == "" {
+		verificationMode = task.VerificationClean
+	}
 	row := s.db.QueryRow(ctx, `
 		WITH inserted AS (
-			INSERT INTO projects (id, name, repo_path, default_branch)
-			VALUES ($1, $2, $3, $4)
+			INSERT INTO projects (id, name, repo_path, default_branch, verification_mode)
+			VALUES ($1, $2, $3, $4, $5)
 			ON CONFLICT (repo_path) DO NOTHING
 			RETURNING `+projectColumns+`
 		)
@@ -32,7 +41,7 @@ func (s *Store) EnsureProject(ctx context.Context, name, repoPath, defaultBranch
 		UNION ALL
 		SELECT `+projectColumns+` FROM projects
 		WHERE repo_path = $3 AND NOT EXISTS (SELECT 1 FROM inserted)`,
-		uuid.Must(uuid.NewV7()), name, repoPath, defaultBranch)
+		uuid.Must(uuid.NewV7()), name, repoPath, defaultBranch, string(verificationMode))
 
 	p, err := scanProject(row)
 	if err != nil {
@@ -87,8 +96,9 @@ func (s *Store) ListProjects(ctx context.Context) ([]task.Project, error) {
 // submodules and returns the project as it now stands.
 //
 // It is a separate call rather than an argument to EnsureProject because
-// EnsureProject runs on every task creation: passing the mode there would let a
-// task creation silently reset a setting an operator had chosen.
+// EnsureProject runs on every task creation: the verification mode it takes
+// is computed from the repository, while this setting can only come from the
+// caller — and the party creating tasks must not reset what an operator chose.
 func (s *Store) SetProjectSubmodules(ctx context.Context, id uuid.UUID, mode task.SubmoduleMode) (task.Project, error) {
 	row := s.db.QueryRow(ctx, `
 		UPDATE projects SET submodules = $2, updated_at = now()
@@ -162,6 +172,27 @@ func (s *Store) SetProjectReadDirs(ctx context.Context, id uuid.UUID, dirs []str
 	return p, nil
 }
 
+// SetProjectCoverage switches whether this project's new tasks report, once
+// verification passes, which changed Go lines the tests ran, and returns the
+// project as it now stands.
+//
+// Like SetProjectRequiresApproval it is its own call with no MCP counterpart:
+// the project row is a template read at task creation, and the party creating
+// tasks must not be able to rewrite the template other tasks will inherit.
+// Tasks already created keep the setting frozen into their own row.
+func (s *Store) SetProjectCoverage(ctx context.Context, id uuid.UUID, enabled bool) (task.Project, error) {
+	row := s.db.QueryRow(ctx, `
+		UPDATE projects SET coverage = $2, updated_at = now()
+		WHERE id = $1
+		RETURNING `+projectColumns, id, enabled)
+
+	p, err := scanProject(row)
+	if err != nil {
+		return task.Project{}, fmt.Errorf("set coverage for project %s: %w", id, err)
+	}
+	return p, nil
+}
+
 // scanner is satisfied by both pgx.Row and pgx.Rows.
 type scanner interface {
 	Scan(dest ...any) error
@@ -170,7 +201,7 @@ type scanner interface {
 func scanProject(row scanner) (task.Project, error) {
 	var p task.Project
 	err := row.Scan(&p.ID, &p.Name, &p.RepoPath, &p.DefaultBranch, &p.Submodules, &p.RequiresApproval,
-		&p.VerificationMode, &p.CreatedAt, &p.UpdatedAt, &p.ReadDirs)
+		&p.VerificationMode, &p.CreatedAt, &p.UpdatedAt, &p.ReadDirs, &p.Coverage)
 	if err != nil {
 		return task.Project{}, classify(err)
 	}

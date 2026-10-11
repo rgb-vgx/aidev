@@ -308,7 +308,7 @@ aidev migrate [--json]                # apply pending migrations
 aidev task create --title T --verify CMD [--repo .] [--description D]
                   [--acceptance A] [--agent build] [--model M] [--priority N]
                   [--hardness TRIVIAL|STANDARD|HARD] [--max-retries N]
-                  [--setup CMD] [--protect GLOB] [--expect-fail-on-base] [--coverage]
+                  [--setup CMD] [--protect GLOB] [--expect-fail-on-base] [--coverage|--no-coverage]
                   [--verify-mode in_place|clean] [--requires-approval]
                   [--base-ref REF] [--timeout 30m] [--json]
 aidev task list   [--status S,S] [--repo .] [--limit N] [--unapplied] [--json]
@@ -330,6 +330,7 @@ aidev project add   [path]                        # đăng ký một repository 
 aidev project list  [--json]                      # các repository mà aidev biết
 aidev project approval [on|off] [--repo .]        # chặn mọi task của repo chờ người duyệt (chỉ ở CLI)
 aidev project verify-mode [in_place|clean] [--repo .]  # nơi các task mới verify (chỉ ở CLI)
+aidev project coverage [on|off] [--repo .]  # báo dòng Go đổi mà test không chạy cho task mới (chỉ ở CLI)
 aidev project read-dirs [DIR...] [--clear] [--repo .]  # thư mục agent được đọc (chỉ ở CLI)
 ```
 
@@ -358,6 +359,17 @@ aidev sẽ commit, tức là mọi thay đổi và tập tin mới trừ tập t
 tập tin bị ignore không thể làm chúng pass. Agent không commit: aidev tự commit
 công việc khi nó pass. `--expect-fail-on-base` và `--verify-mode clean` từ chối các kho mã
 có ghim submodule.
+
+Một repository đăng ký từ nay sẽ verify ở `clean` trừ khi nó ghim submodule,
+thứ mà clean verification từ chối: những kho đó mặc định dùng `in_place` thay
+thế. `aidev project verify-mode` xem hoặc đổi mặc định của một dự án, và các dự
+án đã đăng ký giữ nguyên mode của chúng.
+
+`--coverage` báo, khi verification đã pass, những dòng Go mà task đã đổi nhưng
+không test nào chạy qua — chỉ là báo cáo, không bao giờ quyết định kết quả. Dự
+án bật `aidev project coverage on` sẽ bật báo cáo cho mọi task tạo từ đó về sau;
+`--no-coverage` tắt báo cáo cho một task trước dự án đang bật, và các task đã
+tạo giữ nguyên thiết lập lúc chúng được tạo.
 
 ## Chuyện gì xảy ra bên trong
 
