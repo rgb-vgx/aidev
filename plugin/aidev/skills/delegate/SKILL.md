@@ -105,6 +105,10 @@ Call `aidev_create_task` with:
   early, aidev then tries once more in the same worktree and agent session, with
   the failing output in the prompt, before reporting a failure. A refused tool
   call, an intercepted runner or a timeout is never retried.
+- `coverage`: `true` for a change to Go code. Once verification passes, aidev
+  runs the tests of the changed packages with coverage and reports which changed
+  lines no test ran (`result.coverage`). It costs one more test run of those
+  packages, and it never decides the outcome; it tells the review where to look.
 
 ## 6. Run it and wait
 

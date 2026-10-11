@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"aidev/internal/coverage"
 	"aidev/internal/event"
 	"aidev/internal/task"
 )
@@ -37,6 +38,7 @@ type Task struct {
 	VerificationMode   string   `json:"verification_mode" jsonschema:"where verification runs: in_place (in the agent's worktree) or clean (a fresh checkout of the result), frozen at creation"`
 	RequiresApproval   bool     `json:"requires_approval" jsonschema:"whether a human decision is required before the task may run"`
 	ExpectFailOnBase   bool     `json:"expect_fail_on_base" jsonschema:"whether the verification commands must already fail on the base commit: they run there before the agent starts, and a pass means they cannot distinguish before from after, so the attempt fails without calling the agent"`
+	Coverage           bool     `json:"coverage,omitempty" jsonschema:"whether aidev reports which changed Go lines the tests ran, once verification passes"`
 	MaxRetries         int      `json:"max_retries" jsonschema:"how many more attempts aidev may make when one fails in a way another try can fix; 0 means no retry"`
 	BaseRef            string   `json:"base_ref,omitempty" jsonschema:"git ref the task's branch starts from"`
 	BaseCommitAtCreate string   `json:"base_commit_at_create,omitempty" jsonschema:"the commit the base ref pointed at when the task was created"`
@@ -80,6 +82,7 @@ func NewTask(t task.Task) Task {
 		VerificationMode:   t.VerificationMode.String(),
 		RequiresApproval:   t.RequiresApproval,
 		ExpectFailOnBase:   t.ExpectFailOnBase,
+		Coverage:           t.Coverage,
 		MaxRetries:         t.MaxRetries,
 		BaseRef:            t.BaseRef,
 		BaseCommitAtCreate: t.BaseCommitAtCreate,
@@ -260,6 +263,9 @@ type Result struct {
 	// the run, but a reviewer must be able to see that what passed was also
 	// written in the same attempt (research §7b tier 1).
 	TestsModified []string `json:"tests_modified,omitempty" jsonschema:"changed paths that look like the tests judging this attempt; a report so a reviewer can see that what passed was also written in the same attempt"`
+	// Coverage is which changed Go lines the tests ran, for a task created
+	// with coverage whose verification passed. A report, never a verdict.
+	Coverage *coverage.Result `json:"coverage,omitempty" jsonschema:"for a task created with coverage: changed and not_run counts of its changed Go lines, the files and line ranges no test ran, or error when it could not be measured; a report that never decides the outcome"`
 	// BaseMoved is a warning, like TestsModified: the attempt ran, but from a
 	// different commit than the base ref named when the task was created
 	// (research D2), so the reviewer is reading work on code the task's

@@ -365,3 +365,23 @@ func (w *Worktree) snapshotStep(ctx context.Context, env []string, step string, 
 	}
 	return nil
 }
+
+// ZeroContextDiff returns `git diff -U0` from one commit or tree to another,
+// limited to pathspecs — the input of a changed-lines report. Plumbing only:
+// no external diff driver or textconv runs, and a diff larger than aidev
+// captures is an error rather than a short answer.
+func (w *Worktree) ZeroContextDiff(ctx context.Context, from, to string, pathspecs ...string) (string, error) {
+	args := []string{"diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--end-of-options", from, to, "--"}
+	args = append(args, pathspecs...)
+	res, err := w.m.run(ctx, w.Path, nil, args...)
+	if err != nil {
+		return "", err
+	}
+	if !res.Succeeded() {
+		return "", fmt.Errorf("diff %s..%s in %s: %s", from, to, w.Path, firstLine(res.Stderr))
+	}
+	if res.StdoutTruncated {
+		return "", fmt.Errorf("diff %s..%s in %s is larger than aidev captures", from, to, w.Path)
+	}
+	return res.Stdout, nil
+}

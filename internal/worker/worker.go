@@ -19,6 +19,7 @@ import (
 
 	"aidev/internal/agent"
 	"aidev/internal/config"
+	"aidev/internal/coverage"
 	"aidev/internal/event"
 	"aidev/internal/git"
 	"aidev/internal/logging"
@@ -97,6 +98,11 @@ type Outcome struct {
 	// run is judged as usual. Empty when the attempt left the tests alone or
 	// never reached verification.
 	TestsModified []string
+
+	// Coverage is the attempt's coverage measurement, for a task that asked
+	// for one and passed verification; nil otherwise. A report, never a
+	// verdict.
+	Coverage *coverage.Result
 
 	// Runner is set by a Cancel that waited for the process running the task:
 	// what it found. Nil when it did not wait or nothing was running.

@@ -16,7 +16,7 @@ import (
 const taskColumns = `id, ref, project_id, title, description, agent, model, hardness, priority, status,
 	acceptance_criteria, verification, protected_paths, setup_steps, verification_mode,
 	max_retries, requires_approval, expect_fail_on_base, base_ref, timeout_seconds, created_at, updated_at,
-	base_commit_at_create`
+	base_commit_at_create, coverage`
 
 // CreateTask persists a new task and returns it with the database-assigned
 // reference filled in.
@@ -50,13 +50,13 @@ func (s *Store) CreateTask(ctx context.Context, t task.Task) (task.Task, error) 
 			id, project_id, title, description, agent, model, hardness, priority, status,
 			acceptance_criteria, verification, protected_paths, setup_steps, verification_mode,
 			max_retries, requires_approval, expect_fail_on_base, base_ref, timeout_seconds,
-			base_commit_at_create
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+			base_commit_at_create, coverage
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
 		RETURNING `+taskColumns,
 		t.ID, t.ProjectID, t.Title, t.Description, t.Agent, t.Model, string(t.Hardness), t.Priority, string(t.Status),
 		t.AcceptanceCriteria, verification, protected, setup, string(t.VerificationMode),
 		t.MaxRetries, t.RequiresApproval, t.ExpectFailOnBase,
-		t.BaseRef, int(t.Timeout.Seconds()), t.BaseCommitAtCreate)
+		t.BaseRef, int(t.Timeout.Seconds()), t.BaseCommitAtCreate, t.Coverage)
 
 	created, err := scanTask(row)
 	if err != nil {
@@ -161,7 +161,7 @@ func (s *Store) ListTasks(ctx context.Context, filter TaskFilter) ([]TaskListIte
 		SELECT t.id, t.ref, t.project_id, t.title, t.description, t.agent, t.model, t.hardness, t.priority, t.status,
 			t.acceptance_criteria, t.verification, t.protected_paths, t.setup_steps, t.verification_mode,
 			t.max_retries, t.requires_approval, t.expect_fail_on_base, t.base_ref, t.timeout_seconds, t.created_at, t.updated_at,
-			t.base_commit_at_create,
+			t.base_commit_at_create, t.coverage,
 			p.repo_path, e.type, e.payload, e.created_at
 		FROM tasks t
 		JOIN projects p ON p.id = t.project_id
@@ -246,7 +246,7 @@ func scanTask(row scanner) (task.Task, error) {
 		&t.ID, &t.Ref, &t.ProjectID, &t.Title, &t.Description, &t.Agent, &t.Model, &hardness, &t.Priority,
 		&status, &t.AcceptanceCriteria, &verification, &protectedPaths, &setupSteps, &mode,
 		&t.MaxRetries, &t.RequiresApproval, &t.ExpectFailOnBase,
-		&t.BaseRef, &timeoutSeconds, &t.CreatedAt, &t.UpdatedAt, &t.BaseCommitAtCreate)
+		&t.BaseRef, &timeoutSeconds, &t.CreatedAt, &t.UpdatedAt, &t.BaseCommitAtCreate, &t.Coverage)
 	if err != nil {
 		return task.Task{}, classify(err)
 	}
@@ -321,7 +321,7 @@ func scanTaskListItem(row scanner) (TaskListItem, error) {
 		&t.ID, &t.Ref, &t.ProjectID, &t.Title, &t.Description, &t.Agent, &t.Model, &hardness, &t.Priority,
 		&status, &t.AcceptanceCriteria, &verification, &protectedPaths, &setupSteps, &mode,
 		&t.MaxRetries, &t.RequiresApproval, &t.ExpectFailOnBase,
-		&t.BaseRef, &timeoutSeconds, &t.CreatedAt, &t.UpdatedAt, &t.BaseCommitAtCreate,
+		&t.BaseRef, &timeoutSeconds, &t.CreatedAt, &t.UpdatedAt, &t.BaseCommitAtCreate, &t.Coverage,
 		&item.RepoPath, &eventType, &eventPayload, &eventAt)
 	if err != nil {
 		return TaskListItem{}, classify(err)

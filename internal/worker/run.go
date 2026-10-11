@@ -15,6 +15,7 @@ import (
 
 	"aidev/internal/agent"
 	"aidev/internal/config"
+	"aidev/internal/coverage"
 	"aidev/internal/event"
 	"aidev/internal/git"
 	"aidev/internal/logging"
@@ -964,7 +965,50 @@ func (r *run) verify(ctx context.Context) (Outcome, error) {
 		r.retryable = report.FailureKind == task.FailureVerification
 		return r.fail(ctx, report.FailureKind, fmt.Errorf("verification did not pass: %s", report.Summary()))
 	}
+	// Measured where the checks ran, before that checkout goes away, and
+	// only when they passed: a report on work that failed would be noise.
+	if r.task.Coverage {
+		r.reportCoverage(ctx, workingDir)
+	}
 	return r.succeed(ctx)
+}
+
+// reportCoverage measures which of the Go lines this attempt changed the
+// tests ran and records task.coverage_reported. It never affects the outcome:
+// a measurement that cannot be made is recorded with its reason.
+func (r *run) reportCoverage(ctx context.Context, dir string) {
+	payload := map[string]any{}
+	report, err := r.measureCoverage(ctx, dir)
+	if err != nil {
+		payload["error"] = err.Error()
+		r.log.WarnContext(ctx, "could not measure coverage", "error", err.Error())
+	} else {
+		payload["changed"] = report.Changed
+		payload["not_run"] = report.NotRun
+		payload["files"] = report.Files
+	}
+	r.emit(ctx, event.TypeCoverageReported, payload)
+}
+
+func (r *run) measureCoverage(ctx context.Context, dir string) (coverage.Report, error) {
+	tree := r.agentTree
+	if tree == "" {
+		snap, err := r.worktree.CurrentTree(ctx)
+		if err != nil {
+			return coverage.Report{}, err
+		}
+		tree = snap
+	}
+	diff, err := r.worktree.ZeroContextDiff(ctx, r.worktree.BaseCommit, tree, "*.go")
+	if err != nil {
+		return coverage.Report{}, err
+	}
+	return coverage.Analyze(ctx, coverage.Options{
+		Dir:            dir,
+		Diff:           diff,
+		Timeout:        r.o.Config.DefaultVerificationTimeout,
+		MaxOutputBytes: r.o.Config.MaxOutputBytes,
+	})
 }
 
 // maxDriftPaths bounds the paths a drift warning lists. A verification that

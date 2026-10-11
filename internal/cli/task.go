@@ -124,6 +124,7 @@ func taskCreate(ctx context.Context, env *Env, args []string) error {
 	maxRetries := fs.Int("max-retries", 0, "retry up to N more times when the checks fail or the agent stops early (0-10)")
 	requiresApproval := fs.Bool("requires-approval", false, "do not run until a human approves")
 	expectFailOnBase := fs.Bool("expect-fail-on-base", false, "run the verification commands on the base commit before the agent starts; fail immediately if they already pass, because commands that pass on the base cannot distinguish before from after (for bug-fix tasks)")
+	coverage := fs.Bool("coverage", false, "once verification passes, run the Go tests of the changed packages with coverage and report which changed lines no test ran (a report; it never decides the outcome)")
 	baseRef := fs.String("base-ref", "", "git ref to branch from (default: the project's default branch)")
 	timeout := fs.Duration("timeout", 0, "bound this task's agent run (default: tasks.timeout in conf.json)")
 	asJSON := fs.Bool("json", false, "print the created task as JSON")
@@ -194,6 +195,7 @@ flags:
 		MaxRetries:         *maxRetries,
 		RequiresApproval:   *requiresApproval,
 		ExpectFailOnBase:   *expectFailOnBase,
+		Coverage:           *coverage,
 		BaseRef:            *baseRef,
 		Timeout:            *timeout,
 	})
@@ -517,6 +519,9 @@ func taskResult(ctx context.Context, env *Env, args []string) error {
 		if tests, err := app.store.TestsModifiedPaths(ctx, t.ID, attempt.ID); err == nil {
 			outcome.TestsModified = tests
 		}
+		if cov, err := app.store.CoverageReport(ctx, t.ID, attempt.ID); err == nil {
+			outcome.Coverage = cov
+		}
 
 		if workerRuns, err := app.store.ListWorkerRuns(ctx, attempt.ID); err == nil && len(workerRuns) > 0 {
 			latest := workerRuns[len(workerRuns)-1]
@@ -790,7 +795,9 @@ func statusNames() []string {
 }
 
 func buildResultView(outcome worker.Outcome, runs []task.VerificationRun, includeOutput bool) view.Result {
-	return view.NewResult(outcome.Task, outcome.Attempt, outcome.WorkerRun, runs, outcome.Worktree, outcome.Approval, outcome.TestsModified, outcome.Message, includeOutput)
+	v := view.NewResult(outcome.Task, outcome.Attempt, outcome.WorkerRun, runs, outcome.Worktree, outcome.Approval, outcome.TestsModified, outcome.Message, includeOutput)
+	v.Coverage = outcome.Coverage
+	return v
 }
 
 // exitError carries a specific exit status without being an error message.

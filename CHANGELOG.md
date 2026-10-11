@@ -9,6 +9,15 @@ curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh
 
 ## Unreleased
 
+- **`--coverage` shows which changed Go lines no test ran.** Every dogfood
+  round found defects in code the green specification never executed. With
+  `aidev task create --coverage` (MCP `coverage`), once verification passes aidev
+  runs the tests of the changed packages with a coverage profile, module by
+  module, and `task result` says "coverage of the changed Go lines: N of M run by
+  the tests" and lists the lines not run. A report only; it never changes the
+  outcome. Migration `0022_coverage`; plugin 0.5.5 has the delegate skill ask
+  for it on Go changes and the review skill start from it.
+
 - **A denied reach outside the worktree no longer ends the agent's session.**
   OpenCode's default for a tool call outside its directory is `ask`, which a
   headless run answers by rejecting the call and ending the session —
