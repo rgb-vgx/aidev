@@ -18,9 +18,10 @@ curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh
   on (operator only, like `verify-mode`); each task freezes its own copy at
   creation, so a later change never moves the goalposts under existing tasks.
   `aidev task create --coverage` turns it on for one task, `--no-coverage` turns
-  it off for one task against a project that has it on, and neither takes the
-  project's default (MCP `coverage` is now tri-state the same way: empty takes
-  the default). `aidev project list` shows the setting. Migration
+  it off for one task against a project that has it on; passing neither takes the
+  project's default, and the choice is frozen into the task (MCP `coverage` is
+  tri-state the same way: empty takes the default). `aidev project list` shows
+  the setting. Migration
   `0024_project_coverage` (additive: one column with a default, no existing row
   is touched).
 
