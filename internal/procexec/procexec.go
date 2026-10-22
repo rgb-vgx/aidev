@@ -220,6 +220,11 @@ func Run(ctx context.Context, spec Spec) (Result, error) {
 	// xvfb-run gets) can still be found and stopped with the rest. Random per
 	// run: it names this run's processes and nothing else.
 	cmd.Env = append(dropEnv(stripTelemetryEnv(os.Environ()), spec.DropEnv), spec.ExtraEnv...)
+	// os/exec changes the child's working directory but leaves PWD inherited
+	// from aidev's caller. Some tools trust PWD over getcwd() — OpenCode 2
+	// chooses the project directory that way — and would then write outside
+	// the worktree (docs/research.md §2.12).
+	cmd.Env = withPWD(cmd.Env, spec.Dir)
 	tag := ""
 	if spec.FollowSessions {
 		tag = newRunTag()
@@ -419,6 +424,19 @@ func stripTelemetryEnv(env []string) []string {
 		kept = append(kept, entry)
 	}
 	return kept
+}
+
+// withPWD returns env with PWD naming dir and no inherited PWD. The working
+// directory is validated to be absolute, so dir is used as written.
+func withPWD(env []string, dir string) []string {
+	kept := make([]string, 0, len(env)+1)
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "PWD=") {
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	return append(kept, "PWD="+dir)
 }
 
 func quote(s string) string {

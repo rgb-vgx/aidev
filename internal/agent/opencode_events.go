@@ -96,6 +96,12 @@ type transcript struct {
 	// so that a value aidev does not recognise is still recorded.
 	FinishReason string
 
+	// LastEvent is the type of the last parsed event. OpenCode 2 ends a
+	// completed run with a final text event and no closing step_finish, so the
+	// retained reason from the previous step ("tool-calls") alone reads as an
+	// unfinished session (docs/research.md §2.12).
+	LastEvent string
+
 	ToolCalls     int
 	FailedTools   int
 	Usage         usage
@@ -214,6 +220,7 @@ func (s *eventScanner) consume(line []byte) {
 		return
 	}
 	s.result.Lines++
+	s.result.LastEvent = ev.Type
 
 	if ev.SessionID != "" {
 		s.result.SessionID = ev.SessionID

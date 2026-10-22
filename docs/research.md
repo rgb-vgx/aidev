@@ -22,7 +22,7 @@ Everything was read off the installed software.
 | Component | Version | How determined |
 |---|---|---|
 | Claude Code | `2.1.268` | `claude --version` **[OBSERVED]** |
-| OpenCode | `1.18.30` | `opencode --version` **[OBSERVED]** |
+| OpenCode | `2.1.3` (the 1.18 line remains supported) | `opencode --version` → `opencode v2.1.3` **[OBSERVED]** |
 | Go (system) | `go1.24.12 linux/amd64` | `go version` **[OBSERVED]** |
 | Go (effective) | `go1.26.8` (auto-downloaded toolchain) | see §7.1 **[OBSERVED]** |
 | git | `2.43.0` | `git --version` **[OBSERVED]** |
@@ -293,6 +293,45 @@ reached "exiting loop" in 7 s — yet printed no event at all and hung until `ti
 (90 s and 240 s runs). Adding `--fork` created the fork in directory a too, with the same hang.
 So a retry cannot continue a session in a new worktree path: continuing the session means
 running in the directory the session was created in.
+
+### 2.13 OpenCode 2.1.3: what changed **[OBSERVED]**
+
+Measured on 2026-10-22/23 against `/home/thuyetmt/.opencode/bin/opencode`,
+`opencode v2.1.3`. aidev supports both this line and 1.x; `OpenCode.isV2` picks the
+argument form from `opencode --version`.
+
+| 1.18 | 2.1.3 |
+|---|---|
+| `opencode agent list`, text lines | `opencode debug agents`, a JSON array of `{id, mode}` |
+| `opencode run --dir <path>` | removed: `ERROR Unrecognized flag: --dir in command opencode run` |
+| `opencode run` runs directly | connects to a shared background service; `--standalone` starts a private server |
+
+**Agent lookup is cold on first use.** The first `opencode debug agents` in a directory
+OpenCode has not seen prints `[]` and exits 0 while it creates the project store. The
+second call prints the built-in agents (`build`, `explore`, `general`, `plan`, `summary`,
+`title`, ...). aidev retries once. `OPENCODE_DB=:memory:` must not be set for this command:
+on 2.x the agent configuration lives in the database, and an in-memory store lists
+nothing.
+
+**The project directory comes from `PWD`, not `getcwd()`.** Measured in the probe for
+TASK-000139: `procexec` started `opencode run --standalone ...` with `cmd.Dir` set to the
+task worktree, but the inherited `PWD` still named aidev's launch directory. OpenCode
+wrote `OK.txt` into the launch directory. Started with `PWD` equal to `cmd.Dir`, it wrote
+inside the worktree. `procexec` now sets `PWD` to the child's working directory for every
+command.
+
+**A completed run may not end with `step_finish`.** With
+`opencode/mimo-v2.6-flash-free`, a run that creates a file and answers ends with
+`step_start`, `text` and no closing `step_finish`. The last `step_finish` on the wire
+belongs to the preceding tool-call step and says `tool-calls`. aidev treats a final `text`
+after the last step as a completed turn (verification still decides success), while a
+stream that ends at `step_finish` with `tool-calls` remains a cut-short failure
+(TASK-000039).
+
+**Model ids.** `-m oc/mimo-v2.6-flash-free` exits 1 with
+`{"type":"error","error":{"type":"provider.no-route","message":"Model unavailable: oc/mimo-v2.6-flash-free"}}`.
+The full provider id `opencode/mimo-v2.6-flash-free` runs. `oc/...` is a display alias
+only.
 
 ---
 

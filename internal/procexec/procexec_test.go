@@ -241,6 +241,29 @@ func TestWorkingDirectoryIsUsed(t *testing.T) {
 	}
 }
 
+// PWD is inherited from aidev's caller unless it is set to match the child's
+// working directory. A tool that trusts PWD over getcwd() (OpenCode 2 does)
+// then works outside the worktree.
+func TestChildPWDFollowsTheWorkingDirectory(t *testing.T) {
+	t.Setenv("PWD", "/somewhere/else")
+
+	dir := t.TempDir()
+	// printenv reads the environment as passed; a shell would normalise PWD
+	// to the real working directory at startup and hide the bug.
+	s := spec(t, "printenv", "PWD")
+	s.Dir = dir
+
+	res, err := Run(context.Background(), s)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	want, _ := filepath.EvalSymlinks(dir)
+	got, _ := filepath.EvalSymlinks(strings.TrimSpace(res.Stdout))
+	if got != want {
+		t.Errorf("PWD = %q, want the working directory %q", got, want)
+	}
+}
+
 func TestMissingExecutableIsStartFailed(t *testing.T) {
 	res, err := Run(context.Background(), spec(t, "aidev-no-such-program-xyz"))
 	if err == nil {

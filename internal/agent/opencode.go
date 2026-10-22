@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -38,15 +39,18 @@ var agentListTTL = 5 * time.Minute
 
 // OpenCode runs tasks through the OpenCode CLI.
 //
-// Every flag used here was verified against the installed version (1.18.30)
-// during Phase 0 and is recorded in docs/research.md; none was taken from
-// documentation or guessed at. The invocation is:
+// Every flag used here was verified against the installed version and is
+// recorded in docs/research.md; none was taken from documentation or guessed
+// at. The invocation differs by major version (docs/research.md §2.12):
 //
-//	opencode run --dir <worktree> --format json [--agent X] [-m model] [-s session] -- <prompt>
+//	1.x: opencode run --dir <worktree> --format json [--agent X] [-m model] [-s session] -- <prompt>
+//	2.x: opencode run --standalone --format json [--agent X] [-m model] [-s session] -- <prompt>
 //
-// `--dir` is what confines the agent to the worktree. `--format json` produces
-// the newline-delimited event stream the result is built from. `--` guarantees a
-// prompt beginning with a dash cannot be read as a flag.
+// `--dir` is what confines a 1.x run to the worktree. 2.x removed it and
+// connects to a shared background service by default, so `--standalone` starts
+// a private server in the process working directory instead. `--format json`
+// produces the newline-delimited event stream the result is built from. `--`
+// guarantees a prompt beginning with a dash cannot be read as a flag.
 type OpenCode struct {
 	// Command is the executable. Empty means DefaultOpenCodeCommand.
 	Command string
@@ -70,6 +74,14 @@ type OpenCode struct {
 	agentsMu    sync.Mutex
 	agents      []string
 	agentsFresh time.Time
+
+	// versionMu guards the detected CLI major version, cached after the first
+	// successful probe. Without the cache every Run would spawn an extra
+	// `opencode --version`, and a run cancelled while that probe is in flight
+	// would be reported as a startup failure instead of a cancellation.
+	versionMu    sync.Mutex
+	versionKnown bool
+	v2           bool
 }
 
 // NewOpenCode returns a backend using the given command, or the default when it
@@ -100,10 +112,48 @@ func (o *OpenCode) effectiveModel(req Request) string {
 	return strings.TrimSpace(o.Model)
 }
 
+// isV2 reports whether the installed OpenCode is the 2.x line. The answer is
+// cached after a successful probe, so a burst of tasks pays for `--version`
+// once. A failed or unparseable probe is treated as 2.x for that call — the
+// current line, where `--standalone` is the safer default — but is not
+// remembered, so a transient failure does not pin the backend to a guess.
+func (o *OpenCode) isV2(ctx context.Context) bool {
+	o.versionMu.Lock()
+	defer o.versionMu.Unlock()
+
+	if o.versionKnown {
+		return o.v2
+	}
+
+	raw, err := o.Version(ctx)
+	if err != nil {
+		return true
+	}
+	raw = strings.TrimSpace(strings.TrimPrefix(raw, "opencode"))
+	raw = strings.TrimPrefix(strings.TrimSpace(raw), "v")
+	major, err := strconv.Atoi(strings.SplitN(raw, ".", 2)[0])
+	if err != nil {
+		return true
+	}
+	o.v2, o.versionKnown = major >= 2, true
+	return o.v2
+}
+
 // buildArgs assembles the argv. It is separate from Run so that a test can assert
 // the command line without launching anything.
-func (o *OpenCode) buildArgs(req Request) []string {
-	args := []string{"run", "--dir", req.WorkingDir, "--format", "json"}
+//
+// OpenCode 2 removed `run --dir` and connects to a shared background service by
+// default; `--standalone` starts a private server so the process working
+// directory (and OPENCODE_PERMISSION) actually apply. OpenCode 1.18 needs
+// `--dir` instead and has no `--standalone`.
+func (o *OpenCode) buildArgs(req Request, v2 bool) []string {
+	args := []string{"run"}
+	if v2 {
+		args = append(args, "--standalone")
+	} else {
+		args = append(args, "--dir", req.WorkingDir)
+	}
+	args = append(args, "--format", "json")
 
 	if agent := strings.TrimSpace(req.Agent); agent != "" {
 		args = append(args, "--agent", agent)
@@ -168,8 +218,20 @@ func (o *OpenCode) Run(ctx context.Context, req Request) (Result, error) {
 		return result, err
 	}
 
-	args := o.buildArgs(req)
+	// The version probe happens before the run starts, so it is the first
+	// thing a cancellation can interrupt. A run cancelled there was still
+	// cancelled by aidev; reporting a startup failure would blame the binary
+	// for aidev's own decision to stop.
 	result.Model = o.effectiveModel(req)
+	v2 := o.isV2(ctx)
+	if err := ctx.Err(); err != nil {
+		result.Status = task.WorkerCancelled
+		result.FailureKind = task.FailureCancelled
+		result.Err = err
+		result.FinishedAt = time.Now().UTC()
+		return result, nil
+	}
+	args := o.buildArgs(req, v2)
 	scanner := newEventScanner()
 
 	var extraEnv []string
@@ -313,6 +375,15 @@ func classify(proc procexec.Result, events transcript, req Request) (task.Worker
 			return task.WorkerFailed, task.FailureAgentError,
 				refusalError(events, req.WorkingDir, proc.Stderr)
 		}
+		// OpenCode 2 ends a completed run with the assistant's final text and
+		// no closing step_finish "stop" (docs/research.md §2.12). The last
+		// reason then belongs to an earlier tool-call step, and the text is the
+		// agent stopping of its own accord. Verification still decides whether
+		// the work passes; this only keeps a completed turn from being recorded
+		// as a model that quit halfway.
+		if events.LastEvent == "text" {
+			return task.WorkerSucceeded, task.FailureNone, nil
+		}
 		return task.WorkerFailed, task.FailureAgentError, fmt.Errorf(
 			"opencode ended with finish reason %q: %s, so it never stopped of its own accord",
 			events.FinishReason, reason)
@@ -441,13 +512,91 @@ func (o *OpenCode) ListAgents(ctx context.Context) ([]string, error) {
 		return o.agents, nil
 	}
 
-	// `opencode agent list` needs a working directory; the process's own is
-	// fine, since nothing is written and no repository is involved.
+	// The lookup needs a working directory; the process's own is fine, since
+	// nothing is written and no repository is involved.
 	dir, err := currentDir()
 	if err != nil {
 		return nil, err
 	}
 
+	// OpenCode 2 renamed `agent list` to `debug agents` and prints JSON.
+	// Try v2 first, then fall back to v1.
+	names, v2Err := o.listAgentsV2(ctx, dir)
+	if v2Err != nil || len(names) == 0 {
+		var v1Err error
+		names, v1Err = o.listAgentsV1(ctx, dir)
+		if v1Err != nil {
+			if v2Err != nil {
+				return nil, fmt.Errorf("list opencode agents: v2: %v; v1: %v", v2Err, v1Err)
+			}
+			return nil, v1Err
+		}
+	}
+
+	o.agents, o.agentsFresh = names, time.Now()
+	return names, nil
+}
+
+// listAgentsV2 parses `opencode debug agents`, which prints a JSON array.
+func (o *OpenCode) listAgentsV2(ctx context.Context, dir string) ([]string, error) {
+	// OpenCode 2 answers the first `debug agents` in a directory it has not
+	// seen with an empty array while it creates the project store; the next
+	// call lists the built-in agents. Measured on 2.1.3 (docs/research.md
+	// §2.12). Retry once rather than falling through to the v1 command, which
+	// no longer exists.
+	names, err := o.debugAgents(ctx, dir)
+	if err != nil {
+		return nil, err
+	}
+	if len(names) > 0 {
+		return names, nil
+	}
+	return o.debugAgents(ctx, dir)
+}
+
+// debugAgents runs `opencode debug agents` once and extracts the names.
+func (o *OpenCode) debugAgents(ctx context.Context, dir string) ([]string, error) {
+	// Do not point OPENCODE_DB at :memory: here: in OpenCode 2 the agent
+	// configuration lives in that database, so an in-memory store lists no
+	// agents at all. The v1 command keeps the in-memory override below.
+	proc, err := procexec.Run(ctx, procexec.Spec{
+		Command:        o.command(),
+		Args:           []string{"debug", "agents"},
+		Dir:            dir,
+		Timeout:        agentListTimeout,
+		MaxOutputBytes: 1 << 20,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if !proc.Succeeded() {
+		return nil, fmt.Errorf("%s", firstLine(proc.Stderr))
+	}
+
+	// Tolerate a log line before or after the JSON payload.
+	out := proc.Stdout
+	start, end := strings.Index(out, "["), strings.LastIndex(out, "]")
+	if start < 0 || end < start {
+		return nil, errors.New("no JSON array in `debug agents` output")
+	}
+	var agents []struct {
+		ID   string `json:"id"`
+		Mode string `json:"mode"`
+	}
+	if err := json.Unmarshal([]byte(out[start:end+1]), &agents); err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(agents))
+	for _, a := range agents {
+		if a.ID != "" && (a.Mode == "primary" || a.Mode == "subagent") {
+			names = append(names, a.ID)
+		}
+	}
+	return names, nil
+}
+
+// listAgentsV1 parses the pre-2.0 `opencode agent list` output.
+func (o *OpenCode) listAgentsV1(ctx context.Context, dir string) ([]string, error) {
 	proc, err := procexec.Run(ctx, procexec.Spec{
 		Command:        o.command(),
 		Args:           []string{"agent", "list"},
@@ -460,10 +609,10 @@ func (o *OpenCode) ListAgents(ctx context.Context) ([]string, error) {
 		ExtraEnv: []string{"OPENCODE_DB=:memory:"},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("list opencode agents: %w", err)
+		return nil, err
 	}
 	if !proc.Succeeded() {
-		return nil, fmt.Errorf("list opencode agents: %s", firstLine(proc.Stderr))
+		return nil, fmt.Errorf("%s", firstLine(proc.Stderr))
 	}
 
 	var names []string
@@ -473,9 +622,8 @@ func (o *OpenCode) ListAgents(ctx context.Context) ([]string, error) {
 		}
 	}
 	if len(names) == 0 {
-		return nil, fmt.Errorf("list opencode agents: no agents found in the output of `%s agent list`", o.command())
+		return nil, fmt.Errorf("no agents found in the output of `%s agent list`", o.command())
 	}
-	o.agents, o.agentsFresh = names, time.Now()
 	return names, nil
 }
 

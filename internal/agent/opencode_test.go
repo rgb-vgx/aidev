@@ -92,8 +92,8 @@ func TestBuildArgs(t *testing.T) {
 	o := NewOpenCode("", "")
 	req := Request{WorkingDir: "/tmp/wt", Prompt: "do the thing"}
 
-	got := strings.Join(o.buildArgs(req), " ")
-	want := "run --dir /tmp/wt --format json -- do the thing"
+	got := strings.Join(o.buildArgs(req, true), " ")
+	want := "run --standalone --format json -- do the thing"
 	if got != want {
 		t.Errorf("args = %q, want %q", got, want)
 	}
@@ -102,17 +102,82 @@ func TestBuildArgs(t *testing.T) {
 	req.Agent = "build"
 	req.Model = "opencode/nemotron-3.5-lightning-free"
 	req.SessionID = "ses_abc"
-	got = strings.Join(o.buildArgs(req), " ")
-	want = "run --dir /tmp/wt --format json --agent build -m opencode/nemotron-3.5-lightning-free -s ses_abc -- do the thing"
+	got = strings.Join(o.buildArgs(req, true), " ")
+	want = "run --standalone --format json --agent build -m opencode/nemotron-3.5-lightning-free -s ses_abc -- do the thing"
 	if got != want {
 		t.Errorf("args = %q, want %q", got, want)
 	}
 
+	// OpenCode 1.x has no --standalone and needs --dir to confine the run.
+	got = strings.Join(o.buildArgs(req, false), " ")
+	want = "run --dir /tmp/wt --format json --agent build -m opencode/nemotron-3.5-lightning-free -s ses_abc -- do the thing"
+	if got != want {
+		t.Errorf("v1 args = %q, want %q", got, want)
+	}
+
 	// The backend's configured model is the fallback.
 	o2 := NewOpenCode("", "backend/model")
-	args := o2.buildArgs(Request{WorkingDir: "/tmp/wt", Prompt: "x"})
+	args := o2.buildArgs(Request{WorkingDir: "/tmp/wt", Prompt: "x"}, true)
 	if !contains(args, "backend/model") {
 		t.Errorf("args = %v, want the backend's model used when the request has none", args)
+	}
+}
+
+// The v1 argument form is kept so an installed 1.18 keeps working; the
+// version string is what decides which one runs.
+func TestRunUsesTheFlagsOfTheInstalledVersion(t *testing.T) {
+	for _, tc := range []struct {
+		version string
+		want    string
+		notWant string
+	}{
+		{"opencode v2.1.3", "--standalone", "--dir"},
+		{"opencode 2.0.0", "--standalone", "--dir"},
+		{"opencode v1.18.30", "--dir", "--standalone"},
+		{"1.18.30", "--dir", "--standalone"},
+	} {
+		t.Run(tc.version, func(t *testing.T) {
+			command, argsFile := fakeOpenCode(t, `if [ "$1" = "--version" ]; then
+echo `+shellQuote(tc.version)+`
+exit 0
+fi
+`+emit(fixtureText, fixtureStepFinishStop)+"exit 0")
+
+			req := openCodeRequest(t)
+			if _, err := NewOpenCode(command, "").Run(context.Background(), req); err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			args := readArgs(t, argsFile)
+			if !contains(args, tc.want) {
+				t.Errorf("args = %v, want %s for %s", args, tc.want, tc.version)
+			}
+			if contains(args, tc.notWant) {
+				t.Errorf("args = %v, want no %s for %s", args, tc.notWant, tc.version)
+			}
+		})
+	}
+}
+
+// The version probe must run once per backend, not once per task: it is an
+// extra process spawn on every Run otherwise, and a probe in flight when a run
+// is cancelled would obscure the cancellation.
+func TestVersionProbeIsCachedAcrossRuns(t *testing.T) {
+	counter := filepath.Join(t.TempDir(), "version-probes")
+	command, _ := fakeOpenCode(t, `if [ "$1" = "--version" ]; then
+echo spawn >> `+shellQuote(counter)+`
+echo 'opencode v2.1.3'
+exit 0
+fi
+`+emit(fixtureText, fixtureStepFinishStop)+"exit 0")
+
+	o := NewOpenCode(command, "")
+	for i := 0; i < 3; i++ {
+		if _, err := o.Run(context.Background(), openCodeRequest(t)); err != nil {
+			t.Fatalf("Run %d: %v", i, err)
+		}
+	}
+	if got := spawns(t, counter); got != 1 {
+		t.Errorf("`--version` ran %d times across three runs, want 1", got)
 	}
 }
 
@@ -148,7 +213,7 @@ func TestRunDoesNotInheritAidevEnv(t *testing.T) {
 
 func TestPromptStartingWithDashIsNotAFlag(t *testing.T) {
 	o := NewOpenCode("", "")
-	args := o.buildArgs(Request{WorkingDir: "/tmp/wt", Prompt: "--version"})
+	args := o.buildArgs(Request{WorkingDir: "/tmp/wt", Prompt: "--version"}, true)
 
 	last := args[len(args)-1]
 	if last != "--version" {
@@ -160,7 +225,8 @@ func TestPromptStartingWithDashIsNotAFlag(t *testing.T) {
 }
 
 func TestSuccessfulRunIsParsedFromTheEventStream(t *testing.T) {
-	command, argsFile := fakeOpenCode(t, emit(
+	wdFile := filepath.Join(t.TempDir(), "pwd.txt")
+	command, argsFile := fakeOpenCode(t, "pwd > "+shellQuote(wdFile)+"\n"+emit(
 		fixtureStepStart, fixtureToolUse, fixtureStepFinishTools, fixtureText, fixtureStepFinishStop,
 	)+"exit 0")
 
@@ -218,13 +284,25 @@ func TestSuccessfulRunIsParsedFromTheEventStream(t *testing.T) {
 		t.Errorf("cost = %v, want 0.0025 summed across steps", res.Cost)
 	}
 
-	// The agent must have been pointed at the worktree and nowhere else.
+	// The agent must have been pointed at the worktree and nowhere else. In
+	// OpenCode 2 the working directory is the process's own, so there is no
+	// --dir to inspect; assert how the fake was started instead.
 	args := readArgs(t, argsFile)
-	if !contains(args, "--dir") || !contains(args, req.WorkingDir) {
-		t.Errorf("args = %v, want --dir %s", args, req.WorkingDir)
+	if !contains(args, "--standalone") {
+		t.Errorf("args = %v, want --standalone so OpenCode 2 runs in the worktree, not a shared service", args)
+	}
+	if contains(args, "--dir") {
+		t.Errorf("args = %v, want no --dir: OpenCode 2 removed it", args)
 	}
 	if !contains(args, "--format") || !contains(args, "json") {
 		t.Errorf("args = %v, want --format json", args)
+	}
+	pwd, err := os.ReadFile(wdFile)
+	if err != nil {
+		t.Fatalf("read the fake's working directory: %v", err)
+	}
+	if got := strings.TrimSpace(string(pwd)); got != req.WorkingDir {
+		t.Errorf("opencode ran in %q, want the task worktree %q", got, req.WorkingDir)
 	}
 }
 
@@ -354,7 +432,14 @@ func TestTimeoutIsClassifiedAsTimeout(t *testing.T) {
 }
 
 func TestCancellationIsClassifiedAsCancelled(t *testing.T) {
-	command, _ := fakeOpenCode(t, "sleep 30")
+	// Answer the version probe immediately, as the real CLI does; the run
+	// itself hangs until the context is cancelled. A probe that also hung
+	// would test the probe rather than the run.
+	command, _ := fakeOpenCode(t, `if [ "$1" = "--version" ]; then
+echo 'opencode v2.1.3'
+exit 0
+fi
+sleep 30`)
 	o := NewOpenCode(command, "")
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -364,6 +449,23 @@ func TestCancellationIsClassifiedAsCancelled(t *testing.T) {
 	}()
 
 	res, err := o.Run(ctx, openCodeRequest(t))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Status != task.WorkerCancelled || res.FailureKind != task.FailureCancelled {
+		t.Errorf("result = %s/%s, want CANCELLED/CANCELLED", res.Status, res.FailureKind)
+	}
+}
+
+// A cancellation that arrives while the version probe is in flight must not be
+// reported as "could not run opencode": the run never started because aidev
+// stopped it, which is a cancellation.
+func TestCancellationDuringStartupIsStillCancelled(t *testing.T) {
+	command, _ := fakeOpenCode(t, "sleep 30")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	res, err := NewOpenCode(command, "").Run(ctx, openCodeRequest(t))
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -447,6 +549,59 @@ exit 0`)
 	}
 }
 
+func TestListAgentsParsesOpenCode2JSON(t *testing.T) {
+	command, _ := fakeOpenCode(t, `if [ "$1" = "debug" ]; then
+cat <<'AIDEV_EOF'
+[
+  {"id": "build", "mode": "primary", "hidden": false},
+  {"id": "explore", "mode": "subagent", "hidden": false},
+  {"id": "internal", "mode": "primary", "hidden": true}
+]
+AIDEV_EOF
+exit 0
+fi
+echo 'v1 should not be needed' >&2
+exit 1`)
+
+	o := NewOpenCode(command, "")
+	names, err := o.ListAgents(context.Background())
+	if err != nil {
+		t.Fatalf("ListAgents: %v", err)
+	}
+	want := []string{"build", "explore", "internal"}
+	if strings.Join(names, ",") != strings.Join(want, ",") {
+		t.Errorf("names = %v, want %v", names, want)
+	}
+}
+
+// The first `debug agents` in a directory OpenCode has not seen returns an
+// empty array while it creates the project store (measured on 2.1.3). The
+// lookup retries once instead of falling back to the removed v1 command.
+func TestListAgentsRetriesOpenCode2ColdStart(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "warmed")
+	command, _ := fakeOpenCode(t, `if [ "$1" = "debug" ]; then
+if [ -f `+shellQuote(marker)+` ]; then
+cat <<'AIDEV_EOF'
+[{"id":"build","mode":"primary"}]
+AIDEV_EOF
+else
+touch `+shellQuote(marker)+`
+echo '[]'
+fi
+exit 0
+fi
+echo 'v1 must not be used' >&2
+exit 1`)
+
+	names, err := NewOpenCode(command, "").ListAgents(context.Background())
+	if err != nil {
+		t.Fatalf("ListAgents: %v", err)
+	}
+	if strings.Join(names, ",") != "build" {
+		t.Errorf("names = %v, want build after the cold-start retry", names)
+	}
+}
+
 func TestValidateAgentName(t *testing.T) {
 	command, _ := fakeOpenCode(t, "printf 'build (primary)\\nplan (primary)\\n'\nexit 0")
 	o := NewOpenCode(command, "")
@@ -501,7 +656,14 @@ func spawns(t *testing.T, counter string) int {
 // the OpenCode CLI. A burst of tasks must pay that spawn once, not once per
 // task.
 func TestListAgentsIsCachedAcrossValidations(t *testing.T) {
-	o, counter := countingOpenCode(t, "printf 'build (primary)\\nplan (primary)\\n'\nexit 0")
+	o, counter := countingOpenCode(t, `if [ "$1" = "debug" ]; then
+cat <<'AIDEV_EOF'
+[{"id":"build","mode":"primary"},{"id":"plan","mode":"primary"}]
+AIDEV_EOF
+exit 0
+fi
+printf 'build (primary)\nplan (primary)\n'
+exit 0`)
 
 	for i := 0; i < 3; i++ {
 		if err := o.ValidateAgentName(context.Background(), "build"); err != nil {
@@ -509,7 +671,7 @@ func TestListAgentsIsCachedAcrossValidations(t *testing.T) {
 		}
 	}
 	if got := spawns(t, counter); got != 1 {
-		t.Errorf("`agent list` ran %d times across three validations, want 1", got)
+		t.Errorf("agent lookup ran %d times across three validations, want 1", got)
 	}
 }
 
@@ -520,14 +682,21 @@ func TestListAgentsRefetchesAfterTheCacheExpires(t *testing.T) {
 	agentListTTL = 0
 	t.Cleanup(func() { agentListTTL = previous })
 
-	o, counter := countingOpenCode(t, "printf 'build (primary)\\n'\nexit 0")
+	o, counter := countingOpenCode(t, `if [ "$1" = "debug" ]; then
+cat <<'AIDEV_EOF'
+[{"id":"build","mode":"primary"}]
+AIDEV_EOF
+exit 0
+fi
+printf 'build (primary)\n'
+exit 0`)
 	for i := 0; i < 2; i++ {
 		if err := o.ValidateAgentName(context.Background(), "build"); err != nil {
 			t.Fatalf("validation %d: %v", i, err)
 		}
 	}
 	if got := spawns(t, counter); got != 2 {
-		t.Errorf("`agent list` ran %d times with an expired cache, want 2", got)
+		t.Errorf("agent lookup ran %d times with an expired cache, want 2", got)
 	}
 }
 
@@ -541,8 +710,8 @@ func TestAgentListFailuresAreNotCached(t *testing.T) {
 			t.Fatalf("attempt %d: a failing agent list was accepted", i)
 		}
 	}
-	if got := spawns(t, counter); got != 2 {
-		t.Errorf("`agent list` ran %d times across two failures, want 2: a failure was cached", got)
+	if got := spawns(t, counter); got != 4 {
+		t.Errorf("agent lookup ran %d times across two failures, want 4 (v2 + v1 per attempt): a failure was cached", got)
 	}
 }
 
@@ -762,6 +931,43 @@ func TestASessionThatEndedAfterToolCallsIsStillASuccess(t *testing.T) {
 	}
 }
 
+// OpenCode 2 ends a completed run with the assistant's final text and no
+// closing step_finish "stop". The last reason on the wire is then the previous
+// tool-call step's, and reading it alone would record a finished run as a model
+// that quit halfway (measured on 2.1.3, docs/research.md §2.12).
+func TestOpenCode2FinalTextAfterToolCallsIsASuccess(t *testing.T) {
+	command, _ := fakeOpenCode(t, emit(
+		fixtureStepStart, fixtureToolUse, fixtureStepFinishTools, fixtureStepStart, fixtureText,
+	)+"exit 0")
+
+	res, err := NewOpenCode(command, "").Run(context.Background(), openCodeRequest(t))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Status != task.WorkerSucceeded || res.FailureKind != task.FailureNone {
+		t.Errorf("result = %s/%s, want SUCCEEDED: the final text ends the turn", res.Status, res.FailureKind)
+	}
+	if !strings.HasPrefix(res.Summary, "Done. Created") {
+		t.Errorf("summary = %q, want the final text", res.Summary)
+	}
+}
+
+// A refusal still ends the session whatever follows it: the permission was
+// denied, and a closing text does not undo that.
+func TestARefusalFollowedByFinalTextIsStillARefusal(t *testing.T) {
+	command, _ := fakeOpenCode(t, emit(
+		fixtureStepStart, fixtureRefusedRead, fixtureStepFinishTools, fixtureStepStart, fixtureText,
+	)+"exit 0")
+
+	res, err := NewOpenCode(command, "").Run(context.Background(), openCodeRequest(t))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !errors.Is(res.Err, ErrToolRefused) {
+		t.Errorf("Err = %v, want a refusal even when a final text follows", res.Err)
+	}
+}
+
 // These two are verbatim from TASK-000084 and TASK-000082 against
 // ~/work/pingpong on 2026-09-21. Both tasks failed as "the session ended while
 // the agent was still calling tools", which was true and said nothing: the
@@ -904,8 +1110,13 @@ func TestAnOrdinaryToolFailureIsNotReportedAsARefusal(t *testing.T) {
 // the database it was created in; another task gets another file.
 func TestEachTaskGetsItsOwnOpenCodeDatabase(t *testing.T) {
 	envFile := filepath.Join(t.TempDir(), "env.txt")
-	command, _ := fakeOpenCode(t, `printf '%s\n' "$OPENCODE_DB" >> `+shellQuote(envFile)+"\n"+
-		emit(fixtureText, fixtureStepFinishStop)+"exit 0")
+	// Record only run invocations: the version probe also carries an
+	// OPENCODE_DB, but it is not a task run and its :memory: value says
+	// nothing about task isolation.
+	command, _ := fakeOpenCode(t, `if [ "$1" = "run" ]; then
+printf '%s\n' "$OPENCODE_DB" >> `+shellQuote(envFile)+`
+fi
+`+emit(fixtureText, fixtureStepFinishStop)+"exit 0")
 	dbDir := filepath.Join(t.TempDir(), "opencode-db")
 	o := NewOpenCode(command, "")
 	o.DBDir = dbDir
