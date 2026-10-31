@@ -59,6 +59,9 @@ type Deps struct {
 	LoadConfig func() (config.Config, error)
 	// LookPath finds an executable (exec.LookPath in production).
 	LookPath func(name string) (string, error)
+	// LookupEnv reads an environment variable, to check that the variables
+	// agent.opencode.provider_key_env names hold a key. Nil means os.LookupEnv.
+	LookupEnv func(name string) (string, bool)
 	// PingDatabase connects to the database and returns nil if it answers.
 	PingDatabase func(ctx context.Context, databaseURL string) error
 	// PendingMigrations returns the versions of migrations not yet applied.
