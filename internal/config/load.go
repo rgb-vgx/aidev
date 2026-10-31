@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -39,6 +40,9 @@ var configSchema = map[string]any{
 			"command": kindString,
 			"model":   kindString,
 			"agent":   kindString,
+			// Provider ids are OpenCode's and not enumerated here; values are
+			// checked on load to be variable names.
+			"provider_key_env": kindStringMap,
 		},
 		"codex": map[string]any{
 			"command": kindString,
@@ -145,6 +149,8 @@ type fileConfig struct {
 			Command *string `json:"command"`
 			Model   *string `json:"model"`
 			Agent   *string `json:"agent"`
+			// ProviderKeyEnv: see Config.OpenCodeProviderKeyEnv.
+			ProviderKeyEnv map[string]string `json:"provider_key_env"`
 		} `json:"opencode"`
 		Codex *struct {
 			Command *string `json:"command"`
@@ -366,6 +372,24 @@ func LoadFile(path string) (Config, error) {
 			}
 			if file.Agent.OpenCode.Agent != nil && strings.TrimSpace(*file.Agent.OpenCode.Agent) != "" {
 				cfg.OpenCodeAgent = strings.TrimSpace(*file.Agent.OpenCode.Agent)
+			}
+			if file.Agent.OpenCode.ProviderKeyEnv != nil {
+				keys := make(map[string]string, len(file.Agent.OpenCode.ProviderKeyEnv))
+				for raw, variable := range file.Agent.OpenCode.ProviderKeyEnv {
+					provider := strings.TrimSpace(raw)
+					variable = strings.TrimSpace(variable)
+					switch {
+					case provider == "":
+						fail("agent.opencode.provider_key_env has an empty provider id")
+					case !envVarName.MatchString(variable):
+						// Not repeated: a value that is not a name is most
+						// likely the key itself, pasted in the wrong place.
+						fail("agent.opencode.provider_key_env %q must name an environment variable (letters, digits, _), not hold the key", provider)
+					default:
+						keys[provider] = variable
+					}
+				}
+				cfg.OpenCodeProviderKeyEnv = keys
 			}
 		}
 		if file.Agent.Codex != nil {
@@ -665,3 +689,6 @@ func sortedKeys(m map[string]any) []string {
 	sort.Strings(out)
 	return out
 }
+
+// envVarName is what agent.opencode.provider_key_env values must look like.
+var envVarName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)

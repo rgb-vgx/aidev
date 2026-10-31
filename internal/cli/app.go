@@ -93,6 +93,9 @@ func connectApp(ctx context.Context, cfg config.Config, logger *slog.Logger) (*a
 	// One OpenCode database per task, so tasks can run side by side
 	// (docs/research.md §7k).
 	opencode.DBDir = opencodeDBDir(cfg)
+	// That database lacks the keys of providers connected with `opencode
+	// auth`; configured ones are passed by environment reference (§7n).
+	opencode.ProviderKeyEnv = cfg.OpenCodeProviderKeyEnv
 	var backend agent.Backend = opencode
 	if cfg.AgentBackend == config.BackendCodex {
 		backend = agent.NewCodex(agent.CodexOptions{

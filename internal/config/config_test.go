@@ -460,7 +460,7 @@ func TestEnumerationsAreValidAndDistinct(t *testing.T) {
 var wantKeys = []string{
 	"agent.backend",
 	"agent.codex.command", "agent.codex.model", "agent.codex.profile", "agent.codex.sandbox",
-	"agent.opencode.agent", "agent.opencode.command", "agent.opencode.model",
+	"agent.opencode.agent", "agent.opencode.command", "agent.opencode.model", "agent.opencode.provider_key_env",
 	"agent.routing",
 	"database.url",
 	"log_level",
@@ -689,5 +689,45 @@ func TestRoutingIsOptional(t *testing.T) {
 	cfg := mustLoad(t, `{"database": {"url": "`+testDSN+`"}}`)
 	if len(cfg.Routing) != 0 {
 		t.Errorf("routing = %v, want empty when the file has no table", cfg.Routing)
+	}
+}
+
+// A provider connected with `opencode auth` is out of reach of a task's own OpenCode
+// database (docs/research.md §7n), so the configuration can name, per provider, the
+// environment variable holding its key. Only the variable's name is configuration; the
+// key itself stays in the environment.
+func TestOpenCodeProviderKeyEnvIsReadAndTrimmed(t *testing.T) {
+	cfg := mustLoad(t, `{"database": {"url": "`+testDSN+`"},
+		"agent": {"opencode": {"provider_key_env": {" opencode-go ": "  OPENCODE_GO_API_KEY "}}}}`)
+	if got := cfg.OpenCodeProviderKeyEnv["opencode-go"]; got != "OPENCODE_GO_API_KEY" || len(cfg.OpenCodeProviderKeyEnv) != 1 {
+		t.Errorf("provider_key_env = %v, want opencode-go -> OPENCODE_GO_API_KEY, trimmed", cfg.OpenCodeProviderKeyEnv)
+	}
+}
+
+// What is configured is a variable's name: a value that cannot be one is most likely the
+// key pasted in by mistake, and must be refused without being repeated in the error.
+func TestOpenCodeProviderKeyEnvRejectsAValueThatIsNotAVariableName(t *testing.T) {
+	_, err := load(t, `{"database": {"url": "`+testDSN+`"},
+		"agent": {"opencode": {"provider_key_env": {"opencode-go": "sk-live-abc123"}}}}`)
+	if err == nil {
+		t.Fatal("a value that is not an environment variable name was accepted")
+	}
+	if !strings.Contains(err.Error(), "agent.opencode.provider_key_env") || !strings.Contains(err.Error(), "opencode-go") {
+		t.Errorf("error = %v, want it to name agent.opencode.provider_key_env and the provider", err)
+	}
+	if strings.Contains(err.Error(), "sk-live-abc123") {
+		t.Errorf("error = %v repeats the value, which may be a secret", err)
+	}
+	if _, err := load(t, `{"database": {"url": "`+testDSN+`"},
+		"agent": {"opencode": {"provider_key_env": {"  ": "KEY"}}}}`); err == nil {
+		t.Error("an empty provider id was accepted")
+	}
+}
+
+func TestOpenCodeProviderKeyEnvIsOptional(t *testing.T) {
+	cfg := mustLoad(t, `{"database": {"url": "`+testDSN+`"}, "agent": {"opencode": {"model": "x/y"}}}`)
+	if len(cfg.OpenCodeProviderKeyEnv) != 0 || cfg.OpenCodeModel != "x/y" {
+		t.Errorf("provider_key_env = %v, model = %q: want none, and the rest of agent.opencode read as before",
+			cfg.OpenCodeProviderKeyEnv, cfg.OpenCodeModel)
 	}
 }

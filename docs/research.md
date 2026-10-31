@@ -634,6 +634,29 @@ create `done.txt`. TASK-000091 (Axiom-Office) had lost its whole run to such a r
 - `OPENCODE_CONFIG_CONTENT` works too but replaces any configuration a user set through it;
   `OPENCODE_PERMISSION` touches permissions only.
 
+## 7n. A task's own database loses keys added with `opencode auth` **[OBSERVED]**
+
+Measured 2026-10-31, OpenCode 2.2.5, model `opencode-go/deepseek-v4.1-flash` (provider connected with
+`opencode auth`, which lists it as "OpenCode Go  API key  stored").
+
+| run | result |
+|---|---|
+| `opencode run -m opencode-go/deepseek-v4.1-flash` (shared store) | answers |
+| same + `--standalone --format json --agent build` | answers |
+| same + `OPENCODE_DB=<fresh file>` (what aidev does per task, §7k) | `provider.no-route`, "Model unavailable: opencode-go/deepseek-v4.1-flash", after ~1 s, zero steps |
+| fresh `OPENCODE_DB` + `OPENCODE_PERMISSION` only | answers (the permission is not the cause) |
+| fresh `OPENCODE_DB`, after copying the shared store's `credential` row into it | answers |
+| fresh `OPENCODE_DB` + `OPENCODE_CONFIG_CONTENT={"provider":{"opencode-go":{"options":{"apiKey":"{env:OPENCODE_GO_API_KEY}"}}}}` | answers |
+
+OpenCode 2 stores keys added with `opencode auth` in its database (table `credential`; the shared
+store also caches the models.dev catalogue in `kv`). A per-task database has neither, so every such
+provider is unreachable from a task — only providers configured in files (`ollama/…`) and the free
+`opencode/…` models keep working. Copying the row works but ties aidev to OpenCode's private schema
+and would need a SQLite driver; a key given in configuration is OpenCode's documented mechanism and
+survives schema changes. aidev therefore passes `agent.opencode.provider_key_env` as
+`OPENCODE_CONFIG_CONTENT` with `{env:NAME}` references, so the key itself never passes through aidev.
+The first run against a fresh database also spends a minute or more fetching the catalogue.
+
 ## 7b. Phase 2 probes: git and OpenCode mechanics
 
 Measured later than the rest, when the execution core was designed. Same rules:
