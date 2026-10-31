@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -138,8 +140,9 @@ const (
 
 // Run performs every check in order and returns one Result per check.
 //
-// It starts with the configuration, then git, the configured agent command,
-// the database, pending migrations, tasks stuck with an expired lease and the
+// It starts with the configuration, then git, the configured agent command
+// (and, for OpenCode, the provider keys it names), the database, pending
+// migrations, tasks stuck with an expired lease and the
 // workspace directory, then the free space under it. When the configuration
 // cannot be read, the checks that need it are skipped. When the database does
 // not answer, the migrations check is skipped; when migrations are pending or unreadable, the stuck-task check
@@ -241,7 +244,10 @@ func gitResult(deps Deps) Result {
 	}
 }
 
-// agentResult checks that the command for the configured agent backend can be found.
+// agentResult checks that the command for the configured agent backend can be
+// found and, for OpenCode, that the provider keys agent.opencode.provider_key_env
+// names are in the environment. A missing executable is reported first: nothing
+// else can work until it is installed.
 func agentResult(deps Deps, cfg config.Config) Result {
 	command := cfg.OpenCodeCommand
 	isCodex := cfg.AgentBackend == config.BackendCodex
@@ -265,11 +271,73 @@ func agentResult(deps Deps, cfg config.Config) Result {
 			Fix:     "Install OpenCode or set agent.opencode.command to the OpenCode executable.",
 		}
 	}
+	// Only the OpenCode backend reads provider_key_env.
+	if !isCodex {
+		if missing := missingProviderKeys(deps, cfg.OpenCodeProviderKeyEnv); len(missing) > 0 {
+			return providerKeyResult(missing)
+		}
+	}
 	return Result{
 		Name:    CheckAgent,
 		Status:  StatusOK,
 		Summary: fmt.Sprintf("Found %s at %s.", command, path),
 	}
+}
+
+// missingProviderKey is a provider_key_env entry whose variable is not set.
+type missingProviderKey struct {
+	provider string
+	variable string
+}
+
+// missingProviderKeys returns, sorted by variable name, the variables in keyEnv
+// that are unset or hold only whitespace. Only names are read, and no value is
+// kept, so a value cannot reach a Result.
+func missingProviderKeys(deps Deps, keyEnv map[string]string) []missingProviderKey {
+	lookup := deps.LookupEnv
+	if lookup == nil {
+		lookup = os.LookupEnv
+	}
+	var missing []missingProviderKey
+	for provider, variable := range keyEnv {
+		if value, ok := lookup(variable); !ok || strings.TrimSpace(value) == "" {
+			missing = append(missing, missingProviderKey{provider: provider, variable: variable})
+		}
+	}
+	sort.Slice(missing, func(i, j int) bool { return missing[i].variable < missing[j].variable })
+	return missing
+}
+
+// providerKeyResult reports the missing provider keys. The summary pairs each
+// variable with its provider id; the fix names them, because the reader has to
+// set exactly these where aidev — or the editor that starts its MCP server —
+// reads its environment.
+func providerKeyResult(missing []missingProviderKey) Result {
+	named := make([]string, len(missing))
+	variables := make([]string, len(missing))
+	for i, m := range missing {
+		named[i] = fmt.Sprintf("%s (provider %s)", m.variable, m.provider)
+		variables[i] = m.variable
+	}
+	them := "them"
+	if len(missing) == 1 {
+		them = "it"
+	}
+	return Result{
+		Name:    CheckAgent,
+		Status:  StatusFail,
+		Summary: fmt.Sprintf("%s missing for OpenCode: %s.", countProviderKeys(len(missing)), strings.Join(named, ", ")),
+		Fix: fmt.Sprintf("Set %s in the environment that starts aidev (for the MCP server, the environment the editor starts it with, so restart the editor fully) — the setting agent.opencode.provider_key_env names %s.",
+			strings.Join(variables, ", "), them),
+	}
+}
+
+// countProviderKeys says "1 environment variable is" or "N environment variables are".
+func countProviderKeys(n int) string {
+	if n == 1 {
+		return "1 environment variable is"
+	}
+	return fmt.Sprintf("%d environment variables are", n)
 }
 
 // databaseResult appends the database check and returns the ping error, if any,
