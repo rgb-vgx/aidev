@@ -197,6 +197,7 @@ Mọi thiết lập đều tùy chọn, trừ `database.url`. Các giá trị m�
 | `agent.opencode.command` | `opencode` | chương trình thực thi OpenCode |
 | `agent.opencode.model` | `opencode/muse-spark-1.3-contributor-free` | không cần chứng thực; đặt thành chuỗi rỗng để OpenCode tự chọn |
 | `agent.opencode.agent` | `build` | agent OpenCode mặc định |
+| `agent.opencode.provider_key_env` | không có | provider → tên biến môi trường chứa API key, ví dụ `{"opencode-go": "OPENCODE_GO_API_KEY"}`. Cần cho provider kết nối bằng `opencode auth`: OpenCode 2 giữ key đó trong database riêng, database của task không có nên task báo `Model unavailable` (docs/research.md §7n). aidev chỉ truyền `{env:NAME}` (NAME là tên biến); đặt biến đó trong môi trường aidev chạy |
 | `agent.codex.command` | `codex` | chương trình thực thi Codex |
 | `agent.codex.profile` | *(none)* | được truyền thành `--profile` khi có đặt |
 | `agent.codex.model` | *(none)* | được truyền thành `-m` khi có đặt; để trống thì Codex tự chọn |

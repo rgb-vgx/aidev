@@ -112,6 +112,12 @@ type Config struct {
 	// an unknown agent name and still exits 0, so aidev validates this itself.
 	OpenCodeAgent string
 
+	// OpenCodeProviderKeyEnv maps an OpenCode provider id to the name of the
+	// environment variable holding its API key, for providers connected with
+	// `opencode auth`: OpenCode 2 keeps those keys in a database a task's own
+	// OPENCODE_DB does not have (docs/research.md §7n). Only names live here.
+	OpenCodeProviderKeyEnv map[string]string
+
 	// AgentBackend selects which agent implementation runs tasks.
 	AgentBackend Backend
 

@@ -209,6 +209,7 @@ binary uses when a key is absent; conf/conf.example.json shows them all in one f
 | `agent.opencode.command` | `opencode` | the OpenCode executable |
 | `agent.opencode.model` | `opencode/muse-spark-1.3-contributor-free` | needs no credentials; set it to an empty string to let OpenCode choose |
 | `agent.opencode.agent` | `build` | default OpenCode agent |
+| `agent.opencode.provider_key_env` | none | provider id → name of the environment variable holding its API key, e.g. `{"opencode-go": "OPENCODE_GO_API_KEY"}`. Needed for a provider connected with `opencode auth`: OpenCode 2 keeps that key in its own database, which a task's database does not have, so the task fails with `Model unavailable` (docs/research.md §7n). aidev passes only `{env:NAME}`; set the variable in the environment aidev runs in |
 | `agent.codex.command` | `codex` | the Codex executable |
 | `agent.codex.profile` | *(none)* | passed as `--profile` when set |
 | `agent.codex.model` | *(none)* | passed as `-m` when set; empty lets Codex choose |

@@ -68,6 +68,15 @@ type OpenCode struct {
 	// Empty keeps OpenCode's shared store.
 	DBDir string
 
+	// ProviderKeyEnv maps an OpenCode provider id to the environment variable
+	// holding its API key. OpenCode 2 keeps keys added with `opencode auth` in
+	// its database, which a task's own OPENCODE_DB does not have, so such a
+	// provider fails with provider.no-route (docs/research.md §7n). A key named
+	// in OpenCode's configuration does not depend on the database. aidev passes
+	// only "{env:NAME}" and OpenCode reads the variable itself: the key never
+	// passes through aidev.
+	ProviderKeyEnv map[string]string
+
 	// agents holds the last successful lookup, guarded by agentsMu, which is
 	// also held for the duration of a lookup so that concurrent validations
 	// share one spawn instead of racing to start their own.
@@ -245,6 +254,9 @@ func (o *OpenCode) Run(ctx context.Context, req Request) (Result, error) {
 		extraEnv = append(extraEnv, "OPENCODE_DB="+db)
 	}
 	extraEnv = append(extraEnv, "OPENCODE_PERMISSION="+externalDirectoryPermission(req.ReadDirs))
+	if content := providerKeyConfig(o.ProviderKeyEnv); content != "" {
+		extraEnv = append(extraEnv, "OPENCODE_CONFIG_CONTENT="+content)
+	}
 
 	spec := procexec.Spec{
 		Command:        o.command(),
@@ -667,6 +679,21 @@ func currentDir() (string, error) {
 		return "", fmt.Errorf("determine current directory: %w", err)
 	}
 	return dir, nil
+}
+
+// providerKeyConfig is the OPENCODE_CONFIG_CONTENT that gives each provider its
+// key by environment reference, or "" when none is configured. OpenCode merges
+// it into the person's own configuration, so only these options change.
+func providerKeyConfig(keys map[string]string) string {
+	if len(keys) == 0 {
+		return ""
+	}
+	providers := make(map[string]any, len(keys))
+	for provider, variable := range keys {
+		providers[provider] = map[string]any{"options": map[string]any{"apiKey": "{env:" + variable + "}"}}
+	}
+	encoded, _ := json.Marshal(map[string]any{"provider": providers})
+	return string(encoded)
 }
 
 // externalDirectoryPermission is the OPENCODE_PERMISSION aidev runs OpenCode
