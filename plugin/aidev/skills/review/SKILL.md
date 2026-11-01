@@ -64,17 +64,17 @@ commit after the merge, with its own test first. A larger one becomes a new task
 
 Only with the user's go-ahead, unless they already asked you to merge reviewed work.
 
-1. Switch to the user's branch and make sure it is clean.
-2. Run the project's slower suites too when `make check` (or equivalent) skips
-   them — integration, database, browser. A suite nobody runs is red for as long as
-   nobody looks. Then check that CI on the target branch is green (for GitHub:
-   `gh run list --branch main --limit 3`). A red CI is fixed first: merged into a
-   red branch, a new failure hides among the old ones.
-3. `git merge --no-ff --no-commit <branch>` and run the project's full check (for
-   example `make check`). If it fails, `git merge --abort` and report.
-4. Write the merge message to a file and commit with `git commit -F <file>`
+1. Switch to the user's branch and make sure it is clean. Check that CI on it is
+   green (for GitHub: `gh run list --branch main --limit 3`). A red CI is fixed
+   first: merged into a red branch, a new failure hides among the old ones.
+2. `git merge --no-ff --no-commit <branch>` and run the project's full check (for
+   example `make check`), and its slower suites too when that check skips them —
+   integration, database, browser: a suite nobody runs is red for as long as nobody
+   looks. They run on the merged tree, which is what lands. If anything fails,
+   `git merge --abort` and report.
+3. Write the merge message to a file and commit with `git commit -F <file>`
    (never `-F -`). Say what changed, why, and what you checked beyond the tests.
-5. Do not push unless asked.
+4. Do not push unless asked.
 
 For a user who is not a developer, or who just wants it in, `aidev task apply <task>`
 does the merge and its commit in one go — it merges the task's branch into the
