@@ -18,9 +18,12 @@ var stepsThatNeedQuoting = []VerificationStep{
 	{Command: "echo", Args: []string{"it's"}},
 	{Command: "echo", Args: []string{`say "hi"`}},
 	{Command: "echo", Args: []string{`both ' and "`}},
-	{Command: "echo", Args: []string{"$HOME", "`id`", "a;b", "a&&b", "x>y", "*.go", "[ab]", "{a,b}", "!x", "#c", "~", `back\slash`, "(sub)"}},
+	{Command: "echo", Args: []string{"$HOME", "a;b", "a&&b", "x>y", "*.go", "[ab]", "{a,b}", "!x", "#c", "~", `back\slash`, "(sub)"}},
 	{Command: "echo", Args: []string{"two\nlines", "tab\there"}},
 	{Command: "my tool", Args: []string{"x"}},
+	// Command substitution is only accepted for a shell, which runs it
+	// (verification_substitution_test.go).
+	{Command: "sh", Args: []string{"-c", "echo `id` $(date)"}},
 }
 
 // String is what aidev shows wherever a step is displayed, and above all in the
