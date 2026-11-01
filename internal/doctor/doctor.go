@@ -549,7 +549,7 @@ func verifyModeResult(ctx context.Context, deps Deps, cfg config.Config) Result 
 		Name:    CheckVerifyMode,
 		Status:  StatusWarn,
 		Summary: fmt.Sprintf("%s in place: %s.", countInPlace(len(paths)), strings.Join(paths, ", ")),
-		Fix:     "Run `aidev project verify-mode <path> clean` for each project above. in_place stays right for a repository that pins submodules, which clean verification cannot check out.",
+		Fix:     "Run `aidev project verify-mode clean --repo <path>` for each project above. in_place stays right for a repository that pins submodules, which clean verification cannot check out.",
 	}
 }
 

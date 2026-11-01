@@ -37,7 +37,9 @@ func TestInPlaceProjectsAreAWarningThatNamesThem(t *testing.T) {
 	if !strings.Contains(r.Summary, "2 projects") {
 		t.Errorf("summary %q does not count the projects", r.Summary)
 	}
-	for _, want := range []string{"aidev project verify-mode", "clean"} {
+	// The exact form the CLI accepts: the mode first, the repository by --repo
+	// (a path in place of the mode is refused as a second mode).
+	for _, want := range []string{"aidev project verify-mode clean --repo <path>"} {
 		if !strings.Contains(r.Fix, want) {
 			t.Errorf("fix %q does not mention %q", r.Fix, want)
 		}
