@@ -685,6 +685,34 @@ created `data/research.db` in the worktree; the snapshot committed it. aidev the
 servers with `opencode debug config` in the worktree before each 2.x run and replaces each with a
 complete disabled entry; a listing it cannot read stops the run.
 
+## 7p. OpenCode 2 ignores OPENCODE_PERMISSION; the shell is not confined **[OBSERVED]**
+
+Measured 2026-11-01, OpenCode 2.2.5, `opencode run --standalone` in a fresh repository under
+`~/.local/share/aidev/worktrees/`, prompted to write a file outside its working directory with its
+write tool, then with a shell command, then to write a file inside (`.probe/mcp-off/outside.sh`).
+
+`strings` on the 2.2.5 binary finds no `OPENCODE_PERMISSION` at all; permissions live in the
+configuration (`permissions`, ordered `{action, resource, effect}` rules, with the 1.x
+`permission` object translated into them).
+
+| how the rules were given | write tool, outside | shell `echo > outside` | write tool, inside |
+|---|---|---|---|
+| `OPENCODE_PERMISSION` (what aidev did since 73f1d78) | **written** | written | written |
+| `OPENCODE_CONFIG_CONTENT` `permission.external_directory {"*":"deny", …}` | refused, session goes on | written | written |
+| `OPENCODE_CONFIG_CONTENT` `permissions:[{action:"external_directory",resource:"*",effect:"deny"}, …]` | refused, session goes on | written | written |
+
+With the `permission` object in the configuration, a read dir allowed as `<dir>` and `<dir>/**`
+is readable (`.probe/readable-dir/sub/file.txt` read) and any other outside path is refused with
+`permission.rejected: external_directory`.
+
+So every OpenCode 2 task from 73f1d78 (2026-10-23) to this fix ran with no directory rule, read
+dirs included. aidev now passes the rules in `OPENCODE_CONFIG_CONTENT` for 2.x and keeps
+`OPENCODE_PERMISSION` for 1.x. A shell command still writes wherever the user can: the rules
+govern OpenCode's own file tools, not what a command does. Confining the shell needs an OS
+sandbox (namespaces, landlock, a container), which aidev does not have; the containment check
+(§7i) still catches changes to shared git state, and nothing else outside the worktree is
+checked.
+
 ## 7b. Phase 2 probes: git and OpenCode mechanics
 
 Measured later than the rest, when the execution core was designed. Same rules:

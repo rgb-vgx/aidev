@@ -234,15 +234,15 @@ func TestOpenCodeDoesNotRunWhenTheMCPListingFails(t *testing.T) {
 	}
 }
 
-// With nothing to switch off, OpenCode's configuration is left as it is.
+// With nothing to switch off, no mcp setting is added.
 func TestOpenCodeWithoutMCPServersAddsNoSwitchOff(t *testing.T) {
 	fake := newIsolationFake(t, `[{"type": "document", "path": "/x/opencode.json", "info": {"$schema": "x"}}]`, 0)
 	result, err := NewOpenCode(fake.command, "").Run(context.Background(), openCodeRequest(t))
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if content := fake.configContent(t); content != nil {
-		t.Errorf("OPENCODE_CONFIG_CONTENT = %v, want it unset", content)
+	if _, set := fake.configContent(t)["mcp"]; set {
+		t.Errorf("OPENCODE_CONFIG_CONTENT carries an mcp setting with no server to switch off: %v", fake.configContent(t))
 	}
 	if len(result.DisabledMCP) != 0 {
 		t.Errorf("Result.DisabledMCP = %v, want none", result.DisabledMCP)

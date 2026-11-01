@@ -56,10 +56,19 @@ func TestOpenCodeGetsProviderKeysAsEnvironmentReferences(t *testing.T) {
 	}
 }
 
-// Without provider keys configured, OpenCode's own configuration is left alone: setting
-// OPENCODE_CONFIG_CONTENT at all would be a change nobody asked for.
-func TestOpenCodeWithoutProviderKeysSetsNoConfigContent(t *testing.T) {
-	if got := configContentFor(t, nil); got != "" {
-		t.Errorf("OPENCODE_CONFIG_CONTENT = %q, want it unset when no provider key is configured", got)
+// Without provider keys configured, no provider setting is added: that would be a
+// change nobody asked for. (On OpenCode 2 the variable still carries the
+// permission rules, opencode2_permission_test.go.)
+func TestOpenCodeWithoutProviderKeysAddsNoProviderSetting(t *testing.T) {
+	got := configContentFor(t, nil)
+	if got == "" {
+		return
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(got), &parsed); err != nil {
+		t.Fatalf("OPENCODE_CONFIG_CONTENT is not JSON: %v: %q", err, got)
+	}
+	if _, set := parsed["provider"]; set {
+		t.Errorf("OPENCODE_CONFIG_CONTENT = %s, want no provider setting when no key is configured", got)
 	}
 }
