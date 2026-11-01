@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // OpenCode's `--format json` output is newline-delimited JSON: one event per
@@ -159,10 +160,48 @@ type eventScanner struct {
 
 	// skipping is set while the rest of an oversized line is being discarded.
 	skipping bool
+
+	// progress reports tool calls while the run is still going. TASK-000143
+	// recorded 20 minutes with no sign of what the agent was doing; the stream
+	// is already here as it arrives, so what it says is reported as it happens.
+	progress func(Progress)
+
+	// progressEvery bounds later reports; the first is always sent. Zero
+	// reports every tool call, as Request.ProgressInterval says.
+	progressEvery time.Duration
+
+	// started is when the run began, and lastReport is when progress was last
+	// sent. Both are only touched by the goroutine writing to the scanner, so
+	// no lock is needed.
+	started    time.Time
+	lastReport time.Time
 }
 
 func newEventScanner() *eventScanner {
 	return &eventScanner{result: transcript{UnknownEvents: map[string]int{}}}
+}
+
+// reportProgress sends one tool call, subject to progressEvery. The callback runs
+// on the goroutine writing to the scanner, so it must not be called while
+// holding a lock; there is none to hold.
+func (s *eventScanner) reportProgress(part openCodeToolPart) {
+	if s.progress == nil {
+		return
+	}
+	now := time.Now()
+	if !s.lastReport.IsZero() && s.progressEvery > 0 && now.Sub(s.lastReport) < s.progressEvery {
+		return
+	}
+	s.lastReport = now
+	s.progress(Progress{
+		ToolCalls: s.result.ToolCalls,
+		Steps:     s.result.Usage.Steps,
+		// Only the location is taken from the call: a bash input is an
+		// arbitrary command line and does not belong in a report.
+		LastTool: part.Tool,
+		LastPath: part.location(),
+		Elapsed:  now.Sub(s.started),
+	})
 }
 
 // Write implements io.Writer. Partial lines are held until their newline
@@ -263,6 +302,7 @@ func (s *eventScanner) consume(line []byte) {
 				}
 			}
 		}
+		s.reportProgress(part)
 
 	case "step_finish":
 		var part openCodeStepFinishPart

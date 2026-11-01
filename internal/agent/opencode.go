@@ -243,6 +243,12 @@ func (o *OpenCode) Run(ctx context.Context, req Request) (Result, error) {
 	}
 	args := o.buildArgs(req, v2)
 	scanner := newEventScanner()
+	// The scanner sees each tool call as the process writes it, so progress
+	// can be reported during the run rather than reconstructed afterwards
+	// (TASK-000143: 20 minutes with no record of what the agent did).
+	scanner.progress = req.OnProgress
+	scanner.progressEvery = req.ProgressInterval
+	scanner.started = result.StartedAt
 
 	var extraEnv []string
 	if db, err := o.taskDB(req.TaskRef); err != nil {
