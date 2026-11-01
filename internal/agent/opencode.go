@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -254,7 +255,43 @@ func (o *OpenCode) Run(ctx context.Context, req Request) (Result, error) {
 		extraEnv = append(extraEnv, "OPENCODE_DB="+db)
 	}
 	extraEnv = append(extraEnv, "OPENCODE_PERMISSION="+externalDirectoryPermission(req.ReadDirs))
-	if content := providerKeyConfig(o.ProviderKeyEnv); content != "" {
+
+	dropEnv := []string{"AIDEV_"}
+	if v2 {
+		// OPENCODE_CONFIG_CONTENT is what this run builds below; an inherited
+		// one could name servers the listing would not see or lose the provider
+		// keys, so it must not reach either process.
+		dropEnv = append(dropEnv, "OPENCODE_CONFIG_CONTENT")
+	}
+
+	// OpenCode 2 starts every MCP server its configuration names, including
+	// the person's global servers and every opencode.json found walking up
+	// from the worktree; a task's agent must not inherit them (docs/research.md
+	// §7o). List them from the worktree first, so the replacement names exactly
+	// what this run would start. A listing aidev cannot read is a startup
+	// failure: a run with unknown tools is worse than no run.
+	if v2 {
+		disabled, err := o.listMCPServers(ctx, req.WorkingDir, dropEnv, extraEnv)
+		if err != nil {
+			// A cancellation during the listing is aidev's own decision to
+			// stop, not a failure of the binary's configuration.
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				result.Status = task.WorkerCancelled
+				result.FailureKind = task.FailureCancelled
+				result.Err = ctxErr
+				result.FinishedAt = time.Now().UTC()
+				return result, nil
+			}
+			result.Status = task.WorkerFailed
+			result.FailureKind = task.FailureStartup
+			result.Err = err
+			result.FinishedAt = time.Now().UTC()
+			return result, err
+		}
+		result.DisabledMCP = disabled
+	}
+
+	if content := openCodeConfigContent(o.ProviderKeyEnv, result.DisabledMCP); content != "" {
 		extraEnv = append(extraEnv, "OPENCODE_CONFIG_CONTENT="+content)
 	}
 
@@ -266,7 +303,7 @@ func (o *OpenCode) Run(ctx context.Context, req Request) (Result, error) {
 		MaxOutputBytes: req.MaxOutputBytes,
 		// The agent executes instructions we do not control; it must not see
 		// aidev's own configuration (AIDEV_CONFIG → database URL).
-		DropEnv:  []string{"AIDEV_"},
+		DropEnv:  dropEnv,
 		ExtraEnv: extraEnv,
 		// The agent's commands may start applications in their own session
 		// (a test that runs an app under xvfb-run); stopping the run stops
@@ -681,18 +718,97 @@ func currentDir() (string, error) {
 	return dir, nil
 }
 
-// providerKeyConfig is the OPENCODE_CONFIG_CONTENT that gives each provider its
-// key by environment reference, or "" when none is configured. OpenCode merges
-// it into the person's own configuration, so only these options change.
-func providerKeyConfig(keys map[string]string) string {
-	if len(keys) == 0 {
+// mcpListTimeout bounds the `opencode debug config` lookup. It reads
+// configuration only, but a cold OpenCode may create its project store first;
+// generous, still bounded (invariant 6).
+const mcpListTimeout = 60 * time.Second
+
+// listMCPServers names every MCP server the OpenCode configuration reachable
+// from dir would start. The listing is taken in dir because OpenCode walks up
+// from the working directory for opencode.json (docs/research.md §7o).
+func (o *OpenCode) listMCPServers(ctx context.Context, dir string, dropEnv, env []string) ([]string, error) {
+	proc, err := procexec.Run(ctx, procexec.Spec{
+		Command:        o.command(),
+		Args:           []string{"debug", "config"},
+		Dir:            dir,
+		Timeout:        mcpListTimeout,
+		MaxOutputBytes: 1 << 20,
+		// The listing runs OpenCode's configuration code, so it gets the same
+		// environment a run does: no AIDEV_ secrets, the task's database and
+		// permission rules. OPENCODE_CONFIG_CONTENT is deliberately absent —
+		// it is what this listing is used to build.
+		DropEnv:  dropEnv,
+		ExtraEnv: env,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("cannot list opencode's MCP servers: %w",
+			startupError(o.command(), proc, err))
+	}
+	if !proc.Succeeded() {
+		detail := firstLine(proc.Stderr)
+		if detail == "" {
+			detail = string(proc.Outcome)
+		}
+		return nil, fmt.Errorf("cannot list opencode's MCP servers: %s", detail)
+	}
+
+	var sources []struct {
+		Info struct {
+			MCP struct {
+				Servers map[string]json.RawMessage `json:"servers"`
+			} `json:"mcp"`
+		} `json:"info"`
+	}
+	if err := json.Unmarshal([]byte(proc.Stdout), &sources); err != nil {
+		return nil, fmt.Errorf("cannot list opencode's MCP servers: %w", err)
+	}
+
+	seen := make(map[string]struct{})
+	for _, source := range sources {
+		for name := range source.Info.MCP.Servers {
+			seen[name] = struct{}{}
+		}
+	}
+	names := make([]string, 0, len(seen))
+	for name := range seen {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+// openCodeConfigContent is the OPENCODE_CONFIG_CONTENT for a run: the provider
+// keys and a complete disabled entry for every MCP server the configuration
+// would otherwise start. Both travel in the one variable OpenCode reads, so
+// they must be merged. A partial MCP entry is ignored and the server still
+// starts; the whole entry is replaced (docs/research.md §7o). "" means leave
+// the variable unset.
+func openCodeConfigContent(keys map[string]string, disabledMCP []string) string {
+	if len(keys) == 0 && len(disabledMCP) == 0 {
 		return ""
 	}
-	providers := make(map[string]any, len(keys))
-	for provider, variable := range keys {
-		providers[provider] = map[string]any{"options": map[string]any{"apiKey": "{env:" + variable + "}"}}
+	content := make(map[string]any, 2)
+	if len(keys) > 0 {
+		providers := make(map[string]any, len(keys))
+		for provider, variable := range keys {
+			providers[provider] = map[string]any{"options": map[string]any{"apiKey": "{env:" + variable + "}"}}
+		}
+		content["provider"] = providers
 	}
-	encoded, _ := json.Marshal(map[string]any{"provider": providers})
+	if len(disabledMCP) > 0 {
+		servers := make(map[string]any, len(disabledMCP))
+		for _, name := range disabledMCP {
+			// Nothing from the original entry is repeated, in particular not
+			// its environment: aidev's own configuration may live there.
+			servers[name] = map[string]any{
+				"type":     "local",
+				"command":  []string{"true"},
+				"disabled": true,
+			}
+		}
+		content["mcp"] = map[string]any{"servers": servers}
+	}
+	encoded, _ := json.Marshal(content)
 	return string(encoded)
 }
 
