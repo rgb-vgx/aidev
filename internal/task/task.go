@@ -151,6 +151,12 @@ type Task struct {
 	// Timeout bounds the agent run. Zero means "use the configured default".
 	Timeout time.Duration
 
+	// Warnings are non-fatal advice about this task, such as a clean
+	// verification that will find no node_modules. They are returned to the
+	// caller and recorded on task.created, but never stored on the task row
+	// (TASK-000159).
+	Warnings []string
+
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }

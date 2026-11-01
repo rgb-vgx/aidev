@@ -265,6 +265,15 @@ func (o *Orchestrator) CreateTask(ctx context.Context, in CreateTaskInput) (task
 		return task.Task{}, err
 	}
 
+	var warnings []string
+	if built.VerificationMode == task.VerificationClean {
+		warnings, err = o.nodeInstallWarnings(ctx, repo, baseAtCreate, steps, built.SetupSteps)
+		if err != nil {
+			return task.Task{}, err
+		}
+	}
+	built.Warnings = warnings
+
 	var created task.Task
 	err = o.Store.InTx(ctx, func(tx *store.Store) error {
 		stored, err := tx.CreateTask(ctx, built)
@@ -277,7 +286,7 @@ func (o *Orchestrator) CreateTask(ctx context.Context, in CreateTaskInput) (task
 		for _, step := range stored.Verification {
 			commands = append(commands, step.String())
 		}
-		return appendEvent(ctx, tx, stored.ID, nil, event.TypeTaskCreated, map[string]any{
+		payload := map[string]any{
 			"title":               stored.Title,
 			"agent":               stored.Agent,
 			"priority":            stored.Priority,
@@ -288,11 +297,19 @@ func (o *Orchestrator) CreateTask(ctx context.Context, in CreateTaskInput) (task
 			"verification_mode":   string(stored.VerificationMode),
 			"repo_path":           repo.Path,
 			"base_commit":         stored.BaseCommitAtCreate,
-		})
+		}
+		// Only present when there is something to say, so a reader can tell
+		// "no warning" from "the field was never written" (TASK-000159).
+		if len(warnings) > 0 {
+			payload["warnings"] = warnings
+		}
+		return appendEvent(ctx, tx, stored.ID, nil, event.TypeTaskCreated, payload)
 	})
 	if err != nil {
 		return task.Task{}, err
 	}
+
+	created.Warnings = warnings
 
 	o.Logger.InfoContext(ctx, "task created",
 		logging.FieldTaskID, created.ID.String(),
@@ -353,6 +370,88 @@ func (o *Orchestrator) refuseMissingRunners(ctx context.Context, repo git.Reposi
 		return nil
 	}
 	return fmt.Errorf("%s", strings.Join(parts, "; "))
+}
+
+// nodeLockfiles is ordered so the suggestion names the lockfile a repository
+// most likely treats as authoritative when several are present.
+var nodeLockfiles = []string{"package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "yarn.lock"}
+
+// nodeInstallWarnings says when clean verification will fail for want of
+// node_modules. The clean checkout contains only what would be committed, so
+// ignored dependencies are absent; a step that runs node or npm in a repository
+// with a lockfile needs a setup step to install them (TASK-000159). It is a
+// warning, not a refusal: a script may need no package at all.
+func (o *Orchestrator) nodeInstallWarnings(ctx context.Context, repo git.Repository, baseCommit string, steps, setupSteps []task.VerificationStep) ([]string, error) {
+	if !stepsRunNode(steps) || stepsInstallNodePackages(setupSteps) {
+		return nil, nil
+	}
+	for _, lockfile := range nodeLockfiles {
+		exists, err := o.Git.HasPathAtCommit(ctx, repo, baseCommit, lockfile)
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			continue
+		}
+		return []string{fmt.Sprintf(
+			"clean verification checks out only what would be committed, so node_modules will be absent, "+
+				"but this repository has %s and a step runs node, npm, npx, pnpm or yarn without a setup step "+
+				"installing packages; add one such as `--setup %q` (TASK-000159)",
+			lockfile, nodeInstallCommand(lockfile))}, nil
+	}
+	return nil, nil
+}
+
+func stepsRunNode(steps []task.VerificationStep) bool {
+	for _, step := range steps {
+		switch path.Base(step.Command) {
+		case "node", "npm", "npx", "pnpm", "yarn":
+			return true
+		}
+	}
+	return false
+}
+
+func stepsInstallNodePackages(steps []task.VerificationStep) bool {
+	for _, step := range steps {
+		first := firstNonFlag(step.Args)
+		switch path.Base(step.Command) {
+		case "npm":
+			if first == "ci" || first == "install" || first == "i" {
+				return true
+			}
+		case "pnpm":
+			if first == "install" {
+				return true
+			}
+		case "yarn":
+			// A bare `yarn` is `yarn install`.
+			if first == "install" || len(step.Args) == 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func firstNonFlag(args []string) string {
+	for _, arg := range args {
+		if !strings.HasPrefix(arg, "-") {
+			return arg
+		}
+	}
+	return ""
+}
+
+func nodeInstallCommand(lockfile string) string {
+	switch lockfile {
+	case "pnpm-lock.yaml":
+		return "pnpm install --frozen-lockfile"
+	case "yarn.lock":
+		return "yarn install --frozen-lockfile"
+	default:
+		return "npm ci"
+	}
 }
 
 // stepPaths returns the worktree-relative paths a step names as a runner: its

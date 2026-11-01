@@ -133,6 +133,9 @@ type CreateTaskInput struct {
 type CreateTaskOutput struct {
 	Task     view.Task `json:"task" jsonschema:"the created task, in status PENDING"`
 	NextStep string    `json:"next_step" jsonschema:"what to do next"`
+	// Warnings are non-fatal advice, such as a clean verification that will
+	// find no node_modules. Omitted when there is none (TASK-000159).
+	Warnings []string `json:"warnings,omitempty" jsonschema:"non-fatal advice about the created task; absent when there is none"`
 }
 
 func (s *Server) createTask(ctx context.Context, _ *sdk.CallToolRequest, in CreateTaskInput) (*sdk.CallToolResult, CreateTaskOutput, error) {
@@ -188,7 +191,7 @@ func (s *Server) createTask(ctx context.Context, _ *sdk.CallToolRequest, in Crea
 	if created.RequiresApproval {
 		next = approvalNextStep(orchestrator.Config, created.Ref)
 	}
-	return nil, CreateTaskOutput{Task: view.NewTask(created), NextStep: next}, nil
+	return nil, CreateTaskOutput{Task: view.NewTask(created), NextStep: next, Warnings: created.Warnings}, nil
 }
 
 // TaskInput identifies one task.

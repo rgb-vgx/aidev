@@ -225,6 +225,10 @@ flags:
 		return err
 	}
 
+	for _, warning := range created.Warnings {
+		fmt.Fprintf(env.Stderr, "warning: %s\n", warning)
+	}
+
 	if *asJSON {
 		return writeJSON(env.Stdout, view.NewTask(created))
 	}
