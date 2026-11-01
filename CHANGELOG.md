@@ -7,7 +7,7 @@ with:
 curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh
 ```
 
-## Unreleased
+## v0.11.0
 
 Upgrading from v0.10.0: install the new binary, run `aidev migrate` (migrations
 `0025_files_added_event` and `0026_agent_progress_event`, both only widen the
