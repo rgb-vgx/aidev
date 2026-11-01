@@ -787,12 +787,13 @@ func TestTheModelAndAgentThatRanAreRecorded(t *testing.T) {
 	}
 }
 
-// A task that names no model leaves the choice to the backend, which has its own
-// configured model — the worker must not substitute one setting for another. The
-// record still says which model ran: "" would make the history unreadable a month
-// later, and a second backend has a different setting entirely, so the answer can
-// only come back from the backend itself.
-func TestATaskWithNoModelLeavesTheChoiceToTheBackend(t *testing.T) {
+// A task that names no model is pinned at creation to the backend's configured
+// model (pin_model_test.go), and the run asks for exactly that model: the
+// request says what the task was created for, whatever the configuration says
+// by then. The record still says which model ran: "" would make the history
+// unreadable a month later, and a second backend has a different setting
+// entirely, so the answer comes back from the backend itself.
+func TestATaskWithNoModelRunsOnThePinnedBackendModel(t *testing.T) {
 	h := newHarness(t, func(cfg *config.Config) { cfg.OpenCodeModel = "cfg/default-model" })
 
 	h.backend.Work = doTheWork
@@ -801,8 +802,8 @@ func TestATaskWithNoModelLeavesTheChoiceToTheBackend(t *testing.T) {
 		t.Fatalf("RunTask: %v", err)
 	}
 	call, _ := h.backend.LastCall()
-	if call.Model != "" {
-		t.Errorf("the agent was asked for model %q, want none: the backend's own setting decides", call.Model)
+	if call.Model != "cfg/default-model" {
+		t.Errorf("the agent was asked for model %q, want the model pinned at creation", call.Model)
 	}
 
 	runs2, err := h.store.ListWorkerRuns(h.ctx, outcome.Attempt.ID)
