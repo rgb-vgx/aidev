@@ -78,6 +78,18 @@ type OpenCode struct {
 	// passes through aidev.
 	ProviderKeyEnv map[string]string
 
+	// Sandbox, when set, is the bubblewrap command a run is started under:
+	// the filesystem is read-only except the worktree, its git admin
+	// directory, OpenCode's own state and SandboxWritable. OpenCode's
+	// permission rules confine only its file tools; a shell command the agent
+	// runs is confined only by this (docs/research.md §7p, §7q). Empty runs
+	// OpenCode directly.
+	Sandbox string
+
+	// SandboxWritable are further absolute directories a sandboxed run may
+	// write: build and package caches.
+	SandboxWritable []string
+
 	// agents holds the last successful lookup, guarded by agentsMu, which is
 	// also held for the duration of a lookup so that concurrent validations
 	// share one spawn instead of racing to start their own.

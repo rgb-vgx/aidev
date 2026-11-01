@@ -713,6 +713,28 @@ sandbox (namespaces, landlock, a container), which aidev does not have; the cont
 (§7i) still catches changes to shared git state, and nothing else outside the worktree is
 checked.
 
+## 7q. Bubblewrap confines what OpenCode's rules do not **[OBSERVED]**
+
+Measured 2026-11-01, bubblewrap 0.9.0, Ubuntu with
+`kernel.apparmor_restrict_unprivileged_userns = 1`, OpenCode 2.2.5 (`.probe/bwrap/run.sh`): a real
+git worktree, the filesystem bound read-only (`--ro-bind / /`), `/tmp` a tmpfs, and read-write binds
+for the worktree, its git admin directory (`git rev-parse --absolute-git-dir`), the task database
+directory, `~/.local/share/opencode`, `~/.cache/opencode`, `~/.local/state/opencode`,
+`~/.cache/go-build` and `~/go/pkg/mod`. bubblewrap runs unprivileged there.
+
+| step the agent ran | result |
+|---|---|
+| `go test ./...` | ok |
+| `git status --short` | ok |
+| write tool, file in the worktree | ok |
+| shell `echo > <dir outside the worktree>` | `Read-only file system` |
+| shell `echo > $HOME/x` | `Read-only file system` |
+| `git add && git commit` | refused: the object store is in the shared git directory, read-only |
+
+The model call and the agent loop work unchanged. A project whose checks write elsewhere (an npm
+cache, a virtualenv outside the worktree) needs that directory listed as writable. The agent cannot
+commit inside the sandbox, which is what the prompt already asks of it; aidev commits the snapshot.
+
 ## 7b. Phase 2 probes: git and OpenCode mechanics
 
 Measured later than the rest, when the execution core was designed. Same rules:
