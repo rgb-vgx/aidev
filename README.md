@@ -65,13 +65,15 @@ schema.
 | Go | **≥ 1.25** | the MCP SDK requires it; with Go 1.24 the toolchain downloads 1.26 automatically |
 | Docker + Compose | any recent | PostgreSQL for local development |
 | git | ≥ 2.23 | worktree support |
-| OpenCode | 1.18+ | only needed from Phase 2; verified against 1.18.30 |
+| OpenCode | 1.18+ | only needed from Phase 2; verified against 2.2.5, 1.18 still supported |
 | Claude Code | 2.x | only needed from Phase 4; verified against 2.1.268 |
 
 **Trust.** The agent runs as you, with no sandbox: it can read and write anything
 your user can, including other repositories and aidev's own configuration file. aidev
 detects and refuses some of it, such as changed git state, rewritten checks and
-stale runs. Nothing is merged without review, which suits one person delegating on
+stale runs. OpenCode's own file tools are confined to the worktree and the
+project's read dirs, but a shell command the agent runs is not. Nothing is merged
+without review, which suits one person delegating on
 their own machine. Do not give it agents, tasks or users you would not give a shell to;
 see [what the worktree is not](docs/architecture.md#what-the-worktree-is-not).
 
@@ -447,7 +449,7 @@ eleven-minute one. Set `agent.opencode.model` to any model you have credentials 
 to an empty string to let OpenCode decide.
 
 ```bash
-opencode --version          # verified against 1.18.30
+opencode --version          # verified against 2.2.5
 opencode models | head      # the opencode/* entries need no credentials
 ```
 

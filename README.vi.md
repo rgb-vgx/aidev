@@ -64,13 +64,15 @@ của cơ sở dữ liệu.
 | Go | **≥ 1.25** | MCP SDK đòi hỏi bản này; với Go 1.24 toolchain sẽ tự tải 1.26 |
 | Docker + Compose | bản mới bất kỳ | PostgreSQL để phát triển trên máy cá nhân |
 | git | ≥ 2.23 | hỗ trợ worktree |
-| OpenCode | 1.18+ | chỉ cần từ Giai đoạn 2; đã kiểm chứng với 1.18.30 |
+| OpenCode | 1.18+ | chỉ cần từ Giai đoạn 2; đã kiểm chứng với 2.2.5, 1.18 vẫn được hỗ trợ |
 | Claude Code | 2.x | chỉ cần từ Giai đoạn 4; đã kiểm chứng với 2.1.268 |
 
 **Mức độ tin cậy.** Agent chạy dưới chính user của bạn, không có sandbox: nó đọc và
 ghi được mọi thứ user của bạn làm được, kể cả các repository khác và tập tin cấu hình của
 chính aidev. aidev phát hiện và từ chối một phần trong đó, như trạng thái git bị đổi, lệnh kiểm
-tra bị viết lại hay run cũ còn sót. Không có gì được merge nếu chưa xem lại, điều
+tra bị viết lại hay run cũ còn sót. Công cụ tập tin của chính OpenCode bị giới hạn trong
+worktree và các thư mục đọc của dự án, nhưng một lệnh shell do agent chạy thì không.
+Không có gì được merge nếu chưa xem lại, điều
 này hợp với một người tự giao việc trên máy của mình. Đừng đưa cho nó
 agent, task hay người dùng mà bạn sẽ không giao quyền dùng shell; xem
 [worktree không phải là gì](docs/architecture.md#what-the-worktree-is-not).
@@ -430,7 +432,7 @@ task mười một phút. Hãy đặt `agent.opencode.model` thành bất kỳ m
 thành chuỗi rỗng để OpenCode tự quyết.
 
 ```bash
-opencode --version          # verified against 1.18.30
+opencode --version          # verified against 2.2.5
 opencode models | head      # the opencode/* entries need no credentials
 ```
 
