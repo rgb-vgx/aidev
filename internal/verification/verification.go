@@ -45,6 +45,13 @@ type Request struct {
 	// AttemptID labels the resulting records.
 	AttemptID uuid.UUID
 
+	// TaskRef is the task's human-facing reference. It is passed to every
+	// setup and verification step as AIDEV_TASK_REF so a check can keep
+	// per-task resources, such as a test database, apart (TASK-000166's agent
+	// left the shared test database broken for every later task). Empty
+	// leaves the variable unset.
+	TaskRef string
+
 	// WorkingDir is the worktree to verify: the agent's own checkout for
 	// in_place verification, or the temporary detached checkout built from
 	// the snapshot for clean. Never the main repository.
@@ -229,6 +236,14 @@ func (r *Runner) runStep(ctx context.Context, req Request, index int, phase task
 		timeout = time.Duration(step.TimeoutSeconds) * time.Second
 	}
 
+	// A check that keeps a resource of its own learns which task it runs for
+	// here; every other AIDEV_ variable is dropped below, and this one is
+	// applied afterwards so it is the only one that gets through.
+	var extraEnv []string
+	if req.TaskRef != "" {
+		extraEnv = append(extraEnv, "AIDEV_TASK_REF="+req.TaskRef)
+	}
+
 	proc, err := procexec.Run(ctx, procexec.Spec{
 		Command:        step.Command,
 		Args:           step.Args,
@@ -237,7 +252,8 @@ func (r *Runner) runStep(ctx context.Context, req Request, index int, phase task
 		MaxOutputBytes: r.MaxOutputBytes,
 		// Verification commands come from the task (agent-authored in the
 		// delegation flow); they must not see aidev's own configuration.
-		DropEnv: []string{"AIDEV_"},
+		DropEnv:  []string{"AIDEV_"},
+		ExtraEnv: extraEnv,
 		// A check may start an application in its own session (xvfb-run);
 		// it must not outlive the check any more than a child in the group.
 		FollowSessions: true,

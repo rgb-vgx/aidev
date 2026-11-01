@@ -923,6 +923,7 @@ func (r *run) baseCheck(ctx context.Context) (Outcome, bool, error) {
 
 	report, err := r.o.Verifier.Run(ctx, verification.Request{
 		AttemptID:  r.attempt.ID,
+		TaskRef:    r.task.Identifier(),
 		WorkingDir: wt.Path,
 		SetupSteps: r.task.SetupSteps,
 		Steps:      r.task.Verification,
@@ -1062,6 +1063,7 @@ func (r *run) verify(ctx context.Context) (Outcome, error) {
 
 	report, err := r.o.Verifier.Run(ctx, verification.Request{
 		AttemptID:  r.attempt.ID,
+		TaskRef:    r.task.Identifier(),
 		WorkingDir: workingDir,
 		SetupSteps: r.task.SetupSteps,
 		Steps:      r.task.Verification,

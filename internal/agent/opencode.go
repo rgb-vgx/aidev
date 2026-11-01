@@ -267,6 +267,15 @@ func (o *OpenCode) Run(ctx context.Context, req Request) (Result, error) {
 	directoryRules := directoryPermissionRules(req.ReadDirs)
 	extraEnv = append(extraEnv, "OPENCODE_PERMISSION="+externalDirectoryPermission(directoryRules))
 
+	// The agent runs the task's own checks while it works, so it needs the
+	// same AIDEV_TASK_REF they get: a check can then keep its resources, such
+	// as a test database, apart per task (TASK-000166's agent broke the
+	// shared one). Added after the drop below, so it is the only AIDEV_
+	// variable that reaches the run.
+	if req.TaskRef != "" {
+		extraEnv = append(extraEnv, "AIDEV_TASK_REF="+req.TaskRef)
+	}
+
 	// OPENCODE_CONFIG_CONTENT is what this run builds below; an inherited one
 	// could name servers, providers or directory rules this run does not
 	// control. Drop it for both versions: a 1.x run builds no replacement, so
