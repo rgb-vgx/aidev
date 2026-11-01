@@ -92,6 +92,35 @@ func (s *Store) ListProjects(ctx context.Context) ([]task.Project, error) {
 	return projects, nil
 }
 
+// InPlaceProjects returns the repository path of every project whose new tasks
+// verify in place, ordered by path.
+//
+// The doctor names them so an operator can switch each to clean; in_place
+// remains valid for a repository that pins submodules.
+func (s *Store) InPlaceProjects(ctx context.Context) ([]string, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT repo_path FROM projects
+		WHERE verification_mode = $1
+		ORDER BY repo_path`, string(task.VerificationInPlace))
+	if err != nil {
+		return nil, fmt.Errorf("list projects verifying in place: %w", classify(err))
+	}
+	defer rows.Close()
+
+	var paths []string
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return nil, fmt.Errorf("list projects verifying in place: %w", err)
+		}
+		paths = append(paths, path)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list projects verifying in place: %w", classify(err))
+	}
+	return paths, nil
+}
+
 // SetProjectSubmodules changes how a project's task worktrees treat git
 // submodules and returns the project as it now stands.
 //
