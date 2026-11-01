@@ -273,5 +273,8 @@ find out how it ended, or aidev_get_task_events to see how far it has got.
 A successful task leaves a commit on its own branch, named in
 result.worktree.branch: aidev/<ref>, or aidev/<ref>-aN when a retry succeeded
 (set max_retries to let aidev retry an attempt whose checks failed or whose agent
-stopped early). Nothing is merged, and your working tree is never touched. A
-failed task leaves its worktree in place so the partial work can be inspected.`
+stopped early). After a retry the delivery is one commit on the task's base, and
+each earlier attempt's branch keeps its own unverified commit: review the
+delivered branch, not a range of attempts. Nothing is merged, and your working
+tree is never touched. A failed task leaves its worktree in place so the partial
+work can be inspected.`

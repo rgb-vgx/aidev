@@ -87,7 +87,8 @@ func TestRetryContinuesAfterFailedChecks(t *testing.T) {
 	}
 
 	// Each attempt's branch holds its end state: the first, unverified and
-	// marked so; the second, the delivery, built on top of the first.
+	// marked so; the second, the delivery, which carries both attempts' work
+	// (as one commit on the base, retry_single_commit_test.go).
 	first, second := "aidev/"+created.Ref, "aidev/"+created.Ref+"-a2"
 	if files := h.branchFiles(first); !strings.Contains(files, "wip.txt") || strings.Contains(files, "marker.txt") {
 		t.Errorf("%s holds %q, want attempt 1's wip.txt and no marker", first, files)

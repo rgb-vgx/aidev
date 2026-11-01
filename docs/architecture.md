@@ -257,8 +257,9 @@ session can only be continued in the directory it was created in
    whole task prompt comes first.
 
 `FAILED` stays terminal: a task that retries never passes through it. The success
-branch is the last attempt's, which the result names; its history holds the earlier
-attempts' unverified commits. The CLI's total deadline grows with `max_retries`,
+branch is the last attempt's, which the result names; its delivery is one commit
+on the task's base carrying the verified tree, and each earlier attempt's branch
+keeps its own unverified commit. The CLI's total deadline grows with `max_retries`,
 since every attempt runs inside the one `aidev task run` process.
 
 ## Cleanup policy
