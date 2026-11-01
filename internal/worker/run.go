@@ -225,6 +225,7 @@ func (r *run) attemptOnce(ctx context.Context) (Outcome, error) {
 	if err := r.snapshotAgentTree(ctx); err != nil {
 		return r.fail(ctx, task.FailureWorktree, err)
 	}
+	r.reportFilesAdded(ctx)
 	return r.verify(ctx)
 }
 
@@ -256,6 +257,48 @@ func (r *run) snapshotAgentTree(ctx context.Context) error {
 		r.log.WarnContext(ctx, "could not record the agent's tree", "error", err.Error())
 	}
 	return nil
+}
+
+// maxAddedPaths bounds the paths task.files_added lists, for the same reason
+// maxDriftPaths does: an attempt that copies a whole tree into the worktree
+// would otherwise write an event the size of the tree. The total still says
+// how many there were.
+const maxAddedPaths = 50
+
+// reportFilesAdded names the files the delivered tree adds to the base, with
+// their size and whether git reads them as binary. TASK-000143 delivered
+// data/research.db — 49 KB of SQLite an MCP server wrote into its working
+// directory — and the history said only "changed_files: 2", leaving a reviewer
+// to read the commit to find it. Like reportWorktreeDrift it is a report: an
+// error working it out is logged, and the run is judged as usual.
+func (r *run) reportFilesAdded(ctx context.Context) {
+	if r.agentTree == "" {
+		return
+	}
+	added, err := r.worktree.AddedFiles(ctx, r.worktree.BaseCommit, r.agentTree)
+	if err != nil {
+		r.log.WarnContext(ctx, "could not list the files the attempt added", "error", err.Error())
+		return
+	}
+	if len(added) == 0 {
+		return
+	}
+	listed := added
+	if len(listed) > maxAddedPaths {
+		listed = listed[:maxAddedPaths]
+	}
+	paths := make([]map[string]any, 0, len(listed))
+	for _, f := range listed {
+		paths = append(paths, map[string]any{
+			"path":   f.Path,
+			"bytes":  f.Bytes,
+			"binary": f.Binary,
+		})
+	}
+	r.emit(ctx, event.TypeFilesAdded, map[string]any{
+		"paths": paths,
+		"total": len(added),
+	})
 }
 
 // requiredBy reports why this task must be approved before it runs: "task",

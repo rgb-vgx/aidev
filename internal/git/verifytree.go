@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -287,6 +288,109 @@ func (w *Worktree) TreeChanges(ctx context.Context, from, to string) ([]TreeChan
 		out = append(out, TreeChange{Status: status, Path: path})
 	}
 	return out, nil
+}
+
+// AddedFile is one path a tree adds to a base commit: the size git records
+// for it, and whether git reads its content as binary.
+type AddedFile struct {
+	Path   string
+	Bytes  int64
+	Binary bool
+}
+
+// AddedFiles lists the files tree adds relative to base, each with its size.
+// TASK-000143's attempt delivered data/research.db — 49 KB of SQLite an MCP
+// server wrote into its working directory — and the history named no file at
+// all; the path, size and binary flag let a reviewer recognise that kind of
+// delivery without opening the commit. Rename detection is off, as in
+// TreeChanges, so an added path is never two entries.
+func (w *Worktree) AddedFiles(ctx context.Context, base, tree string) ([]AddedFile, error) {
+	if strings.TrimSpace(base) == "" || strings.TrimSpace(tree) == "" {
+		return nil, fmt.Errorf("added files: both revisions are required")
+	}
+	// The same diff-driver caveats as Worktree.Diff apply: reading the file
+	// list must not execute code the agent installed in the repository.
+	res, err := w.m.run(ctx, w.Path, nil,
+		"diff", "--numstat", "-z", "--diff-filter=A", "--no-renames",
+		"--no-ext-diff", "--no-textconv", base, tree)
+	if err != nil {
+		return nil, err
+	}
+	if !res.Succeeded() {
+		return nil, fmt.Errorf("git diff %s %s in %s: %s", base, tree, w.Path, firstLine(res.Stderr))
+	}
+	// A truncated list would name only some of what was delivered, which is
+	// worse than saying it could not be listed.
+	if res.StdoutTruncated {
+		return nil, fmt.Errorf("diff %s %s in %s: git diff produced more output than aidev captures, "+
+			"so the list of added files is truncated and cannot be trusted", base, tree, w.Path)
+	}
+
+	var added []AddedFile
+	for _, record := range strings.Split(res.Stdout, "\x00") {
+		if record == "" {
+			continue
+		}
+		// added\tdeleted\tpath — numstat reports "-" for both counts when git
+		// reads the file as binary.
+		fields := strings.SplitN(record, "\t", 3)
+		if len(fields) != 3 {
+			return nil, fmt.Errorf("diff %s %s in %s: unexpected git output %q", base, tree, w.Path, record)
+		}
+		added = append(added, AddedFile{
+			Path:   fields[2],
+			Binary: fields[0] == "-" && fields[1] == "-",
+		})
+	}
+	if len(added) == 0 {
+		return nil, nil
+	}
+
+	sizes, err := w.treeSizes(ctx, tree)
+	if err != nil {
+		return nil, err
+	}
+	for i := range added {
+		added[i].Bytes = sizes[added[i].Path]
+	}
+	return added, nil
+}
+
+// treeSizes maps each blob in tree to the size git records for it. ls-tree's
+// long format reports "-" for a gitlink, which has no byte count; such a path
+// is left out and reads as 0 rather than being guessed at.
+func (w *Worktree) treeSizes(ctx context.Context, tree string) (map[string]int64, error) {
+	res, err := w.m.run(ctx, w.Path, nil, "ls-tree", "-l", "-r", "-z", tree)
+	if err != nil {
+		return nil, err
+	}
+	if !res.Succeeded() {
+		return nil, fmt.Errorf("ls-tree -l %s in %s: %s", tree, w.Path, firstLine(res.Stderr))
+	}
+	if res.StdoutTruncated {
+		return nil, fmt.Errorf("ls-tree -l %s in %s: git produced more output than aidev captures, "+
+			"so the file sizes cannot be trusted", tree, w.Path)
+	}
+	sizes := make(map[string]int64)
+	for _, record := range strings.Split(res.Stdout, "\x00") {
+		if record == "" {
+			continue
+		}
+		meta, path, ok := strings.Cut(record, "\t")
+		if !ok {
+			continue
+		}
+		fields := strings.Fields(meta)
+		if len(fields) != 4 {
+			continue
+		}
+		size, err := strconv.ParseInt(fields[3], 10, 64)
+		if err != nil {
+			continue
+		}
+		sizes[path] = size
+	}
+	return sizes, nil
 }
 
 // HasGitlinks reports whether the tree at commit contains a submodule entry,

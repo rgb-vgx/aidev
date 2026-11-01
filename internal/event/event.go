@@ -98,6 +98,14 @@ const (
 	// the files and line ranges, or the error that kept it from being
 	// measured. A report; it never decides the outcome.
 	TypeCoverageReported Type = "task.coverage_reported"
+
+	// TypeFilesAdded names the files an attempt's delivered tree adds to its
+	// base commit, each with its size and whether git reads it as binary
+	// (TASK-000143 delivered data/research.db unnoticed). Like
+	// TypeVerificationTestsModified it is a report, not a verdict: the run is
+	// judged as usual, and a reviewer sees what arrived without opening the
+	// commit.
+	TypeFilesAdded Type = "task.files_added"
 )
 
 // AllTypes lists every event type aidev emits. The migration's CHECK constraint
@@ -118,7 +126,7 @@ func AllTypes() []Type {
 		TypeContainmentBreach, TypeSharedRefsChanged,
 		TypeTaskApplied, TypeTaskApplyUndone,
 		TypeRunStopped,
-		TypeCoverageReported,
+		TypeCoverageReported, TypeFilesAdded,
 	}
 }
 
