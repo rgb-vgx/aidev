@@ -45,9 +45,17 @@ specification says nothing, and where earlier reviews found the defects. Look fo
 - claims in documentation or comments that do not match the code: check each
   against the source;
 - a copy of existing code instead of reuse, or a change far wider than asked;
+- a special case that exists only to keep an old test green: a condition on
+  configuration emptiness, a value compared with a default, a branch no new test
+  exercises. Find the test it serves, and fix the spec instead — the case is the
+  contradiction, not the fix;
 - anything that needs a real run to trust (a command the project provides, a page
   in a browser): run it yourself in a scratch worktree
   (`git worktree add <dir> <branch>`), then remove the worktree.
+
+Read the agent's final message as well as the diff: it is where a conflict with the
+specification gets reported. A test the agent says it could not satisfy is a defect
+in the spec, not a remark to skim past.
 
 Write down what you find. A finding you can fix in a few lines becomes a separate
 commit after the merge, with its own test first. A larger one becomes a new task.
@@ -57,14 +65,20 @@ commit after the merge, with its own test first. A larger one becomes a new task
 Only with the user's go-ahead, unless they already asked you to merge reviewed work.
 
 1. Switch to the user's branch and make sure it is clean.
-2. `git merge --no-ff --no-commit <branch>` and run the project's full check (for
+2. Run the project's slower suites too when `make check` (or equivalent) skips
+   them — integration, database, browser. A suite nobody runs is red for as long as
+   nobody looks. Then check that CI on the target branch is green (for GitHub:
+   `gh run list --branch main --limit 3`). A red CI is fixed first: merged into a
+   red branch, a new failure hides among the old ones.
+3. `git merge --no-ff --no-commit <branch>` and run the project's full check (for
    example `make check`). If it fails, `git merge --abort` and report.
-3. Write the merge message to a file and commit with `git commit -F <file>`
+4. Write the merge message to a file and commit with `git commit -F <file>`
    (never `-F -`). Say what changed, why, and what you checked beyond the tests.
-4. Do not push unless asked.
+5. Do not push unless asked.
 
 For a user who is not a developer, or who just wants it in, `aidev task apply <task>`
-does steps 1–3 in one go — it merges the task's branch into the checked-out branch
+does the merge and its commit in one go — it merges the task's branch into the
+checked-out branch
 with a merge commit, refuses a checkout with uncommitted changes, aborts and names
 the files on a conflict — and records it in the task's history. Run the project's
 check right after it; if that fails, `aidev task undo <task>` reverts the merge with

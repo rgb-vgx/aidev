@@ -45,11 +45,19 @@ A verification command must fail now and pass once the work is done. A command t
 already passes proves nothing.
 
 1. Create a branch `spec/<short-name>` from the user's current branch.
-2. Write the tests that express step 1. Run them and confirm they fail **for the
+2. **Find the tests that pin the old behaviour.** Grep the existing `*_test.go` or
+   test files for the function, flag, message or setting the change touches. Every
+   test that asserts what the change replaces must be updated in the same spec
+   commit: otherwise the spec contradicts itself, and an agent can only choose
+   between failing the old test and adding a special case to the code to keep it
+   green. Also check that `protected_paths` does not cover a file the tests require
+   to change (generated docs, guides); a protected file the spec must edit makes the
+   task impossible, so free it or fix the spec.
+3. Write the tests that express step 1. Run them and confirm they fail **for the
    right reason** (an assertion about the missing behaviour, not a compile error in
    your own test or a missing fixture).
-3. Commit them on the spec branch. The user's branch never carries failing tests.
-4. Use the spec branch as the task's `base_ref`.
+4. Commit them on the spec branch. The user's branch never carries failing tests.
+5. Use the spec branch as the task's `base_ref`.
 
 If the change genuinely cannot be tested (pure copy edits, for example), use the
 strongest command available (build, lint, an existing test suite, a `grep` for the
@@ -81,6 +89,8 @@ Call `aidev_create_task` with:
 - `description`: exactly what to change and where (files, functions), which tests
   specify it (name the spec commit), and the constraints. Always include:
   - "Do not modify any test file; the tests on this branch are the specification."
+  - "A test that cannot pass together with this specification must be reported in
+    your final message; never keep it green with a special case in the code."
   - any file that must not change (applied database migrations, for example);
   - "Do not end your turn with a statement of what you will do next: make the
     change, run the verification commands, and keep going until they pass."
