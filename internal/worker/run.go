@@ -672,6 +672,21 @@ func resolveModel(t task.Task, routing map[string]string) string {
 	return ""
 }
 
+// backendModel is the model the configured backend falls back to when a task
+// names none. The backend in use decides which setting applies: OpenCode's
+// model is not Codex's, and the Fake backend used by tests reports its own
+// name.
+func (o *Orchestrator) backendModel() string {
+	codex := o.Config.AgentBackend == config.BackendCodex
+	if o.Backend != nil && o.Backend.Name() == agent.CodexName {
+		codex = true
+	}
+	if codex {
+		return strings.TrimSpace(o.Config.CodexModel)
+	}
+	return strings.TrimSpace(o.Config.OpenCodeModel)
+}
+
 // errSharedStateUnreadable marks a containment check that could not run: the
 // shared state could not be re-read, so nothing was found and nothing was
 // proven. Callers classify it as a worktree failure, not as a breach.

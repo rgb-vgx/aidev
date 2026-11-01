@@ -242,6 +242,18 @@ func (o *Orchestrator) CreateTask(ctx context.Context, in CreateTaskInput) (task
 		return task.Task{}, err
 	}
 
+	// Pin the model now rather than resolve it at run time: TASK-000143 has
+	// no model and ran on opencode/mimo-v2.6-flash-free, while the
+	// configuration names a different model today. Resolving later let an
+	// edit between creation and a run — or between two attempts — silently
+	// change what the task meant to run on. The task's own model wins, then
+	// the routing table for its hardness, then the configured backend's
+	// fallback; with nothing anywhere it stays empty, so the backend chooses.
+	built.Model = resolveModel(built, o.Config.Routing)
+	if built.Model == "" {
+		built.Model = o.backendModel()
+	}
+
 	// A step that runs a file the base lacks can never be judged: creating
 	// that file is the change verification refuses to trust, so no agent work
 	// can make the step pass. Refuse it now rather than after an attempt has
