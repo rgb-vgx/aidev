@@ -2,12 +2,14 @@ package integration
 
 import (
 	"context"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
 
 	"aidev/internal/agent"
 	"aidev/internal/task"
+	"aidev/internal/worker"
 )
 
 // A task that succeeded on a retry delivered a branch whose history carried
@@ -56,5 +58,34 @@ func TestARetriedSuccessIsOneCommitOnTheBase(t *testing.T) {
 	}
 	if head := strings.TrimSpace(gitRun(t, h.repoPath, "rev-parse", second)); outcome.Worktree == nil || outcome.Worktree.HeadCommit != head {
 		t.Errorf("the recorded head commit is not the delivered one (%s): %+v", head, outcome.Worktree)
+	}
+}
+
+// A retry that ends where the base began delivers nothing new, and its
+// branch must not keep pointing at the earlier attempt's unverified commit:
+// that would hand the reviewer exactly what this rule keeps out.
+func TestARetryThatUndoesItsWorkDeliversTheBase(t *testing.T) {
+	h := newHarness(t, nil)
+	var calls atomic.Int32
+	h.backend.Work = func(ctx context.Context, req agent.Request) error {
+		if calls.Add(1) == 1 {
+			writeFile(t, req.WorkingDir+"/wip.txt", "should not be here\n")
+			return nil // the check below fails while wip.txt exists
+		}
+		return os.Remove(req.WorkingDir + "/wip.txt")
+	}
+	created := h.createTask(func(in *worker.CreateTaskInput) {
+		in.MaxRetries = 1
+		in.Verification = []task.VerificationStep{{Command: "test", Args: []string{"!", "-f", "wip.txt"}}}
+	})
+	outcome, err := h.orchestrator.RunTask(h.ctx, created.Ref)
+	if err != nil || outcome.Task.Status != task.StatusSucceeded {
+		t.Fatalf("RunTask = %v, %v: %s", outcome.Task.Status, err, outcome.Message)
+	}
+	second := "aidev/" + created.Ref + "-a2"
+	base := strings.TrimSpace(gitRun(t, h.repoPath, "rev-parse", "main"))
+	if head := strings.TrimSpace(gitRun(t, h.repoPath, "rev-parse", second)); head != base {
+		msg := gitRun(t, h.repoPath, "log", "-1", "--format=%s", second)
+		t.Errorf("%s points at %s (%q), want the base %s: no unverified commit in the delivery", second, head, strings.TrimSpace(msg), base)
 	}
 }

@@ -1435,6 +1435,17 @@ func (r *run) commitAgentTree(ctx context.Context, message string) (string, erro
 		return "", err
 	}
 	if parentTree == r.agentTree {
+		// A retry that ended on the base delivers nothing new, but its branch
+		// still points at the earlier attempt's unverified commit; it moves
+		// back to the base so the delivery carries none of that work.
+		if parent != r.agentHead {
+			if err := r.worktree.UpdateBranch(ctx, r.worktree.Branch, parent, r.agentHead); err != nil {
+				return "", err
+			}
+			if err := r.worktree.SyncIndex(ctx); err != nil {
+				r.log.WarnContext(ctx, "could not realign the index after resetting the branch", "error", err.Error())
+			}
+		}
 		return "", nil
 	}
 	commit, err := r.worktree.CommitTreeOnto(ctx, r.agentTree, parent, message)
