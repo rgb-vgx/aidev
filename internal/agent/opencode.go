@@ -154,8 +154,9 @@ func (o *OpenCode) isV2(ctx context.Context) bool {
 //
 // OpenCode 2 removed `run --dir` and connects to a shared background service by
 // default; `--standalone` starts a private server so the process working
-// directory (and OPENCODE_PERMISSION) actually apply. OpenCode 1.18 needs
-// `--dir` instead and has no `--standalone`.
+// directory (and, through OPENCODE_CONFIG_CONTENT, the directory rules) apply.
+// OpenCode 1.18 needs `--dir` instead, has no `--standalone`, and reads those
+// rules from OPENCODE_PERMISSION instead (docs/research.md §7p).
 func (o *OpenCode) buildArgs(req Request, v2 bool) []string {
 	args := []string{"run"}
 	if v2 {
@@ -260,15 +261,17 @@ func (o *OpenCode) Run(ctx context.Context, req Request) (Result, error) {
 	} else if db != "" {
 		extraEnv = append(extraEnv, "OPENCODE_DB="+db)
 	}
-	extraEnv = append(extraEnv, "OPENCODE_PERMISSION="+externalDirectoryPermission(req.ReadDirs))
+	// 1.x reads these rules from OPENCODE_PERMISSION; 2.x ignores it and reads
+	// the same rules from OPENCODE_CONFIG_CONTENT below (docs/research.md §7p).
+	// Passing both keeps a 1.x run confined and is harmless to a 2.x one.
+	directoryRules := directoryPermissionRules(req.ReadDirs)
+	extraEnv = append(extraEnv, "OPENCODE_PERMISSION="+externalDirectoryPermission(directoryRules))
 
-	dropEnv := []string{"AIDEV_"}
-	if v2 {
-		// OPENCODE_CONFIG_CONTENT is what this run builds below; an inherited
-		// one could name servers the listing would not see or lose the provider
-		// keys, so it must not reach either process.
-		dropEnv = append(dropEnv, "OPENCODE_CONFIG_CONTENT")
-	}
+	// OPENCODE_CONFIG_CONTENT is what this run builds below; an inherited one
+	// could name servers, providers or directory rules this run does not
+	// control. Drop it for both versions: a 1.x run builds no replacement, so
+	// it stays unset there as it was before.
+	dropEnv := []string{"AIDEV_", "OPENCODE_CONFIG_CONTENT"}
 
 	// OpenCode 2 starts every MCP server its configuration names, including
 	// the person's global servers and every opencode.json found walking up
@@ -297,7 +300,15 @@ func (o *OpenCode) Run(ctx context.Context, req Request) (Result, error) {
 		result.DisabledMCP = disabled
 	}
 
-	if content := openCodeConfigContent(o.ProviderKeyEnv, result.DisabledMCP); content != "" {
+	// Only 2.x understands the configuration form of the directory rules; a
+	// 1.x run still gets them through OPENCODE_PERMISSION (docs/research.md §7p).
+	// A provider-key-only configuration keeps the shape it had before; every
+	// other 2.x configuration carries the rules.
+	var configRules map[string]string
+	if v2 && (len(o.ProviderKeyEnv) == 0 || len(req.ReadDirs) > 0 || len(result.DisabledMCP) > 0) {
+		configRules = directoryRules
+	}
+	if content := openCodeConfigContent(o.ProviderKeyEnv, result.DisabledMCP, configRules); content != "" {
 		extraEnv = append(extraEnv, "OPENCODE_CONFIG_CONTENT="+content)
 	}
 
@@ -794,17 +805,21 @@ func (o *OpenCode) listMCPServers(ctx context.Context, dir string, dropEnv, env 
 	return names, nil
 }
 
-// openCodeConfigContent is the OPENCODE_CONFIG_CONTENT for a run: the provider
-// keys and a complete disabled entry for every MCP server the configuration
-// would otherwise start. Both travel in the one variable OpenCode reads, so
-// they must be merged. A partial MCP entry is ignored and the server still
-// starts; the whole entry is replaced (docs/research.md §7o). "" means leave
-// the variable unset.
-func openCodeConfigContent(keys map[string]string, disabledMCP []string) string {
-	if len(keys) == 0 && len(disabledMCP) == 0 {
+// openCodeConfigContent is the OPENCODE_CONFIG_CONTENT for a run: the directory
+// rules, the provider keys and a complete disabled entry for every MCP server
+// the configuration would otherwise start. All travel in the one variable
+// OpenCode reads, so they must be merged. A partial MCP entry is ignored and
+// the server still starts; the whole entry is replaced (docs/research.md §7o).
+// nil rules leave the permission setting out, which is what a 1.x run gets.
+// "" means leave the variable unset.
+func openCodeConfigContent(keys map[string]string, disabledMCP []string, rules map[string]string) string {
+	if len(keys) == 0 && len(disabledMCP) == 0 && len(rules) == 0 {
 		return ""
 	}
-	content := make(map[string]any, 2)
+	content := make(map[string]any, 3)
+	if len(rules) > 0 {
+		content["permission"] = map[string]any{"external_directory": rules}
+	}
 	if len(keys) > 0 {
 		providers := make(map[string]any, len(keys))
 		for provider, variable := range keys {
@@ -829,20 +844,18 @@ func openCodeConfigContent(keys map[string]string, disabledMCP []string) string 
 	return string(encoded)
 }
 
-// externalDirectoryPermission is the OPENCODE_PERMISSION aidev runs OpenCode
-// with: every directory outside the working directory denied, except the ones
-// the project lets the agent read.
+// directoryPermissionRules is what both forms of the directory rules carry:
+// every directory outside the working directory denied, except the ones the
+// project lets the agent read.
 //
 // The default is "ask", and a headless run cannot answer a question: it
 // rejects the call, and the rejection ends the session (TASK-000091 lost its
 // run to one read of /opt/kingsoft). A rule that denies comes back to the
 // agent as a failed tool call instead, and the session goes on — measured on
-// OpenCode 1.18.35 (docs/research.md §7m). OPENCODE_PERMISSION is merged into
-// the user's configuration, later rules winning, so this only changes the
-// rules it names. OpenCode's own /tmp/opencode/* keeps the allow it has by
-// default; each read dir is allowed as itself and everything under it ("**";
-// a single "*" matches one level only).
-func externalDirectoryPermission(readDirs []string) string {
+// OpenCode 1.18.35 (docs/research.md §7m). OpenCode's own /tmp/opencode/*
+// keeps the allow it has by default; each read dir is allowed as itself and
+// everything under it ("**"; a single "*" matches one level only).
+func directoryPermissionRules(readDirs []string) map[string]string {
 	rules := map[string]string{"*": "deny", "/tmp/opencode/*": "allow"}
 	for _, dir := range readDirs {
 		dir = strings.TrimRight(filepath.Clean(dir), "/")
@@ -852,6 +865,15 @@ func externalDirectoryPermission(readDirs []string) string {
 		rules[dir] = "allow"
 		rules[dir+"/**"] = "allow"
 	}
+	return rules
+}
+
+// externalDirectoryPermission encodes the rules for OPENCODE_PERMISSION, which
+// OpenCode 1.x reads and merges into the user's configuration, later rules
+// winning, so this only changes the rules it names. OpenCode 2.x ignores the
+// variable and takes the same rules through OPENCODE_CONFIG_CONTENT instead
+// (docs/research.md §7p).
+func externalDirectoryPermission(rules map[string]string) string {
 	// Map order would not matter to OpenCode's last-match rule for these
 	// patterns, except "*": it must come before the allows. JSON objects are
 	// written in key order by encoding/json, and "*" sorts before "/".
