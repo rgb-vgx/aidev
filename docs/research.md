@@ -657,6 +657,34 @@ survives schema changes. aidev therefore passes `agent.opencode.provider_key_env
 `OPENCODE_CONFIG_CONTENT` with `{env:NAME}` references, so the key itself never passes through aidev.
 The first run against a fresh database also spends a minute or more fetching the catalogue.
 
+## 7o. A task's agent starts every MCP server the person configured **[OBSERVED]**
+
+Measured 2026-11-01, OpenCode 2.2.5, `opencode run --standalone` in a fresh repository under
+`~/.local/share/aidev/worktrees/` with a per-task `OPENCODE_DB` and aidev's `OPENCODE_PERMISSION`,
+prompted to list its Code Mode tool groups (`.probe/mcp-off/probe.sh`).
+
+`opencode debug config` names the sources: `~/.config/opencode/opencode.jsonc` (gitnexus,
+chatgpt-lookup, aidev — the last with `AIDEV_CONFIG` in its `environment`) and `~/opencode.json`
+(web-research), which OpenCode finds by walking up from the working directory. Every source's
+servers appear under `info.mcp.servers.<name>`, whatever shape the file was written in.
+
+| run | tool groups the agent saw |
+|---|---|
+| as aidev runs it | aidev 8, chatgpt-lookup 1, gitnexus 17, opencode 8, web-research 6 |
+| `OPENCODE_CONFIG_CONTENT` `mcp.<name>.enabled=false` | all five (ignored) |
+| `OPENCODE_CONFIG_CONTENT` `mcp.servers.<name>.enabled=false` | all five (ignored) |
+| `OPENCODE_CONFIG_CONTENT` `mcp.servers.<name>.disabled=true` | all five (ignored) |
+| `OPENCODE_DISABLE_PROJECT_CONFIG=1` | web-research gone, the global four stay |
+| `OPENCODE_CONFIG_DIR=<empty dir>` | global servers gone, web-research stays; the person's providers are lost too |
+| `OPENCODE_CONFIG_CONTENT` `mcp.servers.<name>={"type":"local","command":["true"],"disabled":true}` | opencode 8 only |
+
+A partial entry is dropped without a word; a complete one replaces the server. The agent of
+TASK-000143 had aidev's own MCP server (approve, run and cancel included, pointed at the live
+database by its own `AIDEV_CONFIG`, which `DropEnv` cannot remove) and web-research, whose start
+created `data/research.db` in the worktree; the snapshot committed it. aidev therefore lists the
+servers with `opencode debug config` in the worktree before each 2.x run and replaces each with a
+complete disabled entry; a listing it cannot read stops the run.
+
 ## 7b. Phase 2 probes: git and OpenCode mechanics
 
 Measured later than the rest, when the execution core was designed. Same rules:

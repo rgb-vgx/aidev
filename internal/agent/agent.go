@@ -128,6 +128,11 @@ type Result struct {
 
 	Cost *float64
 
+	// DisabledMCP names the MCP servers the agent's own configuration starts
+	// and aidev switched off for this run, sorted; empty when there were none
+	// or the backend has no MCP servers.
+	DisabledMCP []string
+
 	// ToolCalls counts the tool invocations observed, which is a cheap signal
 	// for "did the agent actually try to do anything".
 	ToolCalls int

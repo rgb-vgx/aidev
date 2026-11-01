@@ -42,7 +42,11 @@ func fakeOpenCode(t *testing.T, script string) (command string, argsFile string)
 	command = filepath.Join(dir, "opencode")
 	argsFile = filepath.Join(dir, "args.txt")
 
+	// `debug config` lists OpenCode's configuration sources, which a 2.x run
+	// asks for first (its MCP servers are switched off, mcp_isolation_test.go).
+	// A fake that does not script it has no configuration: an empty list.
 	body := "#!/bin/sh\n" +
+		"if [ \"$1\" = debug ] && [ \"$2\" = config ]; then echo '[]'; exit 0; fi\n" +
 		"printf '%s\\n' \"$@\" > " + shellQuote(argsFile) + "\n" +
 		script + "\n"
 	if err := os.WriteFile(command, []byte(body), 0o755); err != nil {
