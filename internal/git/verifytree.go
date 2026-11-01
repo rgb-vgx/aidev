@@ -346,7 +346,11 @@ func (w *Worktree) AddedFiles(ctx context.Context, base, tree string) ([]AddedFi
 		return nil, nil
 	}
 
-	sizes, err := w.treeSizes(ctx, tree)
+	paths := make([]string, len(added))
+	for i := range added {
+		paths[i] = added[i].Path
+	}
+	sizes, err := w.treeSizes(ctx, tree, paths)
 	if err != nil {
 		return nil, err
 	}
@@ -356,39 +360,56 @@ func (w *Worktree) AddedFiles(ctx context.Context, base, tree string) ([]AddedFi
 	return added, nil
 }
 
-// treeSizes maps each blob in tree to the size git records for it. ls-tree's
-// long format reports "-" for a gitlink, which has no byte count; such a path
-// is left out and reads as 0 rather than being guessed at.
-func (w *Worktree) treeSizes(ctx context.Context, tree string) (map[string]int64, error) {
-	res, err := w.m.run(ctx, w.Path, nil, "ls-tree", "-l", "-r", "-z", tree)
-	if err != nil {
-		return nil, err
-	}
-	if !res.Succeeded() {
-		return nil, fmt.Errorf("ls-tree -l %s in %s: %s", tree, w.Path, firstLine(res.Stderr))
-	}
-	if res.StdoutTruncated {
-		return nil, fmt.Errorf("ls-tree -l %s in %s: git produced more output than aidev captures, "+
-			"so the file sizes cannot be trusted", tree, w.Path)
-	}
-	sizes := make(map[string]int64)
-	for _, record := range strings.Split(res.Stdout, "\x00") {
-		if record == "" {
-			continue
+// treeSizes maps each of paths in tree to the size git records for it. Only
+// the paths the attempt added are asked about, so the answer does not depend
+// on how large the rest of the repository is; a long added list is queried in
+// batches to keep the argument vector bounded. ls-tree's long format reports
+// "-" for a gitlink, which has no byte count; such a path is left out and
+// reads as 0 rather than being guessed at.
+func (w *Worktree) treeSizes(ctx context.Context, tree string, paths []string) (map[string]int64, error) {
+	const batchSize = 200
+	sizes := make(map[string]int64, len(paths))
+	for start := 0; start < len(paths); start += batchSize {
+		end := start + batchSize
+		if end > len(paths) {
+			end = len(paths)
 		}
-		meta, path, ok := strings.Cut(record, "\t")
-		if !ok {
-			continue
-		}
-		fields := strings.Fields(meta)
-		if len(fields) != 4 {
-			continue
-		}
-		size, err := strconv.ParseInt(fields[3], 10, 64)
+		// --literal-pathspecs takes a name git would otherwise read as
+		// pathspec magic, such as ":(top)odd*name?.txt", literally. Without
+		// -r, ls-tree still descends to a nested path given in full.
+		args := []string{"--literal-pathspecs", "ls-tree", "-l", "-z", tree, "--"}
+		args = append(args, paths[start:end]...)
+		res, err := w.m.run(ctx, w.Path, nil, args...)
 		if err != nil {
-			continue
+			return nil, err
 		}
-		sizes[path] = size
+		if !res.Succeeded() {
+			return nil, fmt.Errorf("ls-tree -l %s in %s: %s", tree, w.Path, firstLine(res.Stderr))
+		}
+		// A batch is bounded, but a truncated answer is still incomplete and
+		// would silently under-report the sizes.
+		if res.StdoutTruncated {
+			return nil, fmt.Errorf("ls-tree -l %s in %s: git produced more output than aidev captures, "+
+				"so the file sizes cannot be trusted", tree, w.Path)
+		}
+		for _, record := range strings.Split(res.Stdout, "\x00") {
+			if record == "" {
+				continue
+			}
+			meta, path, ok := strings.Cut(record, "\t")
+			if !ok {
+				continue
+			}
+			fields := strings.Fields(meta)
+			if len(fields) != 4 {
+				continue
+			}
+			size, err := strconv.ParseInt(fields[3], 10, 64)
+			if err != nil {
+				continue
+			}
+			sizes[path] = size
+		}
 	}
 	return sizes, nil
 }
