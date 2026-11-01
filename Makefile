@@ -25,7 +25,12 @@ DB_CONTAINER ?= $(or $(AIDEV_DB_CONTAINER),aidev-postgres)
 COMPOSE_PROJECT ?= aidev
 COMPOSE         := docker compose -p $(COMPOSE_PROJECT)
 DB_URL  ?= postgres://aidev:aidev@127.0.0.1:$(DB_PORT)/aidev?sslmode=disable
-TEST_DB_URL ?= postgres://aidev:aidev@127.0.0.1:$(DB_PORT)/aidev_test?sslmode=disable
+# A task run by aidev gets AIDEV_TASK_REF, and its integration suite then uses a
+# database of its own: tasks of this repository run side by side, and one
+# task's unmerged migration left the shared aidev_test broken for every later
+# run (TASK-000166). CI and a person at a terminal keep aidev_test.
+TEST_DB_NAME ?= $(if $(AIDEV_TASK_REF),aidev_test_$(subst -,_,$(shell printf %s '$(AIDEV_TASK_REF)' | tr 'A-Z' 'a-z')),aidev_test)
+TEST_DB_URL ?= postgres://aidev:aidev@127.0.0.1:$(DB_PORT)/$(TEST_DB_NAME)?sslmode=disable
 
 # Every aidev setting lives in the conf.json file this names. Copy
 # conf/conf.example.json to conf/conf.json and edit it to match the database.
@@ -53,6 +58,7 @@ test: ## run unit tests (integration tests skip without a database)
 	$(GO) test ./...
 
 test-integration: ## run every test, including those needing PostgreSQL, with the race detector
+	$(if $(and $(AIDEV_TASK_REF),$(filter file,$(origin TEST_DB_URL))),$(MAKE) --no-print-directory test-db-create)
 	AIDEV_REQUIRE_DB=1 TEST_DATABASE_URL="$(TEST_DB_URL)" $(GO) test -race ./... -count=1
 
 # Only the repository's own files. `gofmt -l .` walks ignored directories too,
@@ -216,8 +222,8 @@ test-e2e: ## run the end-to-end test against the real opencode (slow, needs post
 		$(GO) test ./tests/e2e/ -count=1 -v -timeout 20m
 
 test-db-create: ## create the database used by integration tests
-	$(COMPOSE) exec -T postgres psql -U aidev -d postgres -c "SELECT 1 FROM pg_database WHERE datname='aidev_test'" | grep -q 1 \
-		|| $(COMPOSE) exec -T postgres createdb -U aidev aidev_test
+	$(COMPOSE) exec -T postgres psql -U aidev -d postgres -c "SELECT 1 FROM pg_database WHERE datname='$(TEST_DB_NAME)'" | grep -q 1 \
+		|| $(COMPOSE) exec -T postgres createdb -U aidev $(TEST_DB_NAME)
 
 clean: ## remove build output
 	rm -rf bin
