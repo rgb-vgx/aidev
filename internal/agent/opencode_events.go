@@ -16,11 +16,19 @@ type openCodeEvent struct {
 	SessionID string          `json:"sessionID"`
 	Part      json.RawMessage `json:"part"`
 	Error     *struct {
+		// OpenCode 1.x names the error and puts the message and a diagnostic
+		// reference under "data".
 		Name string `json:"name"`
 		Data struct {
 			Message string `json:"message"`
 			Ref     string `json:"ref"`
 		} `json:"data"`
+
+		// OpenCode 2 drops the wrapper: the error itself carries its type and
+		// message (docs/research.md §2.4). Reading only the 1.x shape recorded
+		// TASK-000149's provider.no-route as the bare word "error".
+		Type    string `json:"type"`
+		Message string `json:"message"`
 	} `json:"error"`
 }
 
@@ -108,6 +116,12 @@ type transcript struct {
 	Cost          float64
 	Errors        []string
 	UnknownEvents map[string]int
+
+	// ProviderNoRoute records whether an error event said the model cannot be
+	// reached at all. That fails the same way on every attempt — it is not a
+	// model that stopped responding — so classify treats it as a startup
+	// failure, which is never retried (docs/research.md §7n, TASK-000149).
+	ProviderNoRoute bool
 
 	// Refusals counts tool calls a permission prompt turned down, and
 	// RefusedPath is where the first one was aimed.
@@ -268,16 +282,36 @@ func (s *eventScanner) consume(line []byte) {
 	case "error":
 		message := "the agent reported an error"
 		if ev.Error != nil {
-			name := ev.Error.Name
-			if name == "" {
-				name = "error"
+			// 1.x puts the name and data.message/ref; 2.x puts type and
+			// message directly. Use whichever shape this event carries, so a
+			// 2.x failure keeps the provider's own words instead of becoming
+			// the bare word "error" (TASK-000149).
+			oneX := ev.Error.Name != "" || ev.Error.Data.Message != "" || ev.Error.Data.Ref != ""
+			twoX := ev.Error.Type != "" || ev.Error.Message != ""
+			if oneX || !twoX {
+				name := ev.Error.Name
+				if name == "" {
+					name = "error"
+				}
+				message = name
+				if ev.Error.Data.Message != "" {
+					message += ": " + ev.Error.Data.Message
+				}
+				if ev.Error.Data.Ref != "" {
+					message += fmt.Sprintf(" (ref %s)", ev.Error.Data.Ref)
+				}
+			} else {
+				name := ev.Error.Type
+				if name == "" {
+					name = "error"
+				}
+				message = name
+				if ev.Error.Message != "" {
+					message += ": " + ev.Error.Message
+				}
 			}
-			message = name
-			if ev.Error.Data.Message != "" {
-				message += ": " + ev.Error.Data.Message
-			}
-			if ev.Error.Data.Ref != "" {
-				message += fmt.Sprintf(" (ref %s)", ev.Error.Data.Ref)
+			if ev.Error.Type == "provider.no-route" {
+				s.result.ProviderNoRoute = true
 			}
 		}
 		s.result.Errors = append(s.result.Errors, message)

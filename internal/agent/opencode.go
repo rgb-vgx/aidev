@@ -384,7 +384,15 @@ func classify(proc procexec.Result, events transcript, req Request) (task.Worker
 	}
 
 	if len(events.Errors) > 0 {
-		return task.WorkerFailed, task.FailureAgentError,
+		// A model the run cannot reach fails identically on every attempt
+		// (docs/research.md §7n): retrying only repeats the same failure, so it
+		// is a startup failure, which the worker never retries (TASK-000149).
+		// Every other reported error may be transient and stays an agent error.
+		kind := task.FailureAgentError
+		if events.ProviderNoRoute {
+			kind = task.FailureStartup
+		}
+		return task.WorkerFailed, kind,
 			fmt.Errorf("opencode reported: %s", strings.Join(events.Errors, "; "))
 	}
 
