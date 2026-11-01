@@ -29,6 +29,10 @@ const (
 	// agentListTimeout bounds the agent-name lookup. It is short because the
 	// call is local and a hung lookup should not delay a task.
 	agentListTimeout = 30 * time.Second
+
+	// gitAdminTimeout bounds finding the worktree's git admin directory before
+	// a sandboxed run. It is local plumbing, so a slow answer is a failed probe.
+	gitAdminTimeout = 10 * time.Second
 )
 
 // agentListTTL is how long a successful agent-name lookup is reused. Task
@@ -219,6 +223,109 @@ func (o *OpenCode) taskDB(ref string) (string, error) {
 	return path, nil
 }
 
+// sandboxDirs are the places a sandboxed run may write besides its worktree,
+// and the git common directory it may only read. Each writable one is created
+// because bubblewrap refuses a bind whose source does not exist.
+func (o *OpenCode) sandboxDirs(ctx context.Context, worktree string) (writable, readOnly []string, err error) {
+	writable = []string{worktree}
+	admin, common := gitDirs(ctx, worktree)
+	if admin != "" {
+		writable = append(writable, admin)
+	}
+	// A worktree under /tmp has its object store hidden by the tmpfs above;
+	// without it git cannot even resolve the admin directory, and a commit
+	// must still fail because the store stays read-only (docs/research.md §7q).
+	if common != "" {
+		readOnly = append(readOnly, common)
+	}
+	if o.DBDir != "" {
+		if err := os.MkdirAll(o.DBDir, 0o700); err != nil {
+			return nil, nil, fmt.Errorf("create the opencode database directory %s for the sandbox: %w", o.DBDir, err)
+		}
+		writable = append(writable, o.DBDir)
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, nil, fmt.Errorf("find the home directory for OpenCode's state: %w", err)
+	}
+	xdg := func(variable, fallback string) string {
+		if dir := strings.TrimSpace(os.Getenv(variable)); dir != "" {
+			return dir
+		}
+		return filepath.Join(home, fallback)
+	}
+	for _, dir := range []string{
+		filepath.Join(xdg("XDG_DATA_HOME", filepath.Join(".local", "share")), "opencode"),
+		filepath.Join(xdg("XDG_CACHE_HOME", ".cache"), "opencode"),
+		filepath.Join(xdg("XDG_STATE_HOME", filepath.Join(".local", "state")), "opencode"),
+	} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return nil, nil, fmt.Errorf("create OpenCode's state directory %s for the sandbox: %w", dir, err)
+		}
+		writable = append(writable, dir)
+	}
+	for _, dir := range o.SandboxWritable {
+		dir = filepath.Clean(strings.TrimSpace(dir))
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return nil, nil, fmt.Errorf("create the writable directory %s for the sandbox: %w", dir, err)
+		}
+		writable = append(writable, dir)
+	}
+	return writable, readOnly, nil
+}
+
+// gitDirs is the worktree's admin directory, which lives outside the worktree
+// and must be writable for git commands there, and the common directory that
+// holds the object store (docs/research.md §7q). A worktree without them is not
+// a git worktree, and the probe is then skipped.
+func gitDirs(ctx context.Context, worktree string) (admin, common string) {
+	proc, err := procexec.Run(ctx, procexec.Spec{
+		Command:        "git",
+		Args:           []string{"-C", worktree, "rev-parse", "--absolute-git-dir", "--git-common-dir"},
+		Dir:            worktree,
+		Timeout:        gitAdminTimeout,
+		MaxOutputBytes: 1 << 20,
+	})
+	if err != nil || !proc.Succeeded() {
+		return "", ""
+	}
+	lines := strings.Split(strings.TrimSpace(proc.Stdout), "\n")
+	if len(lines) < 2 {
+		return strings.TrimSpace(lines[0]), ""
+	}
+	return strings.TrimSpace(lines[0]), strings.TrimSpace(lines[1])
+}
+
+// sandboxArgs is bubblewrap's command line: the filesystem read-only except
+// the worktree and the other writable directories (docs/research.md §7q). The
+// tmpfs comes before the binds so a directory under /tmp stays visible, and
+// the executable's own directory and the git common directory are bound first
+// read-only when /tmp hides them; a later writable bind still wins for a
+// directory that is both.
+func sandboxArgs(writable, readOnly []string, worktree, command string, args []string) []string {
+	out := []string{
+		"--die-with-parent",
+		"--ro-bind", "/", "/",
+		"--dev", "/dev",
+		"--proc", "/proc",
+		"--tmpfs", "/tmp",
+	}
+	if filepath.IsAbs(command) {
+		if dir := filepath.Dir(command); dir == "/tmp" || strings.HasPrefix(dir, "/tmp/") {
+			readOnly = append(readOnly, dir)
+		}
+	}
+	for _, dir := range readOnly {
+		out = append(out, "--ro-bind", dir, dir)
+	}
+	for _, dir := range writable {
+		out = append(out, "--bind", dir, dir)
+	}
+	out = append(out, "--dir", "/tmp/opencode", "--chdir", worktree, command)
+	return append(out, args...)
+}
+
 // agentFallback matches the warning OpenCode prints when it does not recognise
 // the requested agent. It then runs its default agent and exits 0
 // (docs/research.md §2.5), so this text is the only evidence that the task did
@@ -323,9 +430,24 @@ func (o *OpenCode) Run(ctx context.Context, req Request) (Result, error) {
 		extraEnv = append(extraEnv, "OPENCODE_CONFIG_CONTENT="+content)
 	}
 
+	runCommand := o.command()
+	runArgs := args
+	if sandbox := strings.TrimSpace(o.Sandbox); sandbox != "" {
+		writable, readOnly, err := o.sandboxDirs(ctx, req.WorkingDir)
+		if err != nil {
+			result.Status = task.WorkerFailed
+			result.FailureKind = task.FailureStartup
+			result.Err = err
+			result.FinishedAt = time.Now().UTC()
+			return result, err
+		}
+		runCommand = sandbox
+		runArgs = sandboxArgs(writable, readOnly, req.WorkingDir, o.command(), args)
+	}
+
 	spec := procexec.Spec{
-		Command:        o.command(),
-		Args:           args,
+		Command:        runCommand,
+		Args:           runArgs,
 		Dir:            req.WorkingDir,
 		Timeout:        req.Timeout,
 		MaxOutputBytes: req.MaxOutputBytes,
@@ -376,7 +498,7 @@ func (o *OpenCode) Run(ctx context.Context, req Request) (Result, error) {
 	if proc.Outcome == procexec.OutcomeStartFailed {
 		result.Status = task.WorkerFailed
 		result.FailureKind = task.FailureStartup
-		result.Err = startupError(o.command(), proc, runErr)
+		result.Err = startupError(runCommand, proc, runErr)
 		return result, result.Err
 	}
 	if runErr != nil {

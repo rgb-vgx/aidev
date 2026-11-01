@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -96,6 +97,17 @@ func connectApp(ctx context.Context, cfg config.Config, logger *slog.Logger) (*a
 	// That database lacks the keys of providers connected with `opencode
 	// auth`; configured ones are passed by environment reference (§7n).
 	opencode.ProviderKeyEnv = cfg.OpenCodeProviderKeyEnv
+	if cfg.OpenCodeSandbox == "bwrap" {
+		// A PATH hit is what the configuration asks for. Without one, keep the
+		// name so the run fails at start with a clear error instead of running
+		// unconfined (docs/research.md §7q).
+		bwrap, err := exec.LookPath("bwrap")
+		if err != nil {
+			bwrap = "bwrap"
+		}
+		opencode.Sandbox = bwrap
+		opencode.SandboxWritable = cfg.OpenCodeSandboxWritable
+	}
 	var backend agent.Backend = opencode
 	if cfg.AgentBackend == config.BackendCodex {
 		backend = agent.NewCodex(agent.CodexOptions{

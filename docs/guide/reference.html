@@ -222,6 +222,8 @@ aidev task events TASK-000001 --after 5 --limit 50
 <tr><td><code>agent.opencode.command</code></td><td><code>opencode</code></td><td>The OpenCode executable aidev invokes.</td></tr>
 <tr><td><code>agent.opencode.model</code></td><td><code>opencode/muse-spark-1.3-contributor-free</code></td><td>Model passed as <code>-m</code>. Needs no credentials. Set to an empty string to let OpenCode choose.</td></tr>
 <tr><td><code>agent.opencode.agent</code></td><td><code>build</code></td><td>Default OpenCode agent for tasks that do not name one.</td></tr>
+<tr><td><code>agent.opencode.sandbox</code></td><td>none</td><td><code>bwrap</code> runs the task under bubblewrap, read-only except the worktree, its git admin directory, the task database and OpenCode's state. OpenCode's permission rules do not confine a shell command the agent runs (docs/research.md §7p, §7q). Any other value is rejected.</td></tr>
+<tr><td><code>agent.opencode.sandbox_writable</code></td><td>none</td><td>Absolute directories a sandboxed task may write besides its worktree, for example build and package caches such as <code>/home/you/.cache/go-build</code> or <code>/home/you/go/pkg/mod</code>.</td></tr>
 <tr><td><code>agent.codex.command</code></td><td><code>codex</code></td><td>The Codex executable aidev invokes.</td></tr>
 <tr><td><code>agent.codex.profile</code></td><td>none</td><td>Passed as <code>--profile</code> when set.</td></tr>
 <tr><td><code>agent.codex.model</code></td><td>none</td><td>Passed as <code>-m</code> when set; empty lets Codex choose.</td></tr>
