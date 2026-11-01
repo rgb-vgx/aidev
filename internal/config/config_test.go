@@ -461,6 +461,7 @@ var wantKeys = []string{
 	"agent.backend",
 	"agent.codex.command", "agent.codex.model", "agent.codex.profile", "agent.codex.sandbox",
 	"agent.opencode.agent", "agent.opencode.command", "agent.opencode.model", "agent.opencode.provider_key_env",
+	"agent.opencode.sandbox", "agent.opencode.sandbox_writable",
 	"agent.routing",
 	"database.url",
 	"log_level",
@@ -729,5 +730,38 @@ func TestOpenCodeProviderKeyEnvIsOptional(t *testing.T) {
 	if len(cfg.OpenCodeProviderKeyEnv) != 0 || cfg.OpenCodeModel != "x/y" {
 		t.Errorf("provider_key_env = %v, model = %q: want none, and the rest of agent.opencode read as before",
 			cfg.OpenCodeProviderKeyEnv, cfg.OpenCodeModel)
+	}
+}
+
+// A shell command the agent runs is not confined by OpenCode's permission rules
+// (docs/research.md §7p); bubblewrap confines it (§7q). The sandbox is opt-in.
+func TestOpenCodeSandboxIsReadAndOffByDefault(t *testing.T) {
+	off := mustLoad(t, `{"database": {"url": "`+testDSN+`"}}`)
+	if off.OpenCodeSandbox != "" || len(off.OpenCodeSandboxWritable) != 0 {
+		t.Errorf("sandbox = %q %v, want off by default", off.OpenCodeSandbox, off.OpenCodeSandboxWritable)
+	}
+	on := mustLoad(t, `{"database": {"url": "`+testDSN+`"},
+		"agent": {"opencode": {"sandbox": " bwrap ", "sandbox_writable": [" /home/u/.cache/go-build ", "/home/u/go/pkg/mod/"]}}}`)
+	if on.OpenCodeSandbox != "bwrap" {
+		t.Errorf("sandbox = %q, want bwrap", on.OpenCodeSandbox)
+	}
+	want := []string{"/home/u/.cache/go-build", "/home/u/go/pkg/mod"}
+	if strings.Join(on.OpenCodeSandboxWritable, ",") != strings.Join(want, ",") {
+		t.Errorf("sandbox_writable = %v, want %v (trimmed and cleaned)", on.OpenCodeSandboxWritable, want)
+	}
+}
+
+func TestOpenCodeSandboxRejectsWhatItCannotRun(t *testing.T) {
+	for name, body := range map[string]string{
+		"unknown sandbox":        `{"agent": {"opencode": {"sandbox": "docker"}}}`,
+		"relative writable dir":  `{"agent": {"opencode": {"sandbox": "bwrap", "sandbox_writable": ["cache"]}}}`,
+		"writable is not a list": `{"agent": {"opencode": {"sandbox": "bwrap", "sandbox_writable": "/tmp/x"}}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			body = `{"database": {"url": "` + testDSN + `"},` + strings.TrimPrefix(body, "{")
+			if _, err := load(t, body); err == nil {
+				t.Errorf("load accepted %s", body)
+			}
+		})
 	}
 }

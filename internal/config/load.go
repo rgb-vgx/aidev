@@ -43,6 +43,8 @@ var configSchema = map[string]any{
 			// Provider ids are OpenCode's and not enumerated here; values are
 			// checked on load to be variable names.
 			"provider_key_env": kindStringMap,
+			"sandbox":          kindString,
+			"sandbox_writable": kindStringList,
 		},
 		"codex": map[string]any{
 			"command": kindString,
@@ -74,11 +76,12 @@ var configSchema = map[string]any{
 type valueKind string
 
 const (
-	kindString    valueKind = "a string"
-	kindInteger   valueKind = "a whole number"
-	kindNumber    valueKind = "a number"
-	kindBoolean   valueKind = "a boolean"
-	kindStringMap valueKind = "an object of strings"
+	kindString     valueKind = "a string"
+	kindInteger    valueKind = "a whole number"
+	kindNumber     valueKind = "a number"
+	kindBoolean    valueKind = "a boolean"
+	kindStringMap  valueKind = "an object of strings"
+	kindStringList valueKind = "a list of strings"
 )
 
 // SettingKeys returns the dotted paths of every setting, sorted. It is derived
@@ -146,9 +149,11 @@ type fileConfig struct {
 	Agent *struct {
 		Backend  *string `json:"backend"`
 		OpenCode *struct {
-			Command *string `json:"command"`
-			Model   *string `json:"model"`
-			Agent   *string `json:"agent"`
+			Command         *string  `json:"command"`
+			Model           *string  `json:"model"`
+			Agent           *string  `json:"agent"`
+			Sandbox         *string  `json:"sandbox"`
+			SandboxWritable []string `json:"sandbox_writable"`
 			// ProviderKeyEnv: see Config.OpenCodeProviderKeyEnv.
 			ProviderKeyEnv map[string]string `json:"provider_key_env"`
 		} `json:"opencode"`
@@ -372,6 +377,27 @@ func LoadFile(path string) (Config, error) {
 			}
 			if file.Agent.OpenCode.Agent != nil && strings.TrimSpace(*file.Agent.OpenCode.Agent) != "" {
 				cfg.OpenCodeAgent = strings.TrimSpace(*file.Agent.OpenCode.Agent)
+			}
+			if file.Agent.OpenCode.Sandbox != nil {
+				sandbox := strings.TrimSpace(*file.Agent.OpenCode.Sandbox)
+				switch sandbox {
+				case "", "bwrap":
+					cfg.OpenCodeSandbox = sandbox
+				default:
+					fail("agent.opencode.sandbox %q is not bwrap (or empty for none)", sandbox)
+				}
+			}
+			if file.Agent.OpenCode.SandboxWritable != nil {
+				writable := make([]string, 0, len(file.Agent.OpenCode.SandboxWritable))
+				for _, raw := range file.Agent.OpenCode.SandboxWritable {
+					dir := filepath.Clean(strings.TrimSpace(raw))
+					if !filepath.IsAbs(dir) {
+						fail("agent.opencode.sandbox_writable %q must be an absolute directory", raw)
+						continue
+					}
+					writable = append(writable, dir)
+				}
+				cfg.OpenCodeSandboxWritable = writable
 			}
 			if file.Agent.OpenCode.ProviderKeyEnv != nil {
 				keys := make(map[string]string, len(file.Agent.OpenCode.ProviderKeyEnv))
@@ -612,6 +638,17 @@ func matchKind(kind valueKind, v any) (any, bool) {
 			return nil, false
 		}
 		for _, value := range m {
+			if _, isString := value.(string); !isString {
+				return nil, false
+			}
+		}
+		return v, true
+	case kindStringList:
+		list, ok := v.([]any)
+		if !ok {
+			return nil, false
+		}
+		for _, value := range list {
 			if _, isString := value.(string); !isString {
 				return nil, false
 			}

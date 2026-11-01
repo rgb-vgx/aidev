@@ -222,6 +222,8 @@ aidev task events TASK-000001 --after 5 --limit 50
 <tr><td><code>agent.opencode.command</code></td><td><code>opencode</code></td><td>Chương trình OpenCode mà aidev gọi.</td></tr>
 <tr><td><code>agent.opencode.model</code></td><td><code>opencode/muse-spark-1.3-contributor-free</code></td><td>Model truyền qua <code>-m</code>. Không cần tài khoản. Đặt chuỗi rỗng để OpenCode tự chọn.</td></tr>
 <tr><td><code>agent.opencode.agent</code></td><td><code>build</code></td><td>Agent OpenCode mặc định cho task không nêu tên.</td></tr>
+<tr><td><code>agent.opencode.sandbox</code></td><td>không có</td><td><code>bwrap</code> chạy task dưới bubblewrap, chỉ đọc trừ worktree, thư mục git admin của nó, database của task và state của OpenCode. Quy tắc permission của OpenCode không giới hạn lệnh shell mà agent chạy (docs/research.md §7p, §7q). Giá trị khác bị từ chối.</td></tr>
+<tr><td><code>agent.opencode.sandbox_writable</code></td><td>không có</td><td>Các thư mục tuyệt đối mà task có sandbox được ghi thêm ngoài worktree, ví dụ cache build và package như <code>/home/you/.cache/go-build</code> hay <code>/home/you/go/pkg/mod</code>.</td></tr>
 <tr><td><code>agent.codex.command</code></td><td><code>codex</code></td><td>Chương trình Codex mà aidev gọi.</td></tr>
 <tr><td><code>agent.codex.profile</code></td><td>không có</td><td>Truyền qua <code>--profile</code> khi đặt.</td></tr>
 <tr><td><code>agent.codex.model</code></td><td>không có</td><td>Truyền qua <code>-m</code> khi đặt; rỗng thì Codex tự chọn.</td></tr>

@@ -118,6 +118,17 @@ type Config struct {
 	// OPENCODE_DB does not have (docs/research.md §7n). Only names live here.
 	OpenCodeProviderKeyEnv map[string]string
 
+	// OpenCodeSandbox names the OS sandbox an OpenCode run is started in:
+	// "bwrap" (bubblewrap), or "" for none. OpenCode's permission rules
+	// confine only its own file tools; a shell command the agent runs writes
+	// wherever the user can (docs/research.md §7p, §7q).
+	OpenCodeSandbox string
+
+	// OpenCodeSandboxWritable are absolute directories a sandboxed run may
+	// write besides its worktree and OpenCode's own state: build and package
+	// caches such as ~/.cache/go-build, ~/go/pkg/mod or ~/.npm.
+	OpenCodeSandboxWritable []string
+
 	// AgentBackend selects which agent implementation runs tasks.
 	AgentBackend Backend
 
