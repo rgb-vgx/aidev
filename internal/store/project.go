@@ -121,6 +121,29 @@ func (s *Store) InPlaceProjects(ctx context.Context) ([]string, error) {
 	return paths, nil
 }
 
+// ProjectPaths returns the repository path of every registered project, ordered
+// by path, so the doctor can name the directories that are gone.
+func (s *Store) ProjectPaths(ctx context.Context) ([]string, error) {
+	rows, err := s.db.Query(ctx, `SELECT repo_path FROM projects ORDER BY repo_path`)
+	if err != nil {
+		return nil, fmt.Errorf("list project paths: %w", classify(err))
+	}
+	defer rows.Close()
+
+	var paths []string
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return nil, fmt.Errorf("list project paths: %w", err)
+		}
+		paths = append(paths, path)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list project paths: %w", classify(err))
+	}
+	return paths, nil
+}
+
 // SetProjectSubmodules changes how a project's task worktrees treat git
 // submodules and returns the project as it now stands.
 //

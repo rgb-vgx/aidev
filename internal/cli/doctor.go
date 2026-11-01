@@ -81,8 +81,19 @@ func runDoctor(ctx context.Context, env *Env, args []string) error {
 			defer db.Close()
 			return db.InPlaceProjects(inPlaceCtx)
 		},
-		FreeSpace: freeSpace,
-		Docker:    dockerState,
+		ProjectPaths: func(pathsCtx context.Context, databaseURL string) ([]string, error) {
+			connectCtx, cancel := context.WithTimeout(pathsCtx, 10*time.Second)
+			defer cancel()
+			db, err := store.Open(connectCtx, databaseURL)
+			if err != nil {
+				return nil, err
+			}
+			defer db.Close()
+			return db.ProjectPaths(pathsCtx)
+		},
+		StaleServers: staleServers,
+		FreeSpace:    freeSpace,
+		Docker:       dockerState,
 		CheckWorkspace: func(dir string) error {
 			if err := os.MkdirAll(dir, 0o755); err != nil {
 				return err
