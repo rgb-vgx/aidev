@@ -166,6 +166,9 @@ func (c *Codex) Run(ctx context.Context, req Request) (Result, error) {
 	result.ExitCode = proc.ExitCode
 	result.Stdout, result.StdoutTruncated = proc.Stdout, proc.StdoutTruncated
 	result.Stderr, result.StderrTruncated = proc.Stderr, proc.StderrTruncated
+	// The prompt tells the agent to leave no process behind; this is the
+	// record that aidev had to stop one it left.
+	result.OrphansKilled = proc.OrphansKilled
 	result.SessionID = events.SessionID
 	result.ToolCalls = events.ToolCalls
 	result.StartedAt = proc.StartedAt

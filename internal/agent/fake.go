@@ -47,6 +47,9 @@ type Fake struct {
 	Tokens       json.RawMessage
 	Cost         *float64
 
+	// OrphansKilled is reported as Result.OrphansKilled.
+	OrphansKilled bool
+
 	// ExitCode is reported when set.
 	ExitCode *int
 
@@ -110,19 +113,20 @@ func (f *Fake) Run(ctx context.Context, req Request) (Result, error) {
 		model = strings.TrimSpace(f.Model)
 	}
 	result := Result{
-		Backend:      f.Name(),
-		Model:        model,
-		Command:      fmt.Sprintf("fake-agent --dir %s", req.WorkingDir),
-		WorkingDir:   req.WorkingDir,
-		Stdout:       f.Stdout,
-		Stderr:       f.Stderr,
-		SessionID:    f.SessionID,
-		Summary:      f.Summary,
-		FinishReason: f.FinishReason,
-		Tokens:       f.Tokens,
-		Cost:         f.Cost,
-		ExitCode:     f.ExitCode,
-		StartedAt:    started,
+		Backend:       f.Name(),
+		Model:         model,
+		Command:       fmt.Sprintf("fake-agent --dir %s", req.WorkingDir),
+		WorkingDir:    req.WorkingDir,
+		Stdout:        f.Stdout,
+		Stderr:        f.Stderr,
+		SessionID:     f.SessionID,
+		Summary:       f.Summary,
+		FinishReason:  f.FinishReason,
+		Tokens:        f.Tokens,
+		Cost:          f.Cost,
+		OrphansKilled: f.OrphansKilled,
+		ExitCode:      f.ExitCode,
+		StartedAt:     started,
 	}
 	finish := func() Result {
 		result.FinishedAt = time.Now().UTC()
