@@ -43,6 +43,7 @@ func newCancelRig(t *testing.T) *cancelRig {
 	stub := fmt.Sprintf(`#!/bin/sh
 if [ "$1" = agent ] && [ "$2" = list ]; then printf 'build (primary)\n'; exit 0; fi
 if [ "$1" = --version ]; then echo 9.9.9; exit 0; fi
+if [ "$1" = debug ] && [ "$2" = config ]; then echo '[]'; exit 0; fi
 echo $$ > %[1]q/agent.pid
 setsid sh -c 'echo $$ > %[1]q/escaped.pid; exec sleep 300' </dev/null >/dev/null 2>&1 &
 sleep 300

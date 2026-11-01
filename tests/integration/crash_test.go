@@ -76,6 +76,7 @@ func newCrashRig(t *testing.T, agentDelay time.Duration) *crashRig {
 	opencode := filepath.Join(dir, "opencode")
 	stub := fmt.Sprintf(`#!/bin/sh
 if [ "$1" = agent ] && [ "$2" = list ]; then printf 'build (primary)\n'; exit 0; fi
+if [ "$1" = --version ]; then echo 1.18.35; exit 0; fi
 echo $$ > %q
 wt=""
 while [ $# -gt 0 ]; do
