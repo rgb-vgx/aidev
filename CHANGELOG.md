@@ -127,8 +127,8 @@ creation refuses before the agent starts.
   whose new tasks verify in place and points at `aidev project verify-mode
   <path> clean`; it is ok when none do, skipped when the database does not
   answer, a redacted warning when the lookup fails, and never a failure.
-  Projects registered before v0.10.0 kept `in_place` silently (11 of 13 on this
-  machine). The `--verify-mode` help and both guides no longer call `in_place`
+  Projects registered before v0.10.0 kept `in_place` silently. The
+  `--verify-mode` help and both guides no longer call `in_place`
   the default. Run the command it names for each project that still warns.
 
 ## v0.10.0
