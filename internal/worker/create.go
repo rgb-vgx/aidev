@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"aidev/internal/agent"
 	"aidev/internal/event"
+	"aidev/internal/git"
 	"aidev/internal/logging"
 	"aidev/internal/store"
 	"aidev/internal/task"
@@ -160,7 +162,8 @@ func (o *Orchestrator) CreateTask(ctx context.Context, in CreateTaskInput) (task
 	// same rule the run uses — the task's ref, else the project's default
 	// branch — so the two commits are comparable and a ref that moved in
 	// between is a real move, not two different rules disagreeing.
-	baseAtCreate, err := o.Git.ResolveCommit(ctx, repo, effectiveBaseRef(in.BaseRef, project.DefaultBranch))
+	baseRef := effectiveBaseRef(in.BaseRef, project.DefaultBranch)
+	baseAtCreate, err := o.Git.ResolveCommit(ctx, repo, baseRef)
 	if err != nil {
 		return task.Task{}, err
 	}
@@ -239,6 +242,17 @@ func (o *Orchestrator) CreateTask(ctx context.Context, in CreateTaskInput) (task
 		return task.Task{}, err
 	}
 
+	// A step that runs a file the base lacks can never be judged: creating
+	// that file is the change verification refuses to trust, so no agent work
+	// can make the step pass. Refuse it now rather than after an attempt has
+	// already run (TASK-000159).
+	steps := make([]task.VerificationStep, 0, len(built.SetupSteps)+len(built.Verification))
+	steps = append(steps, built.SetupSteps...)
+	steps = append(steps, built.Verification...)
+	if err := o.refuseMissingRunners(ctx, repo, baseAtCreate, baseRef, steps); err != nil {
+		return task.Task{}, err
+	}
+
 	var created task.Task
 	err = o.Store.InTx(ctx, func(tx *store.Store) error {
 		stored, err := tx.CreateTask(ctx, built)
@@ -287,4 +301,102 @@ func effectiveBaseRef(taskRef, defaultBranch string) string {
 		return taskRef
 	}
 	return defaultBranch
+}
+
+// refuseMissingRunners refuses a task whose setup or verification step would
+// run a file the base commit does not hold. Verification refuses to trust a
+// runner that appeared during the attempt, so creating the file is the change
+// that stops the check: the step could never be judged, whatever the agent did.
+func (o *Orchestrator) refuseMissingRunners(ctx context.Context, repo git.Repository, baseCommit, baseRef string, steps []task.VerificationStep) error {
+	var parts []string
+	for i, step := range steps {
+		var missing []string
+		for _, p := range stepPaths(step) {
+			exists, err := o.Git.HasPathAtCommit(ctx, repo, baseCommit, p)
+			if err != nil {
+				return err
+			}
+			if exists {
+				continue
+			}
+			ignored, err := o.Git.Ignored(ctx, repo, p)
+			if err != nil {
+				return err
+			}
+			if !ignored {
+				missing = append(missing, p)
+			}
+		}
+		// Interceptions decides which of the missing paths this step would
+		// actually load; a plain command such as `test -f marker.txt` names a
+		// missing file but runs none of it, so it is not refused.
+		for _, in := range verification.Interceptions([]task.VerificationStep{step}, missing) {
+			parts = append(parts, fmt.Sprintf(
+				"step %d %q runs %s, which does not exist at %s: creating it is a change verification refuses to trust, "+
+					"so the step can never be judged; commit the script on the base branch first (TASK-000159)",
+				i+1, in.Step, in.Path, baseRef))
+		}
+	}
+	if len(parts) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%s", strings.Join(parts, "; "))
+}
+
+// stepPaths returns the worktree-relative paths a step names as a runner: its
+// command when that is a path, and arguments that look like one. A bare
+// command is looked up in PATH, and a test runner invoked by name loads no file
+// the step names, so neither contributes a path here.
+func stepPaths(step task.VerificationStep) []string {
+	var out []string
+	if p, ok := relativePath(step.Command); ok {
+		out = append(out, p)
+	}
+	for _, arg := range step.Args {
+		if p, ok := argumentPath(arg); ok {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// relativePath reports whether a command is given as a worktree path. A bare
+// name never is: exec looks it up in PATH only.
+func relativePath(command string) (string, bool) {
+	if !strings.Contains(command, "/") {
+		return "", false
+	}
+	return cleanStepPath(command)
+}
+
+// argumentPath reports whether an argument names a worktree path rather than a
+// flag or a Go package pattern. The test is deliberately wide: a false
+// positive costs one cat-file lookup, and Interceptions still decides whether
+// the step would load it.
+func argumentPath(arg string) (string, bool) {
+	if arg == "" || strings.HasPrefix(arg, "-") {
+		return "", false
+	}
+	// `go test ./...` and its relatives select packages, not files.
+	if strings.Contains(arg, "...") {
+		return "", false
+	}
+	if !strings.Contains(arg, "/") && filepath.Ext(arg) == "" {
+		return "", false
+	}
+	return cleanStepPath(arg)
+}
+
+func cleanStepPath(p string) (string, bool) {
+	if p == "" || p == "-" {
+		return "", false
+	}
+	if filepath.IsAbs(p) || path.IsAbs(p) {
+		return "", false
+	}
+	cleaned := filepath.ToSlash(filepath.Clean(p))
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return "", false
+	}
+	return cleaned, true
 }

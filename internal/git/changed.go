@@ -96,6 +96,27 @@ func (w *Worktree) ChangedPaths(ctx context.Context) (Changes, error) {
 	}, nil
 }
 
+// Ignored reports whether the repository's ignore rules exclude path.
+// check-ignore answers for a path that does not exist yet, which is what
+// CreateTask asks about a runner the base lacks. An ignored path is commonly
+// produced by a setup step — node_modules/.bin, a virtualenv — and cannot be
+// committed on the base by ordinary means, so creation leaves it to the
+// run-time interception, which still refuses the step if the agent itself
+// creates the runner.
+func (m *Manager) Ignored(ctx context.Context, repo Repository, path string) (bool, error) {
+	res, err := m.run(ctx, repo.Path, nil, "check-ignore", "--quiet", "--", path)
+	if err != nil {
+		return false, err
+	}
+	if res.Succeeded() {
+		return true, nil
+	}
+	if res.ExitCode != nil && *res.ExitCode == 1 {
+		return false, nil
+	}
+	return false, fmt.Errorf("check-ignore %s in %s: %s", path, repo.Path, firstLine(res.Stderr))
+}
+
 // mergeSorted joins path lists into one sorted list without empty entries or
 // duplicates.
 func mergeSorted(lists ...[]string) []string {

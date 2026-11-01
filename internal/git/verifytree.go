@@ -313,6 +313,23 @@ func (m *Manager) HasGitlinks(ctx context.Context, repo Repository, commit strin
 	return false, "", nil
 }
 
+// HasPathAtCommit reports whether commit holds a file or directory at path.
+// CreateTask uses it to refuse a verification step whose runner the base does
+// not have: creating that file is the change verification refuses to trust, so
+// the step could never be judged (TASK-000159).
+func (m *Manager) HasPathAtCommit(ctx context.Context, repo Repository, commit, path string) (bool, error) {
+	if strings.TrimSpace(commit) == "" || strings.TrimSpace(path) == "" {
+		return false, fmt.Errorf("cat-file: commit and path are required")
+	}
+	res, err := m.run(ctx, repo.Path, nil, "cat-file", "-e", commit+":"+path)
+	if err != nil {
+		return false, err
+	}
+	// A missing object is the answer, not an error: cat-file -e exits non-zero
+	// for a path the commit does not hold.
+	return res.Succeeded(), nil
+}
+
 // CreateDetached checks out commit into a new temporary worktree with no
 // branch, under the workspace root like every other worktree aidev makes.
 // It exists for clean verification: a place to run the checks where the
