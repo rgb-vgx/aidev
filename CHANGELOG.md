@@ -7,6 +7,93 @@ with:
 curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh
 ```
 
+## v0.12.0
+
+Upgrading from v0.11.0: install the new binary; there are no migrations. Run
+`claude plugin update aidev@aidev` (plugin 0.5.7) and restart Claude Code, so the
+MCP server and the skills are the new ones; `aidev doctor` now names servers that
+are still running a replaced binary.
+
+This release confines a task's shell commands when asked, gives the checks and the
+agent the task's own reference, and makes a retry deliver only the verified tree.
+
+- **A task can run under bubblewrap, so its shell commands are confined too.**
+  OpenCode's permission rules cover its own file tools, not the programs they
+  start: a shell command the agent runs writes wherever the person can (research
+  §7p). `agent.opencode.sandbox: "bwrap"` starts each OpenCode run under
+  bubblewrap with the filesystem read-only except the worktree, its git admin
+  directory, the task database directory, OpenCode's state directories and the
+  directories named in `agent.opencode.sandbox_writable`; `/tmp` is a fresh tmpfs
+  (measured with bubblewrap 0.9.0, research §7q). A runner's build caches must be
+  listed in `sandbox_writable` — for example `/home/you/.cache/go-build` and
+  `/home/you/go/pkg/mod` — or its builds fail on a read-only filesystem. The
+  sandbox is off by default and needs bubblewrap; `sandbox_writable` takes
+  absolute directories only. A sandbox that cannot start is a startup failure, and
+  bubblewrap missing from `PATH` fails at start rather than running unconfined.
+  Set both settings if you want the confinement.
+
+- **`aidev doctor` finds missing project directories and servers on an old
+  binary, and its verify mode advice is followable.** Two warnings are new
+  (TASK-000179). "project paths" names registered projects whose directory is
+  gone and points at `aidev project add` for a repository that moved; "mcp
+  servers" names this user's aidev processes still running a binary replaced on
+  disk (`/proc/<pid>/exe` "(deleted)", or another `aidev` at `argv[0]`), with
+  their start time, and says to restart the sessions that started them; it is
+  skipped off Linux. The verify mode warning leaves out projects whose directory
+  is gone, because its advice cannot be followed there, and it now gives the
+  syntax the CLI accepts: `aidev project verify-mode clean --repo <path>`. Act on
+  both: register a moved repository again, and restart the sessions it names.
+
+- **Creating a clean-verification task warns when the checks will have no
+  `node_modules`.** Clean verification checks out only what would be committed, so
+  ignored install output is absent; a step running `node`, `npm`, `npx`, `pnpm` or
+  `yarn` in a repository whose base has a Node lockfile then fails unless a setup
+  step installs the packages. Creating the task still succeeds but warns, naming
+  the lockfile and its install command, on `task.created`, in the MCP create
+  result and as "warning:" on the CLI (TASK-000184). TASK-000159 ran `node --test`
+  with no `npm ci`, which kept Axiom-Office on `in_place`. Add a setup step that
+  installs the packages, or keep verifying in place.
+
+- **Setup and verification commands, and the agent, know the task's reference.**
+  `AIDEV_TASK_REF` is now set for setup and verification steps (the base check
+  included) and for OpenCode and Codex runs, added after inherited `AIDEV_`
+  variables are dropped so it is the only one that gets through; `AIDEV_CONFIG`
+  still never reaches a step or the agent (TASK-000186). A check can keep its
+  per-task resources apart with it. `make test-integration` now uses
+  `aidev_test_<task>` and creates it first when `AIDEV_TASK_REF` is set and
+  `TEST_DB_URL` is not, while CI and a person at a terminal keep `aidev_test`;
+  TASK-000166's agent had applied an unmerged migration to the shared database
+  and broken every later run. Both guides document the variable.
+
+- **A success on a retry is delivered as one commit on the base.** After a retry
+  the delivery is one commit on the task's base carrying the verified tree, with
+  the task's own message, rather than being stacked on the earlier attempt's
+  unverified "not verified" commit; the earlier attempt's branch keeps that
+  commit (TASK-000183). Merging TASK-000172 had brought "attempt 1, not verified"
+  into main. A first attempt is unchanged, and an agent's own commits still stay
+  under the delivery. If a retry's final tree equals the base, the branch is moved
+  back to the base so it carries no unverified commit at all. Review the delivered
+  branch, not a range.
+
+- **A pushed release tag runs the integration suite before building a release.**
+  The release workflow now runs `make db-up`, `make test-db-create` and
+  `make test-integration` after `make check` and before any archive is built,
+  against the same compose database as CI (TASK-000180). CI's integration job had
+  been red on main for nine days unnoticed; a tag pushed then would have published
+  a release whose integration suite fails. Nothing to do beyond treating a red
+  release gate as a stop, not a step to retry.
+
+- **The plugin's skills catch specs that contradict old tests, workarounds and a
+  red CI (plugin 0.5.7).** The delegate skill now finds the tests that pin the old
+  behaviour and updates them in the spec commit, keeps `protected_paths` off files
+  the tests need to change, and tells the agent to report a conflicting test
+  rather than special-case the code to keep it green. The review skill looks for a
+  special case that only keeps an old test green, reads the agent's final message
+  for reported conflicts, runs the slower suites on the merged tree rather than
+  before the merge, and checks CI before merging. These come from four spec
+  contradictions and the nine-day red CI of 2026-11-01 (TASK-000181). Run
+  `claude plugin update aidev@aidev` and restart Claude Code to get them.
+
 ## v0.11.0
 
 Upgrading from v0.10.0: install the new binary, run `aidev migrate` (migrations
