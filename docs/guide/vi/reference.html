@@ -173,7 +173,7 @@ aidev worktree remove TASK-000001 --force</code></pre>
 <tr><td><code>task.worktree_retained</code></td><td>Worktree được giữ lại để xem xét sau thất bại hoặc hủy.</td></tr>
 <tr><td><code>task.base_moved</code></td><td>Base ref trỏ tới commit khác lúc run bắt đầu so với lúc tạo task: có ai đó đã đẩy thêm vào giữa chừng. Run vẫn chạy trên commit hiện tại; payload ghi <code>base_ref</code>, <code>at_create</code> và <code>at_run</code>, và kết quả có <code>base_moved</code>.</td></tr>
 <tr><td><code>task.worker_started</code></td><td>Tiến trình agent khởi động trong worktree.</td></tr>
-<tr><td><code>task.worker_completed</code></td><td>Tiến trình agent kết thúc, với xếp loại thoát trong payload.</td></tr>
+<tr><td><code>task.worker_completed</code></td><td>Tiến trình agent kết thúc, với xếp loại thoát trong payload. Khi agent để lại một tiến trình mà aidev phải dừng, payload mang <code>orphans_killed: true</code>; nếu không thì khóa này vắng mặt.</td></tr>
 <tr><td><code>task.base_check_completed</code></td><td>Kiểm tra base trước khi chạy agent của task <code>expect_fail_on_base</code> đã xong; trường <code>passed</code> trong payload cho biết các lệnh đã pass sẵn trên commit base hay chưa. Nếu pass, lần chạy FAILED với loại VERIFICATION và agent không bao giờ được gọi.</td></tr>
 <tr><td><code>task.verification_started</code></td><td>aidev bắt đầu chạy các lệnh verification của task. Payload ghi <code>steps</code> và <code>mode</code> — lượt chạy diễn ra ở đâu: <code>in_place</code> hay <code>clean</code>.</td></tr>
 <tr><td><code>task.verification_step_completed</code></td><td>Một bước verification xong, với lệnh và mã thoát của nó.</td></tr>

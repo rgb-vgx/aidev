@@ -628,7 +628,7 @@ func (r *run) runAgent(ctx context.Context) error {
 
 	r.setAgentUsageSpan(span, record)
 
-	r.emit(ctx, event.TypeWorkerCompleted, map[string]any{
+	completed := map[string]any{
 		"status":        string(result.Status),
 		"failure_kind":  string(result.FailureKind),
 		"exit_code":     result.ExitCode,
@@ -636,7 +636,14 @@ func (r *run) runAgent(ctx context.Context) error {
 		"tool_calls":    result.ToolCalls,
 		"changed_files": changedFiles(record),
 		"duration_ms":   result.Duration.Milliseconds(),
-	})
+	}
+	// Only when it happened: an always-false field in every event of every
+	// clean run would be noise, and the record of an agent that left a
+	// process behind is the point of the event.
+	if result.OrphansKilled {
+		completed["orphans_killed"] = true
+	}
+	r.emit(ctx, event.TypeWorkerCompleted, completed)
 
 	r.log.InfoContext(ctx, "agent finished",
 		logging.FieldBackend, r.o.Backend.Name(),
@@ -645,7 +652,8 @@ func (r *run) runAgent(ctx context.Context) error {
 		logging.FieldFailureKind, string(result.FailureKind),
 		logging.FieldExitCode, result.ExitCode,
 		logging.FieldDurationMS, result.Duration.Milliseconds(),
-		"tool_calls", result.ToolCalls)
+		"tool_calls", result.ToolCalls,
+		"orphans_killed", result.OrphansKilled)
 
 	if runErr != nil {
 		return runErr
