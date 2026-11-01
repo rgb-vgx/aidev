@@ -141,6 +141,16 @@ func (c *Codex) Run(ctx context.Context, req Request) (Result, error) {
 	result.Model = c.effectiveModel(req)
 	scanner := newCodexScanner()
 
+	// The agent runs the task's own checks while it works, so it needs the
+	// same AIDEV_TASK_REF they get: a check can then keep its resources, such
+	// as a test database, apart per task (TASK-000166's agent broke the
+	// shared one). Added after the drop below, so it is the only AIDEV_
+	// variable that reaches the run.
+	var extraEnv []string
+	if req.TaskRef != "" {
+		extraEnv = append(extraEnv, "AIDEV_TASK_REF="+req.TaskRef)
+	}
+
 	spec := procexec.Spec{
 		Command:        c.executable(),
 		Args:           args,
@@ -149,7 +159,8 @@ func (c *Codex) Run(ctx context.Context, req Request) (Result, error) {
 		MaxOutputBytes: req.MaxOutputBytes,
 		// The agent executes instructions we do not control; it must not see
 		// aidev's own configuration (AIDEV_CONFIG → database URL).
-		DropEnv: []string{"AIDEV_"},
+		DropEnv:  []string{"AIDEV_"},
+		ExtraEnv: extraEnv,
 		// The agent's commands may start applications in their own session;
 		// stopping the run stops those too.
 		FollowSessions: true,

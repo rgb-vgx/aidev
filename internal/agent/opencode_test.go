@@ -207,8 +207,12 @@ func TestRunDoesNotInheritAidevEnv(t *testing.T) {
 		t.Fatalf("read child environment: %v", err)
 	}
 	env := string(data)
-	if strings.Contains(env, "AIDEV_") {
-		t.Error("the agent inherited an AIDEV_* variable; aidev's configuration must not be visible to the agent")
+	// AIDEV_TASK_REF is the one AIDEV_ variable aidev sets for the agent
+	// (task_ref_env_test.go); nothing inherited may follow it.
+	for _, line := range strings.Split(env, "\n") {
+		if strings.HasPrefix(line, "AIDEV_") && !strings.HasPrefix(line, "AIDEV_TASK_REF=") {
+			t.Errorf("the agent inherited %q; aidev's configuration must not be visible to the agent", line)
+		}
 	}
 	if !strings.Contains(env, "HOME=") {
 		t.Error("the agent lost the rest of the environment; only AIDEV_* should be dropped")
