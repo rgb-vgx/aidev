@@ -40,6 +40,9 @@ func TestParseAllowsCommandSubstitutionForAShell(t *testing.T) {
 		`bash -c 'test -z "$(gofmt -l internal)"'`,
 		`/bin/sh -c 'test -z "$(gofmt -l internal)"'`,
 		"sh -c 'echo `date`'",
+		// A shell started through a wrapper still runs it.
+		`env FOO=1 sh -c 'test -z "$(gofmt -l internal)"'`,
+		`timeout 60 bash -c 'echo $(date)'`,
 	} {
 		if _, err := ParseVerificationStep(raw); err != nil {
 			t.Errorf("ParseVerificationStep(%q): %v; a shell does run command substitution", raw, err)

@@ -94,6 +94,13 @@ func rejectCommandSubstitution(raw string, step VerificationStep) error {
 	if _, ok := shellCommands[path.Base(step.Command)]; ok {
 		return nil
 	}
+	// A wrapper such as `env X=1 sh -c '...'` or `timeout 60 bash -c '...'`
+	// still hands the text to a shell.
+	for i := 0; i+1 < len(step.Args); i++ {
+		if _, ok := shellCommands[path.Base(step.Args[i])]; ok && step.Args[i+1] == "-c" {
+			return nil
+		}
+	}
 	for _, arg := range step.Args {
 		if !strings.Contains(arg, "$(") && !strings.ContainsRune(arg, '`') {
 			continue
