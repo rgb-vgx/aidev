@@ -26,15 +26,17 @@ const (
 
 // Check names, in the order Run reports them.
 const (
-	CheckConfig     = "config"
-	CheckGit        = "git"
-	CheckAgent      = "agent"
-	CheckDatabase   = "database"
-	CheckMigrations = "migrations"
-	CheckStuckTasks = "stuck tasks"
-	CheckVerifyMode = "verify mode"
-	CheckWorkspace  = "workspace"
-	CheckDisk       = "disk"
+	CheckConfig       = "config"
+	CheckGit          = "git"
+	CheckAgent        = "agent"
+	CheckDatabase     = "database"
+	CheckMigrations   = "migrations"
+	CheckStuckTasks   = "stuck tasks"
+	CheckVerifyMode   = "verify mode"
+	CheckProjectPaths = "project paths"
+	CheckServers      = "mcp servers"
+	CheckWorkspace    = "workspace"
+	CheckDisk         = "disk"
 )
 
 // Free-space thresholds for the disk check, on the filesystem that holds the
@@ -76,6 +78,15 @@ type Deps struct {
 	// tasks verify in place, in the agent's worktree, rather than in a clean
 	// checkout of what would be committed.
 	InPlaceProjects func(ctx context.Context, databaseURL string) ([]string, error)
+	// ProjectPaths returns the repository path of every registered project.
+	ProjectPaths func(ctx context.Context, databaseURL string) ([]string, error)
+	// PathExists reports whether a directory is still there. Nil means os.Stat.
+	PathExists func(path string) bool
+	// StaleServers describes each running aidev process (an MCP server a
+	// Claude Code session started) whose executable is not the binary
+	// installed now: it was replaced on disk after the process started.
+	// Nil, or errors.ErrUnsupported, skips the check.
+	StaleServers func() ([]string, error)
 	// CheckWorkspace returns nil if dir exists or can be created, and is writable.
 	CheckWorkspace func(dir string) error
 	// FreeSpace returns the bytes available to this user on the filesystem
