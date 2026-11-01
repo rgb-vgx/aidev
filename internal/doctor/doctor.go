@@ -32,6 +32,7 @@ const (
 	CheckDatabase   = "database"
 	CheckMigrations = "migrations"
 	CheckStuckTasks = "stuck tasks"
+	CheckVerifyMode = "verify mode"
 	CheckWorkspace  = "workspace"
 	CheckDisk       = "disk"
 )
@@ -71,6 +72,10 @@ type Deps struct {
 	// StuckTasks returns a short description of each task stuck in RUNNING or
 	// VERIFYING with an expired lease (store.StuckLeases in production).
 	StuckTasks func(ctx context.Context, databaseURL string) ([]string, error)
+	// InPlaceProjects returns the repository path of each project whose new
+	// tasks verify in place, in the agent's worktree, rather than in a clean
+	// checkout of what would be committed.
+	InPlaceProjects func(ctx context.Context, databaseURL string) ([]string, error)
 	// CheckWorkspace returns nil if dir exists or can be created, and is writable.
 	CheckWorkspace func(dir string) error
 	// FreeSpace returns the bytes available to this user on the filesystem
@@ -148,7 +153,7 @@ const (
 // not answer, the migrations check is skipped; when migrations are pending or unreadable, the stuck-task check
 // is skipped, because the lease columns it queries may not exist yet.
 func Run(ctx context.Context, deps Deps) []Result {
-	results := make([]Result, 0, 8)
+	results := make([]Result, 0, 9)
 
 	cfg, err := deps.LoadConfig()
 	if err != nil {
@@ -165,6 +170,7 @@ func Run(ctx context.Context, deps Deps) []Result {
 			Result{Name: CheckDatabase, Status: StatusSkipped, Summary: skipped},
 			Result{Name: CheckMigrations, Status: StatusSkipped, Summary: skipped},
 			Result{Name: CheckStuckTasks, Status: StatusSkipped, Summary: skipped},
+			Result{Name: CheckVerifyMode, Status: StatusSkipped, Summary: skipped},
 			Result{Name: CheckWorkspace, Status: StatusSkipped, Summary: skipped},
 			Result{Name: CheckDisk, Status: StatusSkipped, Summary: skipped},
 		)
@@ -193,6 +199,11 @@ func Run(ctx context.Context, deps Deps) []Result {
 				Status:  StatusSkipped,
 				Summary: "Skipped: the database did not answer, so stuck tasks were not checked.",
 			},
+			Result{
+				Name:    CheckVerifyMode,
+				Status:  StatusSkipped,
+				Summary: "Skipped: the database did not answer, so verify mode was not checked.",
+			},
 		)
 	} else {
 		migrations := migrationsResult(ctx, deps, cfg)
@@ -206,6 +217,7 @@ func Run(ctx context.Context, deps Deps) []Result {
 		} else {
 			results = append(results, stuckTasksResult(ctx, deps, cfg))
 		}
+		results = append(results, verifyModeResult(ctx, deps, cfg))
 	}
 
 	results = append(results, workspaceResult(deps, cfg))
@@ -509,6 +521,44 @@ func countStuck(n int) string {
 		return "1 task is"
 	}
 	return fmt.Sprintf("%d tasks are", n)
+}
+
+// verifyModeResult reports projects whose new tasks still verify in place.
+// Since v0.10.0 a new project verifies clean, but one registered earlier keeps
+// in_place, where an ignored file the agent made can decide the checks without
+// being in the commit. It is only a warning: a repository that pins submodules
+// cannot verify clean, so in_place may be the right choice there.
+func verifyModeResult(ctx context.Context, deps Deps, cfg config.Config) Result {
+	paths, err := deps.InPlaceProjects(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return Result{
+			Name:    CheckVerifyMode,
+			Status:  StatusWarn,
+			Summary: fmt.Sprintf("Cannot list projects that verify in place: %s.", redactDatabaseURL(err.Error(), cfg.DatabaseURL)),
+			Fix:     "Check the database, then run `aidev doctor` again.",
+		}
+	}
+	if len(paths) == 0 {
+		return Result{
+			Name:    CheckVerifyMode,
+			Status:  StatusOK,
+			Summary: "Every project verifies in a clean checkout of what would be committed.",
+		}
+	}
+	return Result{
+		Name:    CheckVerifyMode,
+		Status:  StatusWarn,
+		Summary: fmt.Sprintf("%s in place: %s.", countInPlace(len(paths)), strings.Join(paths, ", ")),
+		Fix:     "Run `aidev project verify-mode <path> clean` for each project above. in_place stays right for a repository that pins submodules, which clean verification cannot check out.",
+	}
+}
+
+// countInPlace says "1 project verifies" or "N projects verify".
+func countInPlace(n int) string {
+	if n == 1 {
+		return "1 project verifies"
+	}
+	return fmt.Sprintf("%d projects verify", n)
 }
 
 // workspaceResult checks that the workspace directory exists or can be created and is writable.
