@@ -25,7 +25,7 @@ type openCodeEvent struct {
 		} `json:"data"`
 
 		// OpenCode 2 drops the wrapper: the error itself carries its type and
-		// message (docs/research.md §2.4). Reading only the 1.x shape recorded
+		// message (measured on 2.2.5, docs/research.md §7n). Reading only the 1.x shape recorded
 		// TASK-000149's provider.no-route as the bare word "error".
 		Type    string `json:"type"`
 		Message string `json:"message"`
