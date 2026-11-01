@@ -158,13 +158,15 @@ const (
 //
 // It starts with the configuration, then git, the configured agent command
 // (and, for OpenCode, the provider keys it names), the database, pending
-// migrations, tasks stuck with an expired lease and the
-// workspace directory, then the free space under it. When the configuration
-// cannot be read, the checks that need it are skipped. When the database does
-// not answer, the migrations check is skipped; when migrations are pending or unreadable, the stuck-task check
+// migrations, tasks stuck with an expired lease, the verify mode and the
+// directories of registered projects, then the workspace directory and the
+// free space under it, and last the aidev processes still running a replaced
+// binary. When the configuration cannot be read, the checks that need it are
+// skipped. When the database does not answer, the migrations check is skipped;
+// when migrations are pending or unreadable, the stuck-task check
 // is skipped, because the lease columns it queries may not exist yet.
 func Run(ctx context.Context, deps Deps) []Result {
-	results := make([]Result, 0, 9)
+	results := make([]Result, 0, 11)
 
 	cfg, err := deps.LoadConfig()
 	if err != nil {
@@ -182,9 +184,11 @@ func Run(ctx context.Context, deps Deps) []Result {
 			Result{Name: CheckMigrations, Status: StatusSkipped, Summary: skipped},
 			Result{Name: CheckStuckTasks, Status: StatusSkipped, Summary: skipped},
 			Result{Name: CheckVerifyMode, Status: StatusSkipped, Summary: skipped},
+			Result{Name: CheckProjectPaths, Status: StatusSkipped, Summary: skipped},
 			Result{Name: CheckWorkspace, Status: StatusSkipped, Summary: skipped},
 			Result{Name: CheckDisk, Status: StatusSkipped, Summary: skipped},
 		)
+		results = append(results, serversResult(deps))
 		return results
 	}
 
@@ -215,6 +219,11 @@ func Run(ctx context.Context, deps Deps) []Result {
 				Status:  StatusSkipped,
 				Summary: "Skipped: the database did not answer, so verify mode was not checked.",
 			},
+			Result{
+				Name:    CheckProjectPaths,
+				Status:  StatusSkipped,
+				Summary: "Skipped: the database did not answer, so project directories were not checked.",
+			},
 		)
 	} else {
 		migrations := migrationsResult(ctx, deps, cfg)
@@ -229,10 +238,12 @@ func Run(ctx context.Context, deps Deps) []Result {
 			results = append(results, stuckTasksResult(ctx, deps, cfg))
 		}
 		results = append(results, verifyModeResult(ctx, deps, cfg))
+		results = append(results, projectPathsResult(ctx, deps, cfg))
 	}
 
 	results = append(results, workspaceResult(deps, cfg))
 	results = append(results, diskResult(deps, cfg))
+	results = append(results, serversResult(deps))
 
 	return results
 }
@@ -539,6 +550,10 @@ func countStuck(n int) string {
 // in_place, where an ignored file the agent made can decide the checks without
 // being in the commit. It is only a warning: a repository that pins submodules
 // cannot verify clean, so in_place may be the right choice there.
+//
+// A project whose directory is gone is left out: `aidev project verify-mode
+// clean --repo` cannot open a repository that is not there, so the advice
+// cannot be followed. projectPathsResult reports it instead.
 func verifyModeResult(ctx context.Context, deps Deps, cfg config.Config) Result {
 	paths, err := deps.InPlaceProjects(ctx, cfg.DatabaseURL)
 	if err != nil {
@@ -549,6 +564,7 @@ func verifyModeResult(ctx context.Context, deps Deps, cfg config.Config) Result 
 			Fix:     "Check the database, then run `aidev doctor` again.",
 		}
 	}
+	paths = existingPaths(deps, paths)
 	if len(paths) == 0 {
 		return Result{
 			Name:    CheckVerifyMode,
@@ -570,6 +586,79 @@ func countInPlace(n int) string {
 		return "1 project verifies"
 	}
 	return fmt.Sprintf("%d projects verify", n)
+}
+
+// pathExists reports whether dir is still there. Production leaves
+// deps.PathExists nil, so os.Stat is the fallback rather than a second
+// implementation wired in the CLI.
+func pathExists(deps Deps, dir string) bool {
+	if deps.PathExists != nil {
+		return deps.PathExists(dir)
+	}
+	_, err := os.Stat(dir)
+	return err == nil
+}
+
+// existingPaths drops the paths that are gone, so a check does not advise on a
+// directory it cannot act on.
+func existingPaths(deps Deps, paths []string) []string {
+	present := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if pathExists(deps, path) {
+			present = append(present, path)
+		}
+	}
+	return present
+}
+
+// projectPathsResult reports registered projects whose directory has gone.
+// Tasks cannot be created there, and the verify mode warning must not include
+// them, because its fix opens the repository. A moved repository is a new
+// registration; its history is keyed by task, not by path, so it survives.
+func projectPathsResult(ctx context.Context, deps Deps, cfg config.Config) Result {
+	paths, err := deps.ProjectPaths(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return Result{
+			Name:    CheckProjectPaths,
+			Status:  StatusWarn,
+			Summary: fmt.Sprintf("Cannot list project directories: %s.", redactDatabaseURL(err.Error(), cfg.DatabaseURL)),
+			Fix:     "Check the database, then run `aidev doctor` again.",
+		}
+	}
+	var gone []string
+	for _, path := range paths {
+		if !pathExists(deps, path) {
+			gone = append(gone, path)
+		}
+	}
+	if len(gone) == 0 {
+		if len(paths) == 0 {
+			return Result{
+				Name:    CheckProjectPaths,
+				Status:  StatusOK,
+				Summary: "No project is registered yet.",
+			}
+		}
+		return Result{
+			Name:    CheckProjectPaths,
+			Status:  StatusOK,
+			Summary: fmt.Sprintf("Every registered project directory is still there (%d).", len(paths)),
+		}
+	}
+	return Result{
+		Name:    CheckProjectPaths,
+		Status:  StatusWarn,
+		Summary: fmt.Sprintf("%s gone: %s.", countGone(len(gone)), strings.Join(gone, ", ")),
+		Fix:     "The directory is gone, so tasks cannot be created there. A repository that moved is registered again with `aidev project add` from its new place; its old tasks stay in the history.",
+	}
+}
+
+// countGone says "1 project directory is" or "N project directories are".
+func countGone(n int) string {
+	if n == 1 {
+		return "1 project directory is"
+	}
+	return fmt.Sprintf("%d project directories are", n)
 }
 
 // workspaceResult checks that the workspace directory exists or can be created and is writable.
@@ -622,6 +711,51 @@ func diskResult(deps Deps, cfg config.Config) Result {
 		return Result{Name: CheckDisk, Status: StatusOK,
 			Summary: fmt.Sprintf("%s free where worktrees are created.", humanSize(free))}
 	}
+}
+
+// serversResult reports aidev processes whose executable is no longer the one
+// installed: an MCP server keeps running the binary it was started from, so a
+// session left open after `make install` creates tasks with the old checks
+// until it is restarted. It is a warning, never a failure: the running aidev
+// itself is fine, and only the person knows which sessions to restart.
+func serversResult(deps Deps) Result {
+	const skipped = "Skipped: this system does not expose the running aidev processes."
+	if deps.StaleServers == nil {
+		return Result{Name: CheckServers, Status: StatusSkipped, Summary: skipped}
+	}
+	stale, err := deps.StaleServers()
+	if errors.Is(err, errors.ErrUnsupported) {
+		return Result{Name: CheckServers, Status: StatusSkipped, Summary: skipped}
+	}
+	if err != nil {
+		return Result{
+			Name:    CheckServers,
+			Status:  StatusWarn,
+			Summary: fmt.Sprintf("Cannot list running aidev processes: %s.", err.Error()),
+			Fix:     "Check that the process table is readable (on Linux, /proc), then run `aidev doctor` again.",
+		}
+	}
+	if len(stale) == 0 {
+		return Result{
+			Name:    CheckServers,
+			Status:  StatusOK,
+			Summary: "Every running aidev process uses the binary installed now.",
+		}
+	}
+	return Result{
+		Name:    CheckServers,
+		Status:  StatusWarn,
+		Summary: fmt.Sprintf("%s a binary that has since been replaced: %s.", countStaleServers(len(stale)), strings.Join(stale, ", ")),
+		Fix:     "Restart the Claude Code sessions (or other programs) that started them so they run the installed binary.",
+	}
+}
+
+// countStaleServers says "1 aidev process runs" or "N aidev processes run".
+func countStaleServers(n int) string {
+	if n == 1 {
+		return "1 aidev process runs"
+	}
+	return fmt.Sprintf("%d aidev processes run", n)
 }
 
 // humanSize renders a byte count the way df -h would.
