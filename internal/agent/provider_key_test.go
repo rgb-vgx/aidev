@@ -45,14 +45,20 @@ func TestOpenCodeGetsProviderKeysAsEnvironmentReferences(t *testing.T) {
 	if err := json.Unmarshal([]byte(got), &parsed); err != nil {
 		t.Fatalf("OPENCODE_CONFIG_CONTENT is not JSON: %v: %q", err, got)
 	}
-	want := map[string]any{"provider": map[string]any{
+	want := map[string]any{
 		"opencode-go": map[string]any{"options": map[string]any{"apiKey": "{env:OPENCODE_GO_API_KEY}"}},
 		"zai":         map[string]any{"options": map[string]any{"apiKey": "{env:ZAI_KEY}"}},
-	}}
-	gotJSON, _ := json.Marshal(parsed)
+	}
+	gotJSON, _ := json.Marshal(parsed["provider"])
 	wantJSON, _ := json.Marshal(want)
 	if string(gotJSON) != string(wantJSON) {
-		t.Errorf("OPENCODE_CONFIG_CONTENT = %s, want %s (a reference OpenCode resolves, never the key)", gotJSON, wantJSON)
+		t.Errorf("OPENCODE_CONFIG_CONTENT provider = %s, want %s (a reference OpenCode resolves, never the key)", gotJSON, wantJSON)
+	}
+	// Keys do not displace the directory rules an OpenCode 2 run must carry
+	// (opencode2_permission_test.go); this run has no read dirs and no MCP
+	// server, the case TASK-000175 left unconfined.
+	if _, ok := parsed["permission"]; !ok {
+		t.Errorf("OPENCODE_CONFIG_CONTENT = %s, want the directory rules alongside the keys", gotJSON)
 	}
 }
 

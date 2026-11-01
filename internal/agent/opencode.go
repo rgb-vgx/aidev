@@ -300,12 +300,11 @@ func (o *OpenCode) Run(ctx context.Context, req Request) (Result, error) {
 		result.DisabledMCP = disabled
 	}
 
-	// Only 2.x understands the configuration form of the directory rules; a
+	// Only 2.x understands the configuration form of the directory rules, and
+	// every 2.x run carries them: without them it is not confined at all. A
 	// 1.x run still gets them through OPENCODE_PERMISSION (docs/research.md §7p).
-	// A provider-key-only configuration keeps the shape it had before; every
-	// other 2.x configuration carries the rules.
 	var configRules map[string]string
-	if v2 && (len(o.ProviderKeyEnv) == 0 || len(req.ReadDirs) > 0 || len(result.DisabledMCP) > 0) {
+	if v2 {
 		configRules = directoryRules
 	}
 	if content := openCodeConfigContent(o.ProviderKeyEnv, result.DisabledMCP, configRules); content != "" {
