@@ -204,7 +204,11 @@ func TestEndedAttemptIsNotHandedToARetry(t *testing.T) {
 		out, _ := h.orchestrator.RunTask(h.ctx, created.Ref)
 		done <- out
 	}()
-	stub.waitFor(t, "-a2") // the run is at the retry's branch, the next write is fenced
+	// The run is at the retry's branch, the next write is fenced. The full
+	// branch name, not "-a2": an attempt ID in another git call (the clean
+	// verification checkout verify-<uuid>) contains "-a2" about once in 64
+	// runs, and the test then ended attempt 1 instead (CI run 41311607620).
+	stub.waitFor(t, "aidev/"+created.Ref+"-a2")
 
 	// End the attempt the way Cancel or a recovery would: the attempt is
 	// finished and the task is no longer RUNNING.
