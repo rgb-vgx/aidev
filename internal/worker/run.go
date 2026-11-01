@@ -1414,18 +1414,30 @@ func (r *run) commitWork(ctx context.Context, tx *store.Store) (bool, error) {
 // branch already holds. The commit is built from objects, not from the
 // working directory: whatever verification wrote afterwards stays out.
 //
+// A retry's branch was created at the failed attempt's commit, whose work
+// never passed verification. Building the delivery on it would put that
+// commit in the range a reviewer merges — merging TASK-000172 brought
+// "attempt 1, not verified" into main that way. So the delivery is one commit
+// on the task's base, and the earlier attempt's branch keeps its own commit
+// for anyone who wants it.
+//
 // The branch moves by compare-and-set against the commit the snapshot was
-// taken on. If anything moved it in between, publishing fails rather than
-// stacking the agent's tree on history nobody verified.
+// taken on — the earlier attempt's commit on a retry, which is still where
+// the branch points. If anything moved it in between, publishing fails rather
+// than stacking the agent's tree on history nobody verified.
 func (r *run) commitAgentTree(ctx context.Context, message string) (string, error) {
-	headTree, err := r.worktree.TreeOf(ctx, r.agentHead)
+	parent := r.agentHead
+	if r.attempt.AttemptNumber > 1 {
+		parent = r.worktree.BaseCommit
+	}
+	parentTree, err := r.worktree.TreeOf(ctx, parent)
 	if err != nil {
 		return "", err
 	}
-	if headTree == r.agentTree {
+	if parentTree == r.agentTree {
 		return "", nil
 	}
-	commit, err := r.worktree.CommitTreeOnto(ctx, r.agentTree, r.agentHead, message)
+	commit, err := r.worktree.CommitTreeOnto(ctx, r.agentTree, parent, message)
 	if err != nil {
 		return "", err
 	}
