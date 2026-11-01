@@ -1,6 +1,7 @@
-# Pushing a v* tag runs the gate, builds the archives with scripts/build-release.sh
-# and publishes them with SHA256SUMS as a GitHub release, which install.sh
-# downloads. The release notes are the tag's section of CHANGELOG.md.
+# Pushing a v* tag runs the gate, which now includes the integration suite, builds
+# the archives with scripts/build-release.sh and publishes them with SHA256SUMS as
+# a GitHub release, which install.sh downloads. The release notes are the tag's
+# section of CHANGELOG.md.
 name: release
 on:
   push:
@@ -17,6 +18,11 @@ jobs:
         with:
           go-version-file: go.mod
       - run: make check
+      # The release must not rely on someone noticing a red integration job in CI.
+      # Same targets against the same compose database as .github/workflows/ci.yml.
+      - run: make db-up
+      - run: make test-db-create
+      - run: make test-integration
       - run: sh scripts/build-release.sh
         env:
           VERSION: ${{ github.ref_name }}
