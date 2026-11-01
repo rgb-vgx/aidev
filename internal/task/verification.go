@@ -2,6 +2,7 @@ package task
 
 import (
 	"fmt"
+	"path"
 	"strings"
 )
 
@@ -68,7 +69,45 @@ func ParseVerificationStep(raw string) (VerificationStep, error) {
 	if len(fields) > 1 {
 		step.Args = fields[1:]
 	}
+	if err := rejectCommandSubstitution(raw, step); err != nil {
+		return VerificationStep{}, err
+	}
 	return step, step.Validate()
+}
+
+// shellCommands run command substitution themselves; for anything else the
+// substitution is only ever text.
+var shellCommands = map[string]struct{}{
+	"sh": {}, "bash": {}, "dash": {}, "zsh": {},
+}
+
+// rejectCommandSubstitution refuses a step whose result depends on a shell that
+// aidev does not provide.
+//
+// aidev runs a step as argv with no shell, so "$(...)" and `...` in an argument
+// are passed to the program verbatim and never execute. TASK-000154 was judged
+// by test -z '$(gofmt -l internal)': the literal string is non-empty, so test is
+// always false and no attempt could pass. This lives in ParseVerificationStep,
+// not in Validate, because steps already stored must keep loading; only new
+// input is refused.
+func rejectCommandSubstitution(raw string, step VerificationStep) error {
+	if _, ok := shellCommands[path.Base(step.Command)]; ok {
+		return nil
+	}
+	for _, arg := range step.Args {
+		if !strings.Contains(arg, "$(") && !strings.ContainsRune(arg, '`') {
+			continue
+		}
+		// The example turns single quotes into double ones so it can sit inside
+		// the single quotes that sh -c needs.
+		example := quoteIfNeeded(strings.ReplaceAll(raw, "'", `"`))
+		return fmt.Errorf(
+			"verification command %q passes command substitution to %q: aidev runs the command without a shell, "+
+				"so %q would be passed as literal text and never run; run the line through a shell as sh -c '...', "+
+				"for example: sh -c %s",
+			step.String(), step.Command, arg, example)
+	}
+	return nil
 }
 
 // ParseVerificationSteps parses several command lines, reporting which one
@@ -123,7 +162,8 @@ func splitFields(raw string) ([]string, error) {
 			// the set above is limited to characters a shell would act on.
 			return nil, fmt.Errorf(
 				"unquoted %q is not allowed: aidev runs verification commands directly without a shell, "+
-					"so shell operators have no effect; quote it to pass it as a literal argument",
+					"so shell operators have no effect; quote it to pass it as a literal argument, "+
+					"or, if the operator was meant, run the line through a shell (sh -c '...')",
 				string(r))
 		default:
 			inField = true
