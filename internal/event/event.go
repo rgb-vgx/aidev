@@ -44,6 +44,12 @@ const (
 	// Agent execution.
 	TypeWorkerStarted   Type = "task.worker_started"
 	TypeWorkerCompleted Type = "task.worker_completed"
+	// TypeAgentProgress records what a running agent has done so far: its
+	// counts, the latest tool and the path it aimed at — never a command
+	// line. TASK-000143 had 20 minutes with nothing between worker_started
+	// and worker_completed, so a reader could not tell a working agent from
+	// a stuck one.
+	TypeAgentProgress Type = "task.agent_progress"
 
 	// Independent verification.
 	// TypeBaseCheckCompleted reports the pre-agent pass of an
@@ -117,7 +123,7 @@ func AllTypes() []Type {
 		TypeTaskFailed, TypeTaskCancelled, TypeRetryScheduled,
 		TypeWorktreeCreated, TypeWorktreeRemoved, TypeWorktreeRetained,
 		TypeBaseMoved,
-		TypeWorkerStarted, TypeWorkerCompleted,
+		TypeWorkerStarted, TypeWorkerCompleted, TypeAgentProgress,
 		TypeBaseCheckCompleted,
 		TypeVerificationStarted, TypeVerificationStepRan, TypeVerificationCompleted,
 		TypeVerificationIntercepted, TypeVerificationTestsModified,
