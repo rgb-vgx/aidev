@@ -36,6 +36,8 @@ type harness struct {
 	workspace    string
 	// lastTaskID lets an agent script look its own task up while it runs.
 	lastTaskID uuid.UUID
+	// cfg is the configuration the orchestrator was built with.
+	cfg config.Config
 }
 
 func newHarness(t *testing.T, mutate func(*config.Config)) *harness {
@@ -75,7 +77,14 @@ func newHarness(t *testing.T, mutate func(*config.Config)) *harness {
 		orchestrator: worker.New(db, gm, backend, cfg, logging.Discard()),
 		repoPath:     repoPath,
 		workspace:    workspace,
+		cfg:          cfg,
 	}
+}
+
+// orchestratorConfig returns a copy of the harness's configuration, for a
+// test that builds a second orchestrator as a changed configuration would.
+func (h *harness) orchestratorConfig() config.Config {
+	return h.cfg
 }
 
 // newTestRepo creates a git repository with one commit and a passing test.

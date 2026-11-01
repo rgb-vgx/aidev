@@ -593,12 +593,22 @@ func (r *run) runAgent(ctx context.Context) error {
 		return err
 	}
 
+	// The pinned model is sent when it differs from the backend's own
+	// configured fallback; when it is still exactly that fallback, leaving it
+	// out asks for the same model without restating the configuration. Once
+	// the configuration moves, the pinned model no longer matches and is sent,
+	// so TASK-000143's task keeps running on the model it was created with.
+	model := resolveModel(r.task, r.o.Config.Routing)
+	if model == r.o.backendModel() {
+		model = ""
+	}
+
 	req := agent.Request{
 		TaskRef:        r.task.Identifier(),
 		Prompt:         prompt,
 		WorkingDir:     r.worktree.Path,
 		Agent:          r.task.Agent,
-		Model:          resolveModel(r.task, r.o.Config.Routing),
+		Model:          model,
 		Timeout:        r.task.EffectiveTimeout(r.o.Config.DefaultTaskTimeout),
 		MaxOutputBytes: r.o.Config.MaxOutputBytes,
 		ReadDirs:       r.projectReadDirs(ctx),
@@ -709,6 +719,21 @@ func resolveModel(t task.Task, routing map[string]string) string {
 		return model
 	}
 	return ""
+}
+
+// backendModel is the model the configured backend falls back to when a task
+// names none. The backend in use decides which setting applies: OpenCode's
+// model is not Codex's, and the Fake backend used by tests reports its own
+// name.
+func (o *Orchestrator) backendModel() string {
+	codex := o.Config.AgentBackend == config.BackendCodex
+	if o.Backend != nil && o.Backend.Name() == agent.CodexName {
+		codex = true
+	}
+	if codex {
+		return strings.TrimSpace(o.Config.CodexModel)
+	}
+	return strings.TrimSpace(o.Config.OpenCodeModel)
 }
 
 // errSharedStateUnreadable marks a containment check that could not run: the
