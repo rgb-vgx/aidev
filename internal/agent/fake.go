@@ -47,6 +47,9 @@ type Fake struct {
 	Tokens       json.RawMessage
 	Cost         *float64
 
+	// OrphansKilled is reported as Result.OrphansKilled.
+	OrphansKilled bool
+
 	// ExitCode is reported when set.
 	ExitCode *int
 

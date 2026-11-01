@@ -158,6 +158,11 @@ type Result struct {
 	// or the backend has no MCP servers.
 	DisabledMCP []string
 
+	// OrphansKilled reports that processes the agent started were still
+	// running after it exited and were stopped (procexec.Result.OrphansKilled):
+	// the agent left work behind that it was told not to.
+	OrphansKilled bool
+
 	// ToolCalls counts the tool invocations observed, which is a cheap signal
 	// for "did the agent actually try to do anything".
 	ToolCalls int
