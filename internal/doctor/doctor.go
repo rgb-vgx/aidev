@@ -32,6 +32,7 @@ const (
 	CheckDatabase   = "database"
 	CheckMigrations = "migrations"
 	CheckStuckTasks = "stuck tasks"
+	CheckVerifyMode = "verify mode"
 	CheckWorkspace  = "workspace"
 	CheckDisk       = "disk"
 )
@@ -71,6 +72,10 @@ type Deps struct {
 	// StuckTasks returns a short description of each task stuck in RUNNING or
 	// VERIFYING with an expired lease (store.StuckLeases in production).
 	StuckTasks func(ctx context.Context, databaseURL string) ([]string, error)
+	// InPlaceProjects returns the repository path of each project whose new
+	// tasks verify in place, in the agent's worktree, rather than in a clean
+	// checkout of what would be committed.
+	InPlaceProjects func(ctx context.Context, databaseURL string) ([]string, error)
 	// CheckWorkspace returns nil if dir exists or can be created, and is writable.
 	CheckWorkspace func(dir string) error
 	// FreeSpace returns the bytes available to this user on the filesystem

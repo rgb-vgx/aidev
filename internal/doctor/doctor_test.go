@@ -33,8 +33,9 @@ func healthy() Deps {
 		StuckTasks: func(context.Context, string) ([]string, error) {
 			return nil, nil
 		},
-		CheckWorkspace: func(string) error { return nil },
-		FreeSpace:      func(string) (uint64, error) { return 100 << 30, nil },
+		InPlaceProjects: func(context.Context, string) ([]string, error) { return nil, nil },
+		CheckWorkspace:  func(string) error { return nil },
+		FreeSpace:       func(string) (uint64, error) { return 100 << 30, nil },
 	}
 }
 
@@ -63,7 +64,7 @@ func TestEverythingHealthyReportsEveryCheckInOrder(t *testing.T) {
 			t.Errorf("%s: an ok result has nothing to fix, got %q", r.Name, r.Fix)
 		}
 	}
-	want := []string{CheckConfig, CheckGit, CheckAgent, CheckDatabase, CheckMigrations, CheckStuckTasks, CheckWorkspace, CheckDisk}
+	want := []string{CheckConfig, CheckGit, CheckAgent, CheckDatabase, CheckMigrations, CheckStuckTasks, CheckVerifyMode, CheckWorkspace, CheckDisk}
 	if strings.Join(names, ",") != strings.Join(want, ",") {
 		t.Errorf("checks = %v, want %v", names, want)
 	}
@@ -108,7 +109,7 @@ func TestUnreadableConfigFailsAndSkipsWhatNeedsIt(t *testing.T) {
 	if got[CheckGit].Status != StatusOK {
 		t.Errorf("git: status %s, want ok even without a configuration", got[CheckGit].Status)
 	}
-	for _, name := range []string{CheckAgent, CheckDatabase, CheckMigrations, CheckStuckTasks, CheckWorkspace, CheckDisk} {
+	for _, name := range []string{CheckAgent, CheckDatabase, CheckMigrations, CheckStuckTasks, CheckVerifyMode, CheckWorkspace, CheckDisk} {
 		if got[name].Status != StatusSkipped {
 			t.Errorf("%s: status %s, want skipped when the configuration cannot be read", name, got[name].Status)
 		}
