@@ -7,6 +7,130 @@ with:
 curl -fsSL https://raw.githubusercontent.com/rgb-vgx/aidev/main/install.sh | sh
 ```
 
+## Unreleased
+
+Upgrading from v0.10.0: install the new binary, run `aidev migrate` (migrations
+`0025_files_added_event` and `0026_agent_progress_event`, both only widen the
+event type check: an older binary keeps working on the migrated database), and
+restart Claude Code so the MCP server runs the new binary.
+
+Most of this release comes from running aidev against OpenCode 2: what its
+configuration must carry, what a run records while the agent works, and what
+creation refuses before the agent starts.
+
+- **OpenCode 2 is supported.** OpenCode 2 removed `agent list` and `run --dir`,
+  and a completed run may end with a text event instead of a `step_finish`
+  "stop". aidev now detects the major version, lists agents with `debug agents`
+  (retrying the cold start that prints `[]`), and starts runs with
+  `--standalone`; the 1.x argument form is kept. OpenCode 2 resolves the project
+  directory from `PWD`, not `getcwd()`, so a probe with `cmd.Dir` set still wrote
+  `OK.txt` into the launch directory; every child command now gets `PWD` set to
+  its working directory. Verified against 2.2.5; 1.18 is still supported.
+
+- **Provider keys can be passed by environment reference, and `aidev doctor`
+  checks they hold a key.** Every task gets its own `OPENCODE_DB`, and OpenCode 2
+  keeps keys saved with `opencode auth` in that database, so a task using an
+  `opencode-go` model failed every attempt in about a second with
+  `provider.no-route` (TASK-000151). `agent.opencode.provider_key_env` maps a
+  provider id to the name of an environment variable, and aidev passes
+  `OPENCODE_CONFIG_CONTENT` with `{env:NAME}` references, so the key never
+  appears in configuration, logs or the task record; a value that is not a
+  variable name is refused without being repeated in the error. `aidev doctor`
+  now fails the agent check when a named variable is missing — it said "ready"
+  while the MCP server ran without `OPENCODE_GO_API_KEY` (TASK-000154). Set the
+  setting and the variable if your models need a key.
+
+- **OpenCode 2 runs now apply the directory rules.** OpenCode 2 ignores
+  `OPENCODE_PERMISSION`, so since OpenCode 2 support every task ran with no
+  `external_directory` rule; the write tool wrote outside the worktree
+  (TASK-000175, measured in research §7p). The rules are now built once and
+  passed both ways: `OPENCODE_PERMISSION` for 1.x, and
+  `permission.external_directory` inside `OPENCODE_CONFIG_CONTENT` for 2.x,
+  merged with the provider keys and the MCP switch-off. An inherited
+  `OPENCODE_CONFIG_CONTENT` is dropped for 1.x runs too. A shell command the
+  agent runs is still not confined; the rules cover OpenCode's own file tools,
+  not the programs they start.
+
+- **A task's agent no longer inherits the person's MCP servers.** A task ran with
+  every MCP server the person had configured, aidev's own included (approve,
+  run and cancel against the live database through that server's
+  `AIDEV_CONFIG`), and a web-research server wrote `data/research.db` into the
+  worktree, which TASK-000143 committed. Before each OpenCode 2 run aidev lists
+  the servers with `opencode debug config` in the worktree and replaces each
+  with a complete disabled entry in `OPENCODE_CONFIG_CONTENT`, merged with the
+  provider keys; the names land in `Result.DisabledMCP`. A listing it cannot
+  read stops the run as a startup failure, while a cancellation stays a
+  cancellation. 1.x runs are unchanged.
+
+- **OpenCode 2 error events are read, and an unreachable model is not retried.**
+  An error event (`{"error":{"type","message"}}`) is now recorded with its type
+  and message; TASK-000149's `provider.no-route` had become only "opencode
+  reported: error". `provider.no-route` is classified `FailureStartup`, which
+  the worker does not retry, so an unreachable model no longer burns an attempt.
+  Other errors and the 1.x shape are unchanged.
+
+- **A running agent reports its progress as `task.agent_progress`.** The event
+  scanner calls `Request.OnProgress` on each tool call with the running
+  tool-call and step counts, the tool, the path it was aimed at and the elapsed
+  time; the worker records a report every 15 seconds as `task.agent_progress`
+  (`tool_calls`, `steps`, `last_tool`, `last_path`, `elapsed_ms`) and as an
+  "agent progress" line in the run's log, so `aidev task events` and run-logs
+  show what a running agent is doing (TASK-000143: 20 minutes with nothing
+  recorded). Only a call's location is taken, never a bash command line. The
+  event is a report; the outcome does not depend on it. Migration
+  `0026_agent_progress_event`.
+
+- **An attempt names the files it adds as `task.files_added`.** Right after the
+  agent's work is snapshotted, aidev records `task.files_added` when the
+  delivered tree adds files to the base: each path with its size and whether git
+  reads it as binary, at most 50 listed, with the total. It is a report; an
+  error working it out is a warning and the run is judged as usual. TASK-000143
+  delivered `data/research.db` and the history said only `changed_files: 2`.
+  Sizes are now asked of `ls-tree` only about the added paths, in batches of
+  200, with `--literal-pathspecs`, so a large repository no longer silently
+  skips the report. Migration `0025_files_added_event`.
+
+- **A run records the processes an agent left behind.** `task.worker_completed`
+  now carries `orphans_killed: true` when the process executor stopped
+  processes an agent left running (the key is absent otherwise), and the "agent
+  finished" log line says so. The outcome is unchanged.
+
+- **A verification step that would run command substitution no shell will
+  execute is refused at creation.** Without a shell, `$(...)` or a backquote is
+  literal text, and TASK-000154 spent both attempts on
+  `test -z '$(gofmt -l internal)'`, which is always false. `ParseVerificationStep`
+  now refuses `$(` or a backquote in an argument of a command that is not
+  `sh`, `bash`, `dash` or `zsh`, and the message shows the line rewritten for
+  `sh -c`. A shell named after a wrapper (`env X=1 sh -c`, `timeout 60 bash -c`)
+  counts as a shell. Stored steps still load. If a step needs substitution, put
+  it in `sh -c`.
+
+- **A verification step that runs a file the base does not have is refused at
+  creation.** Verification refuses a runner that changed during the attempt, so
+  such a step can never be judged (TASK-000159 found out after six and a half
+  minutes of agent work). `CreateTask` now refuses a setup or verification step
+  that would run a file the base ref lacks, naming the step and the file. Which
+  missing paths a step would load is decided by `verification.Interceptions`, so
+  `test -f marker.txt` naming a missing file is still accepted, and a missing
+  path git ignores is left to run-time interception. Commit the file the step
+  runs, or change the step.
+
+- **The model a task will run with is pinned when it is created.** `CreateTask`
+  stores the task's own model, else the routing table for its hardness, else the
+  configured backend's model. A task created without a model no longer changes
+  model when the configuration is edited before its run or between attempts
+  (TASK-000143 ran on a model `conf.json` no longer named). The worker sends the
+  pinned model; with nothing configured, nothing is pinned.
+
+- **`aidev doctor` warns about projects that still verify in place.** A new
+  "verify mode" check after the stuck-tasks check counts and names the projects
+  whose new tasks verify in place and points at `aidev project verify-mode
+  <path> clean`; it is ok when none do, skipped when the database does not
+  answer, a redacted warning when the lookup fails, and never a failure.
+  Projects registered before v0.10.0 kept `in_place` silently (11 of 13 on this
+  machine). The `--verify-mode` help and both guides no longer call `in_place`
+  the default. Run the command it names for each project that still warns.
+
 ## v0.10.0
 
 Upgrading from v0.9.0: install the new binary, run `aidev migrate` (migrations
