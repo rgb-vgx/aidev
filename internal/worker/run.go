@@ -569,6 +569,14 @@ func (r *run) prepareWorktree(ctx context.Context) error {
 	return nil
 }
 
+// agentProgressInterval bounds how often a running agent's progress is recorded.
+// A busy agent reports a tool call every second or so; writing each one would
+// flood the append-only history that aidev_get_task_events reads, while an
+// interval much longer than this would let a stuck agent look like a working
+// one (TASK-000143: 20 minutes with nothing between worker_started and
+// worker_completed).
+const agentProgressInterval = 15 * time.Second
+
 // runAgent delegates the implementation and records what the agent did, including
 // the diff aidev collected itself rather than the one the agent claimed.
 func (r *run) runAgent(ctx context.Context) error {
@@ -595,6 +603,29 @@ func (r *run) runAgent(ctx context.Context) error {
 		MaxOutputBytes: r.o.Config.MaxOutputBytes,
 		ReadDirs:       r.projectReadDirs(ctx),
 	}
+	// The callback runs on the backend's output goroutine while runAgent waits
+	// in Backend.Run, so nothing it touches is being written concurrently: the
+	// attempt is fixed for the duration of the run, and the cancel watch only
+	// touches its own fields and the atomic leaseAttempt.
+	req.OnProgress = func(p agent.Progress) {
+		fields := map[string]any{
+			"tool_calls": p.ToolCalls,
+			"steps":      p.Steps,
+			"last_tool":  p.LastTool,
+			"last_path":  p.LastPath,
+			"elapsed_ms": p.Elapsed.Milliseconds(),
+		}
+		r.emit(ctx, event.TypeAgentProgress, fields)
+		// The same fields go to the run's log as well, so a detached run's
+		// run-logs shows progress without a database read.
+		r.log.InfoContext(ctx, "agent progress",
+			"tool_calls", p.ToolCalls,
+			"steps", p.Steps,
+			"last_tool", p.LastTool,
+			"last_path", p.LastPath,
+			"elapsed_ms", p.Elapsed.Milliseconds())
+	}
+	req.ProgressInterval = agentProgressInterval
 	// A retry continues the failed attempt's agent session, in the same
 	// directory it was created in, so the agent keeps what it learned.
 	if r.retry != nil {
