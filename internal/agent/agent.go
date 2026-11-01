@@ -57,6 +57,31 @@ type Request struct {
 	// retry-with-context will need. Having the field now means retry does not
 	// require touching this interface.
 	SessionID string
+
+	// OnProgress, when set, is called while the agent runs, from the
+	// goroutine reading its output, so it must return quickly. A backend that
+	// cannot see its agent's progress never calls it.
+	OnProgress func(Progress)
+
+	// ProgressInterval bounds how often OnProgress is called: the first tool
+	// call is always reported, then at most one report per interval. Zero
+	// reports every tool call.
+	ProgressInterval time.Duration
+}
+
+// Progress is how far a running agent has got. It carries what the final
+// record carries — counts, a tool's name and where it was aimed — and never
+// the content of a call.
+type Progress struct {
+	// ToolCalls and Steps count what has happened so far in this run.
+	ToolCalls int
+	Steps     int
+	// LastTool is the name of the latest tool call, LastPath the file or
+	// directory it was aimed at ("" when it named none).
+	LastTool string
+	LastPath string
+	// Elapsed is the time since the agent started.
+	Elapsed time.Duration
 }
 
 // Validate checks a request before a process is launched.
